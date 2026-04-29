@@ -772,6 +772,7 @@ const PRODUCTS = [
   {id:'cmk',    name:'CM Khoya',      unit:'kg',   stdRate:234, emoji:'🍫'},
   {id:'stk',    name:'Std Khoya',     unit:'kg',   stdRate:234, emoji:'🍫'},
   {id:'ch',     name:'Chaach',        unit:'unit', stdRate:28,  emoji:'🧉'},
+  {id:'ch500',  name:'Chaas 500ml',   unit:'btl',  stdRate:30,  emoji:'🍶'},
   {id:'sl',     name:'Sweet Lassi',   unit:'cup',  stdRate:23,  emoji:'🥤'},
   {id:'ml',     name:'Mango Lassi',   unit:'cup',  stdRate:23,  emoji:'🥭'},
   {id:'mixl',   name:'Mixed Lassi',   unit:'cup',  stdRate:23,  emoji:'🍹'},
@@ -1597,7 +1598,7 @@ function orderBodyHTML(o) {
   if(o.notes)    html += `<div style="background:#FFF8E1;border-radius:8px;padding:8px 10px;margin-bottom:8px;font-size:12px;color:#795548;">📝 <b>Note:</b> ${o.notes}</div>`;
   if(o.modNotes) html += `<div style="background:#FFF3E0;border-radius:8px;padding:8px 10px;margin-bottom:8px;font-size:12px;color:#E65100;"><b>⚠ Mod:</b> ${o.modNotes}</div>`;
 
-  if(o.payment?.received) html += `<div style="background:#E8F5E9;border-radius:8px;padding:8px 10px;font-size:12px;color:var(--green);margin-bottom:8px;">✓ Paid: ₹${o.payment.amount} via ${o.payment.mode}${o.payment.remarks?' — '+o.payment.remarks:''}</div>`;
+  if(o.payment?.received) html += `<div style="background:#E8F5E9;border-radius:8px;padding:8px 10px;font-size:12px;color:var(--green);margin-bottom:8px;">✓ Paid: ₹${o.payment.amount} via ${o.payment.mode}${o.payment.chequeNo?' · Cheque #'+o.payment.chequeNo:''}${o.payment.remarks?' — '+o.payment.remarks:''}</div>`;
   else if(o.status==='due') html += `<div style="background:#FFEBEE;border-radius:8px;padding:8px 10px;font-size:12px;color:var(--red);margin-bottom:8px;">💰 Payment due${o.daysOverdue?` — ${o.daysOverdue}d overdue`:''}</div>`;
 
   html += '<div class="btn-row" style="margin-top:10px;">';
@@ -1617,10 +1618,19 @@ function orderBodyHTML(o) {
              <button class="btn btn-success btn-sm" onclick="approveModification('${o.id}')">✓ Approve</button>`;
   }
   if((STATE.role==='sales'||STATE.role==='owner') && o.status==='delivered') {
-    html += `<button class="btn btn-primary btn-sm" onclick="finaliseOrder('${o.id}')">✓ Finalise</button>`;
+    html += `<button class="btn btn-primary btn-sm" onclick="openPaymentModal('${o.id}')">💰 Record Payment</button>
+             <button class="btn btn-primary btn-sm" onclick="finaliseOrder('${o.id}')">✓ Finalise</button>`;
   }
-  if((STATE.role==='sales'||STATE.role==='owner') && (o.status==='confirmed'||o.status==='draft'||o.status==='due')) {
-    html += `<button class="btn btn-secondary btn-sm" onclick="openEditOrder('${o.id}')">✏ Edit Order</button>`;
+  if((STATE.role==='sales'||STATE.role==='owner') && (o.status==='confirmed'||o.status==='draft')) {
+    html += `<button class="btn btn-blue btn-sm" onclick="openPaymentModal('${o.id}')">💰 Payment Received</button>
+             <button class="btn btn-secondary btn-sm" onclick="openEditOrder('${o.id}')">✏ Edit Order</button>`;
+  }
+  if((STATE.role==='sales'||STATE.role==='owner') && o.status==='due') {
+    html += `<button class="btn btn-success btn-sm" onclick="openPaymentModal('${o.id}')">💰 Collect Payment</button>
+             <button class="btn btn-secondary btn-sm" onclick="openEditOrder('${o.id}')">✏ Edit Order</button>`;
+  }
+  if((STATE.role==='sales'||STATE.role==='owner') && o.status==='partial') {
+    html += `<button class="btn btn-success btn-sm" onclick="openPaymentModal('${o.id}')">💰 Collect Balance</button>`;
   }
   if(STATE.role==='owner') {
     html += `<button class="btn btn-blue btn-sm" onclick="syncOneOrder('${o.id}')">📤 Sync</button>`;
@@ -1827,6 +1837,7 @@ function renderProductList() {
               <input type="number" id="qty-${p.id}" value="${qty||''}" min="0" step="0.5"
                 placeholder="0"
                 oninput="setCartQty('${p.id}',this.value)"
+                onblur="onCartQtyBlur('${p.id}',this.value)"
                 style="width:56px;text-align:center;font-size:15px;font-weight:700;color:${qty>0?'var(--amber)':'var(--ink)'};background:var(--cream);border:1.5px solid ${qty>0?'var(--amber)':'var(--border)'};border-radius:8px;padding:4px 4px;">
               <button class="qty-btn" onclick="updateCart('${p.id}',1)" style="width:28px;height:28px;font-size:16px;">+</button>
             </div>
@@ -1858,13 +1869,27 @@ function setMPUnit(pid, unit) {
 }
 
 function setCartQty(pid, val) {
-  const qty = parseFloat(val)||0;
+  // Allow empty string while typing — don't treat '' as 0 and wipe the cart entry
+  const qty = (val === '' || val === null || val === undefined) ? 0 : parseFloat(val)||0;
   if(!STATE.cart[pid]) STATE.cart[pid]={qty:0,rate:getRate(pid),unit:PRODUCTS.find(x=>x.id===pid)?.unit||'unit'};
   STATE.cart[pid].qty = Math.max(0,qty);
-  if(STATE.cart[pid].qty===0) delete STATE.cart[pid];
+  // Only remove from cart if qty is 0 AND user is not currently in the field
   const el = document.getElementById('qty-'+pid);
+  const isFocused = el && document.activeElement === el;
+  if(STATE.cart[pid].qty === 0 && !isFocused) delete STATE.cart[pid];
   if(el){ el.style.borderColor=qty>0?'var(--amber)':'var(--border)'; el.style.color=qty>0?'var(--amber)':'var(--ink)'; }
   updateOrderSummary();
+}
+
+function onCartQtyBlur(pid, val) {
+  // When user leaves the qty field, clean up zero entries
+  const qty = parseFloat(val)||0;
+  if(qty === 0 && STATE.cart[pid]) {
+    delete STATE.cart[pid];
+    const el = document.getElementById('qty-'+pid);
+    if(el){ el.value=''; el.style.borderColor='var(--border)'; el.style.color='var(--ink)'; }
+    updateOrderSummary();
+  }
 }
 
 function setCartRate(pid, val) {
@@ -1877,10 +1902,18 @@ function setCartRate(pid, val) {
 function updateCart(pid, delta) {
   const p = PRODUCTS.find(x=>x.id===pid);
   if(!STATE.cart[pid]) STATE.cart[pid]={qty:0,rate:getRate(pid),unit:p?.unit||'unit'};
-  STATE.cart[pid].qty = Math.max(0,(STATE.cart[pid].qty||0)+delta);
-  if(STATE.cart[pid].qty===0) delete STATE.cart[pid];
+  const newQty = Math.max(0,(STATE.cart[pid].qty||0)+delta);
+  STATE.cart[pid].qty = newQty;
+  if(newQty === 0) delete STATE.cart[pid];
+  // Update only the specific input — do NOT call renderProductList() as that
+  // rebuilds the entire DOM and loses keyboard focus on mobile
   const el = document.getElementById('qty-'+pid);
-  if(el){ const q=STATE.cart[pid]?.qty||0; el.value=q||''; el.style.borderColor=q>0?'var(--amber)':'var(--border)'; el.style.color=q>0?'var(--amber)':'var(--ink)'; }
+  if(el){
+    const q = newQty;
+    el.value = q || '';
+    el.style.borderColor = q > 0 ? 'var(--amber)' : 'var(--border)';
+    el.style.color = q > 0 ? 'var(--amber)' : 'var(--ink)';
+  }
   updateOrderSummary();
 }
 
@@ -2061,6 +2094,7 @@ function openPaymentModal(orderId) {
       <div class="pay-mode-btn" onclick="selectPayMode(this,'gpay')"><span class="pay-mode-icon">🔵</span>GPay</div>
       <div class="pay-mode-btn" onclick="selectPayMode(this,'paytm')"><span class="pay-mode-icon">💳</span>Paytm</div>
       <div class="pay-mode-btn" onclick="selectPayMode(this,'cheque')"><span class="pay-mode-icon">📄</span>Cheque</div>
+      <div class="pay-mode-btn" onclick="selectPayMode(this,'online')"><span class="pay-mode-icon">🌐</span>Online/NEFT</div>
       <div class="pay-mode-btn" onclick="selectPayMode(this,'due')"><span class="pay-mode-icon">⏰</span>Due</div>
     </div>
     <div id="cheque-field" style="display:none;" class="field">
@@ -2068,6 +2102,9 @@ function openPaymentModal(orderId) {
     </div>
     <div class="field"><label>Amount Received (₹)</label>
       <input type="number" id="pay-amount" value="${order.total}" step="1" min="0">
+    </div>
+    <div class="field"><label>Remarks (optional)</label>
+      <input type="text" id="pay-remarks" placeholder="e.g. UTR no. 123456, online transfer">
     </div>
     <div class="btn-row">
       <button class="btn btn-secondary" onclick="closeModal('modal-order')">Cancel</button>
@@ -2088,11 +2125,12 @@ function savePayment(orderId) {
   const mode=btn.dataset.mode;
   const amount=parseFloat(document.getElementById('pay-amount').value)||0;
   const chequeNo=document.getElementById('cheque-no')?.value||'';
+  const remarks=document.getElementById('pay-remarks')?.value||'';
   const order=STATE.orders.find(o=>o.id===orderId);
   const isDue=mode==='due', isPart=!isDue&&amount<(order?.total||0);
   const newStatus=isDue?'due':isPart?'partial':'delivered';
   Object.assign(order,{status:newStatus,
-    payment:{mode,amount,received:!isDue,chequeNo,receivedAt:Date.now()},
+    payment:{mode,amount,received:!isDue,chequeNo,remarks,receivedAt:Date.now()},
     dueDate:isDue?TODAY_KEY:null,daysOverdue:0,synced:false});
   saveOrders(); closeModal('modal-order');
   if(STATE.sheetUrl) syncOneOrder(orderId);
