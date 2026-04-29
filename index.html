@@ -541,6 +541,43 @@ h1,h2,h3,.serif{font-family:'DM Serif Display',serif;}
       </div>
     </div>
   </div>
+
+  <!-- ── SCREEN: PAYMENT IN ── -->
+  <div class="screen" id="screen-payment-in">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+      <div class="page-title">💳 Payments In</div>
+      <div style="display:flex;gap:6px;">
+        <button onclick="openPaymentInForm()"
+          style="background:var(--green);color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:12px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif;">+ Record</button>
+        <button onclick="openPaymentUpload()"
+          style="background:var(--blue);color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:12px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif;">📤 Upload</button>
+      </div>
+    </div>
+    <div class="page-sub">All payments received from customers</div>
+
+    <!-- Stats row -->
+    <div class="stats-row" style="grid-template-columns:repeat(3,1fr);">
+      <div class="stat-box"><div class="stat-num" id="pi-stat-today" style="font-size:16px;">₹0</div><div class="stat-lbl">Today</div></div>
+      <div class="stat-box"><div class="stat-num" id="pi-stat-month" style="font-size:16px;">₹0</div><div class="stat-lbl">This Month</div></div>
+      <div class="stat-box"><div class="stat-num" id="pi-stat-count">0</div><div class="stat-lbl">Entries</div></div>
+    </div>
+
+    <!-- Search + Filter -->
+    <div class="search-box" style="margin-bottom:10px;">
+      <span class="search-icon">🔍</span>
+      <input type="text" id="pi-search" placeholder="Search customer name..." oninput="renderPaymentIn()">
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:14px;overflow-x:auto;padding-bottom:4px;">
+      <button class="filter-btn active" id="pif-all"    onclick="piFilter('all',this)">All</button>
+      <button class="filter-btn"        id="pif-today"  onclick="piFilter('today',this)">Today</button>
+      <button class="filter-btn"        id="pif-week"   onclick="piFilter('week',this)">This Week</button>
+      <button class="filter-btn"        id="pif-month"  onclick="piFilter('month',this)">This Month</button>
+    </div>
+
+    <!-- Payments list -->
+    <div id="pi-list"></div>
+  </div>
+
   <div class="bottom-nav" id="bottom-nav"></div>
 </div>
 
@@ -757,6 +794,116 @@ h1,h2,h3,.serif{font-family:'DM Serif Display',serif;}
       <button class="btn btn-success" onclick="openInWhatsApp()" style="background:#25D366;">📲 Open WhatsApp</button>
     </div>
     <div id="wa-copy-confirm" style="display:none;text-align:center;margin-top:8px;font-size:12px;color:var(--green);font-weight:600;">✓ Copied! Now open WhatsApp and paste.</div>
+  </div>
+</div>
+
+
+<!-- ── PAYMENT IN FORM MODAL ── -->
+<div class="modal-overlay" id="modal-payment-in">
+  <div class="modal-sheet" style="max-height:92vh;overflow-y:auto;">
+    <div class="modal-handle"></div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+      <div class="modal-title" style="margin-bottom:0;" id="pi-modal-title">Record Payment</div>
+      <button onclick="closeModal('modal-payment-in')" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--muted);">✕</button>
+    </div>
+    <input type="hidden" id="pi-edit-id">
+
+    <!-- Customer search -->
+    <div class="field">
+      <label>Customer Name</label>
+      <div style="position:relative;">
+        <input type="text" id="pi-cust-input" placeholder="Type to search..." autocomplete="off"
+          oninput="piCustomerSearch(this.value)"
+          style="width:100%;background:var(--cream);border:1.5px solid var(--border);border-radius:10px;padding:10px 12px;font-family:'DM Sans',sans-serif;font-size:14px;color:var(--ink);outline:none;">
+        <div id="pi-cust-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;background:#fff;border:1.5px solid var(--amber);border-radius:0 0 10px 10px;z-index:300;max-height:200px;overflow-y:auto;box-shadow:0 4px 12px rgba(0,0,0,0.12);"></div>
+      </div>
+      <input type="hidden" id="pi-cust-id">
+      <div id="pi-cust-balance" style="font-size:12px;color:var(--red);margin-top:4px;display:none;"></div>
+    </div>
+
+    <!-- Date (changeable for backdating) -->
+    <div class="field">
+      <label>Payment Date <span style="font-size:10px;color:var(--muted);font-weight:400;">(change for old payments)</span></label>
+      <input type="date" id="pi-date"
+        style="width:100%;background:var(--cream);border:1.5px solid var(--border);border-radius:10px;padding:10px 12px;font-family:'DM Sans',sans-serif;font-size:14px;color:var(--ink);outline:none;">
+    </div>
+
+    <!-- Amount -->
+    <div class="field">
+      <label>Amount Received (₹)</label>
+      <input type="number" id="pi-amount" min="0" step="1" placeholder="0"
+        style="width:100%;background:var(--cream);border:1.5px solid var(--amber);border-radius:10px;padding:12px;font-family:'DM Serif Display',serif;font-size:22px;color:var(--amber);text-align:center;outline:none;">
+    </div>
+
+    <!-- Payment Mode -->
+    <div class="section-label">Payment Mode</div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px;" id="pi-pay-modes">
+      <div class="pay-mode-btn" onclick="piSelectMode(this,'cash')"><span class="pay-mode-icon">💵</span>Cash</div>
+      <div class="pay-mode-btn" onclick="piSelectMode(this,'phonepay')"><span class="pay-mode-icon">📱</span>PhonePe</div>
+      <div class="pay-mode-btn" onclick="piSelectMode(this,'gpay')"><span class="pay-mode-icon">🔵</span>GPay</div>
+      <div class="pay-mode-btn" onclick="piSelectMode(this,'paytm')"><span class="pay-mode-icon">💳</span>Paytm</div>
+      <div class="pay-mode-btn" onclick="piSelectMode(this,'idbi')"><span class="pay-mode-icon">🏦</span>IDBI</div>
+      <div class="pay-mode-btn" onclick="piSelectMode(this,'neft')"><span class="pay-mode-icon">🌐</span>NEFT/Online</div>
+      <div class="pay-mode-btn" onclick="piSelectMode(this,'cheque')"><span class="pay-mode-icon">📄</span>Cheque</div>
+      <div class="pay-mode-btn" onclick="piSelectMode(this,'upi')"><span class="pay-mode-icon">📲</span>Other UPI</div>
+      <div class="pay-mode-btn" onclick="piSelectMode(this,'other')"><span class="pay-mode-icon">💬</span>Other</div>
+    </div>
+
+    <!-- Reference / Remarks -->
+    <div class="field">
+      <label>Reference / UTR / Cheque No. <span style="font-size:10px;color:var(--muted);font-weight:400;">(optional)</span></label>
+      <input type="text" id="pi-ref" placeholder="e.g. UTR 234567891, Cheque #456...">
+    </div>
+    <div class="field">
+      <label>Notes <span style="font-size:10px;color:var(--muted);font-weight:400;">(optional)</span></label>
+      <input type="text" id="pi-notes" placeholder="e.g. Part payment for Feb dues">
+    </div>
+
+    <div class="btn-row">
+      <button class="btn btn-secondary" onclick="closeModal('modal-payment-in')">Cancel</button>
+      <button class="btn btn-success" onclick="savePaymentIn()">✓ Save Payment</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── PAYMENT UPLOAD MODAL ── -->
+<div class="modal-overlay" id="modal-payment-upload">
+  <div class="modal-sheet" style="max-height:90vh;overflow-y:auto;">
+    <div class="modal-handle"></div>
+    <div class="modal-title">📤 Upload Payment History</div>
+
+    <div style="background:#E3F2FD;border:1.5px solid #1565C0;border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:#0D47A1;">
+      <b>📋 Excel / CSV Format Required:</b><br>
+      Columns: <b>Date, Customer Name, Amount, Mode, Reference, Notes</b><br>
+      Date format: DD/MM/YYYY or YYYY-MM-DD · Mode: cash / phonepay / gpay / neft / cheque / other
+    </div>
+
+    <div style="margin-bottom:12px;">
+      <button class="btn btn-secondary btn-sm" onclick="downloadPaymentTemplate()">📥 Download Template</button>
+    </div>
+
+    <!-- Also supports: upload opening balances -->
+    <div style="background:#FFF8E1;border:1.5px solid #FFB300;border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:#795548;">
+      <b>💡 Also supports opening balances:</b> Add a column <b>Opening Balance</b> with the amount the customer owed before you started using this app. These will be loaded as starting balances.
+    </div>
+
+    <div class="upload-zone" onclick="document.getElementById('payment-csv-upload').click()" id="payment-upload-zone">
+      <div style="font-size:30px;">📊</div>
+      <p>Tap to upload payment CSV or Excel</p>
+      <p style="font-size:11px;margin-top:4px;">Supports .csv and .xlsx files</p>
+    </div>
+    <input type="file" id="payment-csv-upload" accept=".csv,.xlsx" style="display:none;" onchange="handlePaymentUpload(this)">
+
+    <div id="payment-upload-preview" style="display:none;margin-top:14px;">
+      <div class="section-label">Preview (first 5 rows)</div>
+      <div id="payment-upload-table" style="overflow-x:auto;"></div>
+      <div id="payment-upload-summary" style="margin-top:10px;font-size:13px;font-weight:600;color:var(--green);"></div>
+    </div>
+
+    <div class="btn-row" style="margin-top:14px;">
+      <button class="btn btn-secondary" onclick="closeModal('modal-payment-upload')">Cancel</button>
+      <button class="btn btn-success" id="payment-upload-confirm" style="display:none;" onclick="confirmPaymentUpload()">✓ Import All Payments</button>
+    </div>
   </div>
 </div>
 
@@ -1179,6 +1326,7 @@ let STATE = {
   role: null,
   customers: [],
   orders: [],        // today's orders in localStorage
+  payments: [],      // payment-in ledger (all time)
   cart: {},
   selectedCustomer: null,
   sheetUrl: '',
@@ -1190,7 +1338,8 @@ const TODAY_STR = TODAY.toLocaleDateString('en-IN',{weekday:'short',day:'numeric
 const TODAY_KEY = `${TODAY.getFullYear()}-${String(TODAY.getMonth()+1).padStart(2,'0')}-${String(TODAY.getDate()).padStart(2,'0')}`;
 const LS_ORDERS = 'gf_orders_' + TODAY_KEY;
 const LS_URL    = 'gf_sheet_url';
-const LS_CUSTS  = 'gf_customers_extra';  // manually added customers
+const LS_CUSTS    = 'gf_customers_extra';  // manually added customers
+const LS_PAYMENTS = 'gf_payments';           // payment-in ledger
 
 // ── CAT COLOURS ─────────────────────────────────────────────────────
 const CAT_COLOR = {
@@ -1369,10 +1518,10 @@ const NAV_CONFIG = {
   owner:    [{id:'home',icon:'🏠',label:'Home'},{id:'orders',icon:'📋',label:'Orders'},
              {id:'history',icon:'📅',label:'History'},
              {id:'customers',icon:'👥',label:'Customers'},{id:'manage',icon:'✏️',label:'Manage'},
-             {id:'dues',icon:'💰',label:'Dues'},{id:'setup',icon:'⚙',label:'Setup'}],
+             {id:'payment-in',icon:'💳',label:'Payments'},{id:'dues',icon:'💰',label:'Dues'},{id:'setup',icon:'⚙',label:'Setup'}],
   sales:    [{id:'home',icon:'🏠',label:'Home'},{id:'new-order',icon:'➕',label:'New Order'},
              {id:'orders',icon:'📋',label:'My Orders'},{id:'history',icon:'📅',label:'History'},
-             {id:'dues',icon:'💰',label:'Dues'},{id:'setup',icon:'⚙',label:'Setup'}],
+             {id:'payment-in',icon:'💳',label:'Payments'},{id:'dues',icon:'💰',label:'Dues'},{id:'setup',icon:'⚙',label:'Setup'}],
   delivery: [{id:'home',icon:'🏠',label:'Home'},{id:'orders',icon:'🚚',label:'Deliveries'},
              {id:'dues',icon:'💰',label:'Dues'},{id:'setup',icon:'⚙',label:'Setup'}],
 };
@@ -1420,6 +1569,7 @@ function showScreen(id) {
     if(id==='setup')      renderSetup();
     if(id==='manage')     renderManageCustomers();
     if(id==='history')    renderHistory();
+    if(id==='payment-in') renderPaymentIn();
   });
 }
 
@@ -1435,6 +1585,8 @@ function initApp() {
   });
   // Load today's orders from localStorage
   STATE.orders = JSON.parse(localStorage.getItem(LS_ORDERS)||'[]');
+  // Load payment ledger
+  STATE.payments = JSON.parse(localStorage.getItem(LS_PAYMENTS)||'[]');
   // For delivery: also load past dues and delivered orders from previous days
   // so they can collect outstanding payments and see delivery history
   if(STATE.role === 'delivery') {
@@ -1618,19 +1770,19 @@ function orderBodyHTML(o) {
              <button class="btn btn-success btn-sm" onclick="approveModification('${o.id}')">✓ Approve</button>`;
   }
   if((STATE.role==='sales'||STATE.role==='owner') && o.status==='delivered') {
-    html += `<button class="btn btn-primary btn-sm" onclick="openPaymentModal('${o.id}')">💰 Record Payment</button>
+    html += `<button class="btn btn-primary btn-sm" onclick="openHistoryPayment('${o.id}','${o.date||TODAY_KEY}')">💰 Record Payment</button>
              <button class="btn btn-primary btn-sm" onclick="finaliseOrder('${o.id}')">✓ Finalise</button>`;
   }
   if((STATE.role==='sales'||STATE.role==='owner') && (o.status==='confirmed'||o.status==='draft')) {
-    html += `<button class="btn btn-blue btn-sm" onclick="openPaymentModal('${o.id}')">💰 Payment Received</button>
+    html += `<button class="btn btn-blue btn-sm" onclick="openHistoryPayment('${o.id}','${o.date||TODAY_KEY}')">💰 Payment Received</button>
              <button class="btn btn-secondary btn-sm" onclick="openEditOrder('${o.id}')">✏ Edit Order</button>`;
   }
   if((STATE.role==='sales'||STATE.role==='owner') && o.status==='due') {
-    html += `<button class="btn btn-success btn-sm" onclick="openPaymentModal('${o.id}')">💰 Collect Payment</button>
+    html += `<button class="btn btn-success btn-sm" onclick="openHistoryPayment('${o.id}','${o.date||TODAY_KEY}')">💰 Collect Payment</button>
              <button class="btn btn-secondary btn-sm" onclick="openEditOrder('${o.id}')">✏ Edit Order</button>`;
   }
   if((STATE.role==='sales'||STATE.role==='owner') && o.status==='partial') {
-    html += `<button class="btn btn-success btn-sm" onclick="openPaymentModal('${o.id}')">💰 Collect Balance</button>`;
+    html += `<button class="btn btn-success btn-sm" onclick="openHistoryPayment('${o.id}','${o.date||TODAY_KEY}')">💰 Collect Balance</button>`;
   }
   if(STATE.role==='owner') {
     html += `<button class="btn btn-blue btn-sm" onclick="syncOneOrder('${o.id}')">📤 Sync</button>`;
@@ -3292,41 +3444,102 @@ function toggleHistoryDay(id) {
 function renderHistoryOrders(orders, date) {
   if(!orders.length) return '<div style="color:var(--muted);font-size:13px;padding:8px 0;">No orders</div>';
 
-  // Sort: newest first by createdAt, fallback to id
   const sorted = [...orders].sort((a,b) => (b.createdAt||0) - (a.createdAt||0));
 
   const statusLabel = {confirmed:'Confirmed',modified:'Modified',delivered:'Delivered',
-    paid:'Paid',due:'Due',partial:'Partial',draft:'Draft'};
+    paid:'Paid ✓',due:'Due 💰',partial:'Partial',draft:'Draft'};
   const statusColor = {confirmed:'#2A7A45',modified:'#E65100',delivered:'#1565C0',
     paid:'#2A7A45',due:'#C62828',partial:'#F57F17',draft:'#888'};
   const statusBg    = {confirmed:'#E8F5E9',modified:'#FFF3E0',delivered:'#E3F2FD',
     paid:'#E8F5E9',due:'#FFEBEE',partial:'#FFF8E1',draft:'#F5F5F5'};
 
+  const canPayRole = STATE.role==='sales' || STATE.role==='owner';
+
   return sorted.map(o => {
     const items = (o.items||[]).map(i => `${i.qty} ${i.unit} ${i.name} @₹${i.rate}`).join(' · ');
-    const payInfo = o.payment?.received
-      ? `<span style="font-size:11px;color:#2A7A45;">✓ ₹${o.payment.amount} via ${o.payment.mode}</span>`
-      : o.status==='due'
-        ? `<span style="font-size:11px;color:#C62828;">⏰ Payment pending</span>`
-        : '';
+
+    // Payment status line
+    let payInfo = '';
+    if(o.payment?.received) {
+      payInfo = `<div style="background:#E8F5E9;border-radius:8px;padding:6px 10px;margin-top:6px;font-size:12px;color:#2A7A45;font-weight:600;">
+        ✓ Paid ₹${(o.payment.amount||0).toLocaleString('en-IN')} · ${PI_MODES[o.payment.mode]||o.payment.mode||''}
+        ${o.payment.ref||o.payment.chequeNo?` · ${o.payment.ref||o.payment.chequeNo}`:''}
+        ${o.payment.remarks?' — '+o.payment.remarks:''}
+      </div>`;
+    } else if(o.status==='due'||o.status==='partial') {
+      const balance = (o.total||0) - (o.payment?.amount||0);
+      payInfo = `<div style="background:#FFEBEE;border-radius:8px;padding:6px 10px;margin-top:6px;font-size:12px;color:#C62828;font-weight:600;">
+        ⏰ ₹${balance.toLocaleString('en-IN')} pending${o.daysOverdue?' · '+o.daysOverdue+'d overdue':''}
+      </div>`;
+    }
+
+    // Payment button: show for sales/owner on any unpaid order
+    const isPaid = o.status==='paid' || (o.payment?.received && o.payment?.amount >= (o.total||0));
+    const payBtn = (canPayRole && !isPaid) ? `
+      <button onclick="openHistoryPayment('${o.id}','${date}')"
+        style="margin-top:8px;width:100%;padding:9px;border-radius:8px;border:none;
+          background:${o.status==='due'||o.status==='partial'?'var(--green)':'var(--amber)'};
+          color:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif;">
+        💰 ${o.status==='due'||o.status==='partial'?'Collect Payment':'Record Payment'}
+      </button>` : '';
+
     return `
-      <div style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:8px;background:var(--background,#fff);">
-        <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:4px;">
+      <div id="hcard-${o.id}" style="border:1.5px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px;background:#fff;">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:6px;">
           <div style="flex:1;min-width:0;">
-            <div style="font-size:13px;font-weight:700;color:var(--ink);">${o.customerName}</div>
-            ${o.customerPhone?`<div style="font-size:11px;color:var(--blue,#1565C0);">📞 ${o.customerPhone}</div>`:''}
+            <div style="font-size:14px;font-weight:700;color:var(--ink);">${o.customerName}</div>
+            ${o.customerPhone?`<div style="font-size:11px;color:var(--blue,#1A527A);margin-top:1px;">📞 ${o.customerPhone}</div>`:''}
           </div>
-          <div style="text-align:right;flex-shrink:0;">
-            <div style="font-size:15px;font-weight:700;color:var(--amber);">₹${(o.total||0).toLocaleString('en-IN')}</div>
-            <span style="background:${statusBg[o.status]||'#eee'};color:${statusColor[o.status]||'#888'};font-size:10px;font-weight:700;padding:2px 8px;border-radius:12px;">${statusLabel[o.status]||o.status}</span>
+          <div style="text-align:right;flex-shrink:0;margin-left:10px;">
+            <div style="font-family:'DM Serif Display',serif;font-size:17px;color:var(--amber);">₹${(o.total||0).toLocaleString('en-IN')}</div>
+            <span style="background:${statusBg[o.status]||'#eee'};color:${statusColor[o.status]||'#888'};font-size:10px;font-weight:700;padding:2px 8px;border-radius:12px;margin-top:2px;display:inline-block;">${statusLabel[o.status]||o.status}</span>
           </div>
         </div>
-        <div style="font-size:11px;color:var(--muted);line-height:1.5;">${items}</div>
+        <div style="font-size:11px;color:var(--muted);line-height:1.6;border-top:1px solid var(--border);padding-top:6px;">${items}</div>
         ${o.notes?`<div style="font-size:11px;color:#795548;margin-top:4px;">📝 ${o.notes}</div>`:''}
-        ${payInfo?`<div style="margin-top:4px;">${payInfo}</div>`:''}
-        <div style="font-size:10px;color:var(--muted);margin-top:4px;opacity:0.7;">#${o.id}${o.createdBy?' · by '+o.createdBy:''}</div>
+        ${payInfo}
+        ${payBtn}
+        <div style="font-size:10px;color:var(--muted);margin-top:6px;opacity:0.6;">#${o.id}${o.createdBy?' · '+o.createdBy:''}</div>
       </div>`;
   }).join('');
+}
+
+// ── Open payment modal from History / Orders context ──────────────────
+function openHistoryPayment(orderId, date) {
+  // Find the order — could be in STATE.orders (today) or a past date key
+  let order = STATE.orders.find(o=>o.id===orderId);
+  let isPastDate = false;
+
+  if(!order && date) {
+    const pastOrders = getOrdersForDate(date);
+    order = pastOrders.find(o=>o.id===orderId);
+    if(order) isPastDate = true;
+  }
+  if(!order) { showToast('Order not found'); return; }
+
+  // Pre-fill the Payment-In form
+  document.getElementById('pi-modal-title').textContent = 'Record Payment — ' + order.customerName;
+  document.getElementById('pi-edit-id').value = '';
+  document.getElementById('pi-cust-input').value = order.customerName;
+  document.getElementById('pi-cust-id').value = order.customerId||'';
+  document.getElementById('pi-date').value = date||TODAY_KEY;
+  // Pre-fill amount = outstanding balance
+  const paid = order.payment?.received ? (order.payment.amount||0) : 0;
+  document.getElementById('pi-amount').value = Math.max(0,(order.total||0)-paid) || '';
+  document.getElementById('pi-ref').value = '';
+  document.getElementById('pi-notes').value = `Order #${orderId}`;
+  document.getElementById('pi-cust-dropdown').style.display='none';
+  document.querySelectorAll('#pi-pay-modes .pay-mode-btn').forEach(b=>b.classList.remove('selected'));
+  // Show outstanding balance
+  const bal = order.total - paid;
+  const balEl = document.getElementById('pi-cust-balance');
+  if(bal>0) { balEl.textContent='Order balance: ₹'+bal.toLocaleString('en-IN'); balEl.style.display='block'; }
+  else balEl.style.display='none';
+
+  // Store order ref for post-save status update
+  document.getElementById('modal-payment-in').dataset.orderId = orderId;
+  document.getElementById('modal-payment-in').dataset.orderDate = date||TODAY_KEY;
+  document.getElementById('modal-payment-in').classList.add('open');
 }
 
 // ── FETCH HISTORY FROM SHEET ──────────────────────────────────────────
@@ -3551,6 +3764,483 @@ function updateDaysOverdue() {
   });
 }
 setInterval(updateDaysOverdue,60000);
+
+
+// ══════════════════════════════════════════════════════════════════════
+// ── PAYMENT-IN LEDGER ────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════
+
+const PI_MODES = {
+  cash:'💵 Cash', phonepay:'📱 PhonePe', gpay:'🔵 GPay', paytm:'💳 Paytm',
+  idbi:'🏦 IDBI', neft:'🌐 NEFT/Online', cheque:'📄 Cheque',
+  upi:'📲 Other UPI', other:'💬 Other'
+};
+
+function savePaymentLedger() {
+  localStorage.setItem(LS_PAYMENTS, JSON.stringify(STATE.payments));
+}
+
+// ── Filter state ─────────────────────────────────────────────────────
+let _piFilter = 'all';
+function piFilter(f, btn) {
+  _piFilter = f;
+  document.querySelectorAll('#screen-payment-in .filter-btn').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  renderPaymentIn();
+}
+
+// ── Render ────────────────────────────────────────────────────────────
+function renderPaymentIn() {
+  const q = (document.getElementById('pi-search')?.value||'').toLowerCase();
+  const now = new Date();
+  const todayStr = TODAY_KEY;
+  const monthStr = TODAY_KEY.slice(0,7); // YYYY-MM
+
+  let payments = [...STATE.payments].sort((a,b)=> (b.date||'').localeCompare(a.date||''));
+
+  // Stats — always across all
+  const todayTotal = payments.filter(p=>p.date===todayStr).reduce((s,p)=>s+(p.amount||0),0);
+  const monthTotal = payments.filter(p=>(p.date||'').startsWith(monthStr)).reduce((s,p)=>s+(p.amount||0),0);
+  const el_t = document.getElementById('pi-stat-today');
+  const el_m = document.getElementById('pi-stat-month');
+  const el_c = document.getElementById('pi-stat-count');
+  if(el_t) el_t.textContent = '₹'+(todayTotal/1000).toFixed(1)+'k';
+  if(el_m) el_m.textContent = '₹'+(monthTotal/1000).toFixed(1)+'k';
+  if(el_c) el_c.textContent = payments.length;
+
+  // Apply filter
+  if(_piFilter==='today')  payments = payments.filter(p=>p.date===todayStr);
+  if(_piFilter==='week') {
+    const weekAgo = new Date(now); weekAgo.setDate(weekAgo.getDate()-7);
+    const weekStr = weekAgo.toISOString().slice(0,10);
+    payments = payments.filter(p=>p.date>=weekStr);
+  }
+  if(_piFilter==='month') payments = payments.filter(p=>(p.date||'').startsWith(monthStr));
+
+  // Search
+  if(q) payments = payments.filter(p=>(p.custName||'').toLowerCase().includes(q)||(p.notes||'').toLowerCase().includes(q)||(p.ref||'').toLowerCase().includes(q));
+
+  const list = document.getElementById('pi-list');
+  if(!list) return;
+  if(!payments.length) {
+    list.innerHTML = '<div class="empty-state"><div class="empty-icon">💳</div><p>No payments recorded yet</p><p style="font-size:12px;margin-top:8px;">Tap <b>+ Record</b> to add a payment</p></div>';
+    return;
+  }
+
+  // Group by date
+  const byDate = {};
+  payments.forEach(p => {
+    const d = p.date || todayStr;
+    if(!byDate[d]) byDate[d] = [];
+    byDate[d].push(p);
+  });
+
+  list.innerHTML = Object.entries(byDate).map(([date, entries])=>{
+    const dayTotal = entries.reduce((s,p)=>s+(p.amount||0),0);
+    const d = new Date(date+'T00:00:00');
+    const dateLabel = d.toLocaleDateString('en-IN',{weekday:'short',day:'numeric',month:'short',year:'numeric'});
+    const rows = entries.map(p=>`
+      <div style="padding:10px 14px;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;gap:10px;">
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:14px;font-weight:700;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${p.custName||'—'}</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px;">${PI_MODES[p.mode]||p.mode||'—'}${p.ref?' · '+p.ref:''}</div>
+          ${p.notes?`<div style="font-size:11px;color:var(--muted);font-style:italic;">${p.notes}</div>`:''}
+        </div>
+        <div style="text-align:right;flex-shrink:0;">
+          <div style="font-family:'DM Serif Display',serif;font-size:18px;color:var(--green);">₹${(p.amount||0).toLocaleString('en-IN')}</div>
+          <div style="display:flex;gap:4px;justify-content:flex-end;margin-top:4px;">
+            <button onclick="editPaymentIn('${p.id}')" style="background:none;border:1.5px solid var(--border);border-radius:6px;padding:2px 8px;font-size:10px;cursor:pointer;color:var(--muted);">✏</button>
+            <button onclick="deletePaymentIn('${p.id}')" style="background:none;border:1.5px solid #FFEBEE;border-radius:6px;padding:2px 8px;font-size:10px;cursor:pointer;color:var(--red);">🗑</button>
+          </div>
+        </div>
+      </div>`).join('');
+    return `<div class="card" style="margin-bottom:12px;overflow:hidden;">
+      <div style="background:var(--cream);padding:8px 14px;border-bottom:1.5px solid var(--border);display:flex;justify-content:space-between;align-items:center;">
+        <span style="font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;">${dateLabel}</span>
+        <span style="font-family:'DM Serif Display',serif;font-size:16px;color:var(--green);">₹${dayTotal.toLocaleString('en-IN')}</span>
+      </div>
+      ${rows}
+    </div>`;
+  }).join('');
+}
+
+// ── Open form ─────────────────────────────────────────────────────────
+function openPaymentInForm(prefillCustId) {
+  document.getElementById('pi-modal-title').textContent = 'Record Payment';
+  document.getElementById('pi-edit-id').value = '';
+  document.getElementById('pi-cust-input').value = '';
+  document.getElementById('pi-cust-id').value = '';
+  document.getElementById('pi-cust-balance').style.display = 'none';
+  document.getElementById('pi-date').value = TODAY_KEY;
+  document.getElementById('pi-amount').value = '';
+  document.getElementById('pi-ref').value = '';
+  document.getElementById('pi-notes').value = '';
+  document.getElementById('pi-cust-dropdown').style.display = 'none';
+  // Deselect all mode buttons
+  document.querySelectorAll('#pi-pay-modes .pay-mode-btn').forEach(b=>b.classList.remove('selected'));
+  // Pre-fill customer if provided
+  if(prefillCustId) {
+    const c = STATE.customers.find(x=>x.id===prefillCustId);
+    if(c) {
+      document.getElementById('pi-cust-input').value = c.name;
+      document.getElementById('pi-cust-id').value = c.id;
+      showPiBalance(c);
+    }
+  }
+  document.getElementById('modal-payment-in').classList.add('open');
+}
+
+function editPaymentIn(id) {
+  const p = STATE.payments.find(x=>x.id===id); if(!p) return;
+  document.getElementById('pi-modal-title').textContent = 'Edit Payment';
+  document.getElementById('pi-edit-id').value = id;
+  document.getElementById('pi-cust-input').value = p.custName||'';
+  document.getElementById('pi-cust-id').value = p.custId||'';
+  document.getElementById('pi-date').value = p.date||TODAY_KEY;
+  document.getElementById('pi-amount').value = p.amount||'';
+  document.getElementById('pi-ref').value = p.ref||'';
+  document.getElementById('pi-notes').value = p.notes||'';
+  document.getElementById('pi-cust-dropdown').style.display = 'none';
+  document.querySelectorAll('#pi-pay-modes .pay-mode-btn').forEach(b=>{
+    b.classList.toggle('selected', b.dataset.mode===p.mode);
+  });
+  // Set mode data on buttons
+  document.querySelectorAll('#pi-pay-modes .pay-mode-btn').forEach(b=>{
+    if(!b.dataset.mode) {
+      const m = b.getAttribute('onclick')?.match(/piSelectMode\(this,'([^']+)'\)/)?.[1];
+      if(m) b.dataset.mode = m;
+    }
+  });
+  document.getElementById('modal-payment-in').classList.add('open');
+}
+
+function deletePaymentIn(id) {
+  if(!confirm('Delete this payment entry?')) return;
+  STATE.payments = STATE.payments.filter(x=>x.id!==id);
+  savePaymentLedger();
+  renderPaymentIn();
+  showToast('Payment deleted');
+}
+
+// ── Customer search dropdown ──────────────────────────────────────────
+function piCustomerSearch(q) {
+  const dd = document.getElementById('pi-cust-dropdown');
+  if(!q || q.length < 1) { dd.style.display='none'; return; }
+  const matches = STATE.customers.filter(c=>c.name.toLowerCase().includes(q.toLowerCase())).slice(0,8);
+  if(!matches.length) { dd.style.display='none'; return; }
+  dd.innerHTML = matches.map(c=>{
+    const bal = c.balance||0;
+    return `<div onclick="piSelectCustomer('${c.id}')"
+      style="padding:10px 14px;cursor:pointer;border-bottom:1px solid var(--border);font-size:13px;font-weight:600;"
+      onmouseover="this.style.background='#FFFBF0'" onmouseout="this.style.background=''">
+      ${c.name}
+      ${bal>0?`<span style="float:right;font-size:11px;color:var(--red);font-weight:700;">₹${bal.toLocaleString('en-IN')} due</span>`:''}
+    </div>`;
+  }).join('');
+  dd.style.display = 'block';
+}
+
+function piSelectCustomer(id) {
+  const c = STATE.customers.find(x=>x.id===id); if(!c) return;
+  document.getElementById('pi-cust-input').value = c.name;
+  document.getElementById('pi-cust-id').value = id;
+  document.getElementById('pi-cust-dropdown').style.display = 'none';
+  showPiBalance(c);
+}
+
+function showPiBalance(c) {
+  const bal = c.balance||0;
+  const el = document.getElementById('pi-cust-balance');
+  if(bal>0) {
+    el.textContent = `Outstanding balance: ₹${bal.toLocaleString('en-IN')}`;
+    el.style.display = 'block';
+  } else {
+    el.style.display = 'none';
+  }
+}
+
+function piSelectMode(btn, mode) {
+  document.querySelectorAll('#pi-pay-modes .pay-mode-btn').forEach(b=>b.classList.remove('selected'));
+  btn.classList.add('selected');
+  btn.dataset.mode = mode;
+}
+
+// ── Save payment ──────────────────────────────────────────────────────
+function savePaymentIn() {
+  const custName = document.getElementById('pi-cust-input').value.trim();
+  const custId   = document.getElementById('pi-cust-id').value;
+  const date     = document.getElementById('pi-date').value;
+  const amount   = parseFloat(document.getElementById('pi-amount').value)||0;
+  const ref      = document.getElementById('pi-ref').value.trim();
+  const notes    = document.getElementById('pi-notes').value.trim();
+  const modeBtn  = document.querySelector('#pi-pay-modes .pay-mode-btn.selected');
+  const mode     = modeBtn?.dataset?.mode || modeBtn?.getAttribute('onclick')?.match(/piSelectMode\(this,'([^']+)'\)/)?.[1] || '';
+
+  if(!custName) { showToast('Select a customer'); return; }
+  if(!amount || amount <= 0) { showToast('Enter amount received'); return; }
+  if(!mode) { showToast('Select payment mode'); return; }
+  if(!date) { showToast('Select payment date'); return; }
+
+  const editId = document.getElementById('pi-edit-id').value;
+  if(editId) {
+    // Editing existing
+    const p = STATE.payments.find(x=>x.id===editId);
+    if(p) Object.assign(p, {custName,custId,date,amount,mode,ref,notes,updatedAt:Date.now()});
+  } else {
+    // New entry
+    const newEntry = {
+      id: 'PAY'+Date.now().toString().slice(-8),
+      custName, custId, date, amount, mode, ref, notes,
+      createdAt: Date.now(), createdBy: STATE.role
+    };
+    STATE.payments.unshift(newEntry);
+  }
+
+  // Update customer balance (reduce outstanding)
+  if(custId) {
+    const cust = STATE.customers.find(c=>c.id===custId);
+    if(cust && (cust.balance||0) > 0) {
+      cust.balance = Math.max(0, (cust.balance||0) - amount);
+      const extras = JSON.parse(localStorage.getItem(LS_CUSTS)||'[]');
+      const ei = extras.findIndex(x=>x.id===custId);
+      if(ei>=0) extras[ei].balance=cust.balance; else extras.push({id:custId,balance:cust.balance});
+      localStorage.setItem(LS_CUSTS, JSON.stringify(extras));
+    }
+  }
+
+  savePaymentLedger();
+
+  // ── If this payment was opened from History/Orders context, update that order's status too ──
+  const modal = document.getElementById('modal-payment-in');
+  const linkedOrderId = modal?.dataset?.orderId;
+  const linkedDate    = modal?.dataset?.orderDate;
+  if(linkedOrderId && !editId) {
+    updateOrderPaymentStatus(linkedOrderId, linkedDate, amount, mode, ref);
+    modal.dataset.orderId = '';
+    modal.dataset.orderDate = '';
+  }
+
+  closeModal('modal-payment-in');
+  // Refresh whatever is currently on screen
+  const activeScreen = document.querySelector('.screen.active');
+  if(activeScreen?.id==='screen-history')    renderHistory();
+  else if(activeScreen?.id==='screen-orders') renderOrdersList();
+  else if(activeScreen?.id==='screen-payment-in') renderPaymentIn();
+  else renderPaymentIn();
+  showToast(editId?'✓ Payment updated':'✓ Payment recorded — ₹'+amount.toLocaleString('en-IN'));
+}
+
+// Update order payment info and status in localStorage
+function updateOrderPaymentStatus(orderId, date, amount, mode, ref) {
+  const isToday = !date || date===TODAY_KEY;
+
+  // Helper to patch and save
+  function patchOrder(orders) {
+    const o = orders.find(x=>x.id===orderId);
+    if(!o) return false;
+    const prevPaid = o.payment?.received ? (o.payment.amount||0) : 0;
+    const newPaid  = prevPaid + amount;
+    const isDue    = newPaid < (o.total||0);
+    o.payment = {
+      mode, amount: newPaid, received: true,
+      ref: ref||'', receivedAt: Date.now()
+    };
+    o.status = isDue ? 'partial' : 'paid';
+    o.synced = false;
+    return true;
+  }
+
+  if(isToday) {
+    if(patchOrder(STATE.orders)) {
+      saveOrders();
+      renderDashboard();
+    }
+  } else if(date) {
+    const key = LS_PREFIX + date;
+    const pastOrders = JSON.parse(localStorage.getItem(key)||'[]');
+    if(patchOrder(pastOrders)) {
+      localStorage.setItem(key, JSON.stringify(pastOrders));
+    }
+  }
+  // Also sync to sheet if connected
+  if(getSheetUrl()) {
+    const allOrders = isToday ? STATE.orders :
+      JSON.parse(localStorage.getItem(LS_PREFIX+(date||TODAY_KEY))||'[]');
+    const o = allOrders.find(x=>x.id===orderId);
+    if(o) syncOneOrder(orderId);
+  }
+}
+
+// ── Upload payments from Excel/CSV ────────────────────────────────────
+let _uploadedPayments = [];
+
+function openPaymentUpload() {
+  _uploadedPayments = [];
+  document.getElementById('payment-upload-preview').style.display='none';
+  document.getElementById('payment-upload-confirm').style.display='none';
+  document.getElementById('payment-csv-upload').value='';
+  document.getElementById('modal-payment-upload').classList.add('open');
+}
+
+function downloadPaymentTemplate() {
+  const csv = `Date,Customer Name,Amount,Mode,Reference,Notes,Opening Balance
+${TODAY_KEY},MANKAR DOSA JEJURI,1000,cash,,Monthly payment,
+${TODAY_KEY},NIBM DORABJEES,500,phonepay,UTR123456,,
+15/04/2026,Misal katta\,bhiwadi,2000,neft,REF789,Old dues payment,
+,,,,,,,"Opening balance for new customer"
+`;
+  const blob = new Blob([csv], {type:'text/csv'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'GaavnFresh_Payment_Template.csv';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function handlePaymentUpload(input) {
+  const file = input.files[0]; if(!file) return;
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      let rows = [];
+      if(file.name.endsWith('.csv')) {
+        rows = parseCSVPayments(e.target.result);
+      } else {
+        showToast('For .xlsx files, please save as .csv first and re-upload');
+        return;
+      }
+      _uploadedPayments = rows;
+      showPaymentUploadPreview(rows);
+    } catch(err) {
+      showToast('Error reading file: '+err.message);
+    }
+  };
+  reader.readAsText(file);
+}
+
+function parseCSVPayments(text) {
+  const lines = text.trim().split('\n').filter(l=>l.trim());
+  if(lines.length < 2) throw new Error('File must have header row + data rows');
+  const headers = lines[0].split(',').map(h=>h.trim().toLowerCase().replace(/\s+/g,'_'));
+  const rows = [];
+  for(let i=1;i<lines.length;i++) {
+    const vals = lines[i].split(',').map(v=>v.trim().replace(/^"|"$/g,''));
+    if(vals.every(v=>!v)) continue; // skip blank rows
+    const obj = {};
+    headers.forEach((h,j) => obj[h] = vals[j]||'');
+    // Parse date
+    let dateStr = (obj['date']||'').trim();
+    if(dateStr) {
+      // Handle DD/MM/YYYY
+      const m = dateStr.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+      if(m) dateStr = `${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
+    }
+    const amount = parseFloat(obj['amount'])||0;
+    const openingBal = parseFloat(obj['opening_balance'])||0;
+    const custName = (obj['customer_name']||'').trim();
+    if(!custName) continue;
+    // Payment row
+    if(amount > 0) {
+      rows.push({
+        id: 'PAY'+Date.now().toString().slice(-8)+''+i,
+        custName, custId: findCustId(custName),
+        date: dateStr || TODAY_KEY,
+        amount, mode: (obj['mode']||'cash').toLowerCase().trim(),
+        ref: obj['reference']||'', notes: obj['notes']||'',
+        createdAt: Date.now(), createdBy: STATE.role||'import',
+        isOpeningBalance: false
+      });
+    }
+    // Opening balance row
+    if(openingBal > 0) {
+      rows.push({
+        id: 'BAL'+Date.now().toString().slice(-8)+''+i,
+        custName, custId: findCustId(custName),
+        date: dateStr || TODAY_KEY,
+        amount: openingBal, mode: 'opening_balance',
+        ref: '', notes: 'Opening balance import',
+        createdAt: Date.now(), createdBy: 'import',
+        isOpeningBalance: true
+      });
+    }
+  }
+  return rows;
+}
+
+function findCustId(name) {
+  const c = STATE.customers.find(x=>x.name.toLowerCase()===name.toLowerCase() ||
+    x.name.toLowerCase().includes(name.toLowerCase()) || name.toLowerCase().includes(x.name.toLowerCase()));
+  return c?.id||'';
+}
+
+function showPaymentUploadPreview(rows) {
+  const preview = document.getElementById('payment-upload-preview');
+  const tableEl = document.getElementById('payment-upload-table');
+  const sumEl   = document.getElementById('payment-upload-summary');
+  const confirmBtn = document.getElementById('payment-upload-confirm');
+
+  const preview5 = rows.slice(0,5);
+  tableEl.innerHTML = `<table style="width:100%;font-size:11px;border-collapse:collapse;">
+    <thead><tr style="background:var(--cream);">
+      <th style="padding:6px;text-align:left;border-bottom:1.5px solid var(--border);">Customer</th>
+      <th style="padding:6px;text-align:left;border-bottom:1.5px solid var(--border);">Date</th>
+      <th style="padding:6px;text-align:right;border-bottom:1.5px solid var(--border);">Amount</th>
+      <th style="padding:6px;text-align:left;border-bottom:1.5px solid var(--border);">Mode</th>
+    </tr></thead>
+    <tbody>${preview5.map(r=>`<tr>
+      <td style="padding:5px 6px;border-bottom:1px solid var(--border);">${r.custName}</td>
+      <td style="padding:5px 6px;border-bottom:1px solid var(--border);">${r.date}</td>
+      <td style="padding:5px 6px;border-bottom:1px solid var(--border);text-align:right;font-weight:700;">₹${r.amount.toLocaleString('en-IN')}</td>
+      <td style="padding:5px 6px;border-bottom:1px solid var(--border);">${PI_MODES[r.mode]||r.mode}</td>
+    </tr>`).join('')}</tbody>
+  </table>`;
+
+  const total = rows.reduce((s,r)=>s+(r.amount||0),0);
+  sumEl.textContent = `${rows.length} payments found · Total ₹${total.toLocaleString('en-IN')}`;
+  preview.style.display = 'block';
+  confirmBtn.style.display = 'block';
+}
+
+function confirmPaymentUpload() {
+  if(!_uploadedPayments.length) return;
+  // Merge, avoid duplicates by id
+  const existingIds = new Set(STATE.payments.map(p=>p.id));
+  let added = 0;
+  _uploadedPayments.forEach(p => {
+    if(!existingIds.has(p.id)) {
+      STATE.payments.push(p);
+      added++;
+    }
+    // Update opening balances for customers
+    if(p.isOpeningBalance && p.custId) {
+      const cust = STATE.customers.find(c=>c.id===p.custId);
+      if(cust) {
+        cust.balance = (cust.balance||0) + p.amount;
+        const extras = JSON.parse(localStorage.getItem(LS_CUSTS)||'[]');
+        const ei = extras.findIndex(x=>x.id===p.custId);
+        const balObj = {id:p.custId, name:cust.name, balance:cust.balance};
+        if(ei>=0) extras[ei] = {...extras[ei],...balObj}; else extras.push(balObj);
+        localStorage.setItem(LS_CUSTS, JSON.stringify(extras));
+      }
+    }
+  });
+  savePaymentLedger();
+  closeModal('modal-payment-upload');
+  renderPaymentIn();
+  showToast(`✓ ${added} payments imported`);
+  _uploadedPayments = [];
+}
+
+// Close dropdown when clicking outside
+document.addEventListener('click', function(e) {
+  const dd = document.getElementById('pi-cust-dropdown');
+  const inp = document.getElementById('pi-cust-input');
+  if(dd && inp && !dd.contains(e.target) && e.target !== inp) {
+    dd.style.display = 'none';
+  }
+});
+
+// ── END PAYMENT-IN LEDGER ─────────────────────────────────────────────
 
 // ── DELIVERY AUTO-POLL (every 30s) ───────────────────────────────────
 // Delivery person sees orders automatically — no copy-paste needed.
