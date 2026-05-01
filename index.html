@@ -667,21 +667,29 @@ h1,h2,h3,.serif{font-family:'DM Serif Display',serif;}
 
 <!-- SHARE TO DELIVERY MODAL -->
 <div class="modal-overlay" id="modal-edit-order">
-  <div class="modal-sheet" style="max-height:90vh;overflow-y:auto;">
+  <div class="modal-sheet" style="max-height:92vh;overflow-y:auto;">
     <div class="modal-handle"></div>
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
       <div class="modal-title" style="margin-bottom:0;" id="edit-order-title">Edit Order</div>
-      <button onclick="closeModal('modal-edit-order')" style="background:none;border:none;font-size:18px;cursor:pointer;color:var(--muted);">✕</button>
+      <button onclick="closeModal('modal-edit-order')" style="background:none;border:none;font-size:18px;cursor:pointer;color:var(--muted);">&#10005;</button>
     </div>
-    <div id="edit-order-customer" style="background:var(--cream);border:1.5px solid var(--border);border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:13px;font-weight:700;color:var(--ink);"></div>
+    <input type="hidden" id="edit-order-id">
+    <div id="edit-order-customer" style="background:var(--cream);border:1.5px solid var(--border);border-radius:10px;padding:10px 14px;margin-bottom:10px;font-size:13px;font-weight:700;color:var(--ink);"></div>
+    <div class="field" style="margin-bottom:12px;">
+      <label style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;">Order Date</label>
+      <input type="date" id="edit-order-date" style="width:100%;background:var(--cream);border:1.5px solid var(--amber);border-radius:10px;padding:10px 12px;font-size:14px;font-weight:700;color:var(--ink);outline:none;">
+    </div>
     <div id="edit-order-items"></div>
     <div class="field" style="margin-top:10px;">
       <label>Notes</label>
       <input type="text" id="edit-order-notes" placeholder="Delivery note, instructions...">
     </div>
+    <div style="background:var(--amber-light);border-radius:8px;padding:8px 12px;margin:10px 0;font-size:12px;color:var(--amber);">
+      &#9888; Changing the date will move this order to the new date in the Google Sheet.
+    </div>
     <div class="btn-row" style="margin-top:14px;">
       <button class="btn btn-secondary" onclick="closeModal('modal-edit-order')">Cancel</button>
-      <button class="btn btn-primary" onclick="saveEditOrder()">✓ Save Changes</button>
+      <button class="btn btn-primary" onclick="saveEditOrder()">&#10003; Save Changes</button>
     </div>
   </div>
 </div>
@@ -1962,23 +1970,54 @@ function filterOrders(f, btn) {
 }
 
 function renderOrdersList() {
-  // Apply saved delivery sequence before rendering
   applySequenceToOrders();
   let orders = [...STATE.orders];
-  // BUG2 FIX: delivery sees ALL order statuses (confirmed, modified, delivered, due, paid)
-  // No status filter for delivery in "All" tab — they need to see everything they've done
   if(STATE.role==='delivery') {
-    // Only hide draft orders from delivery view
     orders = orders.filter(o=>o.status!=='draft');
   }
   if(currentFilter!=='all') orders = orders.filter(o=>o.status===currentFilter);
-  // Sort: confirmed/modified first (actionable), then delivered, then paid/due
-  const priority = {confirmed:0, modified:0, delivered:1, due:2, partial:2, paid:3};
-  orders.sort((a,b)=>(priority[a.status]??2)-(priority[b.status]??2));
+
   const list = document.getElementById('orders-list');
-  list.innerHTML = orders.length ? orders.map(o=>orderCardHTML(o)).join('')
-    : '<div class="empty-state"><div class="empty-icon">📦</div><p>No orders</p></div>';
-  // BUG2 FIX: for delivery, auto-expand all confirmed/modified (need action)
+  if(!orders.length) {
+    list.innerHTML = '<div class="empty-state"><div class="empty-icon">📦</div><p>No orders</p></div>';
+    return;
+  }
+
+  // Group by date, newest date first
+  const byDate = {};
+  orders.forEach(o => {
+    const d = (o.date && o.date !== 'undefined') ? o.date : TODAY_KEY;
+    if(!byDate[d]) byDate[d] = [];
+    byDate[d].push(o);
+  });
+  const dates = Object.keys(byDate).sort().reverse();
+
+  // Within each date: confirmed/modified first, then delivered, then paid/due
+  const priority = {confirmed:0,modified:0,delivered:1,due:2,partial:2,paid:3,draft:4};
+  dates.forEach(d => {
+    byDate[d].sort((a,b)=>(priority[a.status]??2)-(priority[b.status]??2));
+  });
+
+  let html = '';
+  dates.forEach(d => {
+    const dayOrders = byDate[d];
+    const dayTotal  = dayOrders.reduce((s,o)=>s+(o.total||0),0);
+    const dayCount  = dayOrders.length;
+    // Format date header
+    const dt = new Date(d+'T00:00:00');
+    const isToday = d === TODAY_KEY;
+    const dateLabel = isToday ? 'Today — '+dt.toLocaleDateString('en-IN',{weekday:'short',day:'numeric',month:'short'})
+      : dt.toLocaleDateString('en-IN',{weekday:'short',day:'numeric',month:'short',year:'numeric'});
+    html += '<div style="display:flex;align-items:center;justify-content:space-between;'
+      +'margin:14px 0 6px;padding:6px 10px;background:var(--ink);border-radius:8px;">'
+      +'<span style="font-size:12px;font-weight:700;color:var(--cream);">📅 '+dateLabel+'</span>'
+      +'<span style="font-size:12px;font-weight:700;color:var(--amber);">'+dayCount+' orders · ₹'+dayTotal.toLocaleString('en-IN')+'</span>'
+      +'</div>';
+    html += dayOrders.map(o=>orderCardHTML(o)).join('');
+  });
+
+  list.innerHTML = html;
+
   if(STATE.role==='delivery') {
     orders.forEach(o=>{
       if(o.status==='confirmed'||o.status==='modified') {
@@ -2390,7 +2429,93 @@ function submitOrder() {
 // ── MODIFY ORDER ─────────────────────────────────────────────────────
 // openEditOrder is called from order cards for sales/owner role
 function openEditOrder(orderId) {
-  openModifyOrder(orderId);
+  const o = STATE.orders.find(x=>x.id===orderId);
+  if(!o) return;
+  document.getElementById('edit-order-id').value   = orderId;
+  document.getElementById('edit-order-title').textContent = 'Edit Order #'+orderId;
+  document.getElementById('edit-order-customer').textContent = o.customerName + (o.customerArea?' · '+o.customerArea:'');
+  document.getElementById('edit-order-date').value = (o.date && o.date!=='undefined') ? o.date : TODAY_KEY;
+  document.getElementById('edit-order-notes').value= o.notes||'';
+
+  // Build item editors
+  const items = o.items||[];
+  let html = '';
+  items.forEach((item,i) => {
+    const isLaadi = item.product==='pl' || item.weightPending!==undefined;
+    html += '<div class="card" style="margin-bottom:8px;"><div class="card-body" style="padding:10px 14px;">'
+      +'<div style="font-weight:700;font-size:13px;margin-bottom:8px;">'+item.name+'</div>'
+      +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">'
+        +'<div class="field" style="margin-bottom:0;"><label>Qty '+(isLaadi?'(ladis)':'('+item.unit+')')+'</label>'
+          +'<input type="number" id="eo-qty-'+i+'" value="'+item.qty+'" min="0" step="'+(isLaadi?'1':'0.5')+'" oninput="recalcEditOrder('+i+')"></div>'
+        +'<div class="field" style="margin-bottom:0;"><label>Rate (₹'+(isLaadi?'/kg':'/'+item.unit)+')</label>'
+          +'<input type="number" id="eo-rate-'+i+'" value="'+item.rate+'" min="0" step="1" oninput="recalcEditOrder('+i+')"></div>'
+      +'</div>'
+      +(isLaadi
+        ? '<div class="field" style="margin-bottom:0;margin-top:8px;"><label>Est. Weight (kg)</label>'
+          +'<input type="number" id="eo-estkg-'+i+'" value="'+(item.estKg||'')+'" min="0" step="0.1" oninput="recalcEditOrder('+i+')"></div>'
+        : '')
+      +'<div style="text-align:right;font-size:13px;font-weight:700;margin-top:6px;color:var(--amber);" id="eo-amt-'+i+'">₹'+((item.amount||0).toLocaleString('en-IN'))+'</div>'
+    +'</div></div>';
+  });
+  document.getElementById('edit-order-items').innerHTML = html;
+  document.getElementById('modal-edit-order').classList.add('open');
+}
+
+function recalcEditOrder(i) {
+  const qty  = parseFloat(document.getElementById('eo-qty-'+i)?.value)||0;
+  const rate = parseFloat(document.getElementById('eo-rate-'+i)?.value)||0;
+  const estkgEl = document.getElementById('eo-estkg-'+i);
+  let amt;
+  if(estkgEl) {
+    const estKg = parseFloat(estkgEl.value)||0;
+    amt = estKg * rate;
+  } else {
+    amt = qty * rate;
+  }
+  const el = document.getElementById('eo-amt-'+i);
+  if(el) el.textContent = '₹'+amt.toLocaleString('en-IN');
+}
+
+function saveEditOrder() {
+  const orderId = document.getElementById('edit-order-id').value;
+  const o = STATE.orders.find(x=>x.id===orderId);
+  if(!o) return;
+  const newDate  = document.getElementById('edit-order-date').value;
+  const newNotes = document.getElementById('edit-order-notes').value.trim();
+  const oldDate  = o.date;
+
+  const newItems = (o.items||[]).map((item,i) => {
+    const qty  = parseFloat(document.getElementById('eo-qty-'+i)?.value)||0;
+    const rate = parseFloat(document.getElementById('eo-rate-'+i)?.value)||0;
+    const estkgEl = document.getElementById('eo-estkg-'+i);
+    const isLaadi = estkgEl !== null;
+    const estKg = isLaadi ? (parseFloat(estkgEl?.value)||0) : 0;
+    const amt  = isLaadi ? estKg*rate : qty*rate;
+    return {...item, qty, rate, amount:amt,
+      ...(isLaadi?{estKg}:{})
+    };
+  });
+
+  const newTotal = newItems.reduce((s,i)=>s+i.amount,0);
+  Object.assign(o, {
+    items: newItems,
+    total: newTotal,
+    notes: newNotes,
+    date:  newDate || oldDate,
+    editedBy: STATE.role,
+    editedAt: Date.now(),
+    synced: false,
+  });
+  // Keep status as confirmed if it was confirmed/draft
+  if(o.status==='draft') o.status='confirmed';
+
+  saveOrders();
+  closeModal('modal-edit-order');
+  // Sync to sheet — the date may have changed so it goes to correct month sheet
+  if(STATE.sheetUrl) syncOneOrder(orderId);
+  renderDashboard();
+  renderOrdersList();
+  showToast('✓ Order updated'+(newDate!==oldDate?' · moved to '+newDate:''));
 }
 
 function openModifyOrder(orderId) {
@@ -2931,222 +3056,195 @@ function clearLocalOrders() {
 // ── APPS SCRIPT CODE ─────────────────────────────────────────────────
 function getAppsScriptCode() {
   var lines = [
-    '// GAAVN FRESH \u2014 Sales App \u00b7 Google Apps Script',
+    '// GAAVN FRESH — Sales App · Google Apps Script v2',
     '// Deploy: Execute as Me | Who has access: Anyone',
-    '// Paste this entire script, Save, then Deploy \u2192 New Deployment \u2192 Web App',
+    '// Paste entire script → Save → Deploy → New Deployment → Web App',
     '',
     'var SS_ID = SpreadsheetApp.getActiveSpreadsheet().getId();',
     '',
     'function doGet(e) {',
     '  try {',
-    '    var action = e.parameter.action || "";',
-    '    if (action === "ping")       return handlePing(e);',
-    '    if (action === "logOrder")   return logOrder(e.parameter);',
-    '    if (action === "logPayment") return logPayment(e.parameter);',
-    '    if (action === "getOrders")  return getOrders(e.parameter);',
-    '    return jsonOut({error: "Unknown action: " + action});',
-    '  } catch(err) {',
-    '    return jsonOut({error: err.message});',
-    '  }',
+    '    var a = e.parameter.action || "";',
+    '    if (a === "ping")       return handlePing(e);',
+    '    if (a === "logOrder")   return logOrder(e.parameter);',
+    '    if (a === "logPayment") return logPayment(e.parameter);',
+    '    if (a === "getOrders")  return getOrders(e.parameter);',
+    '    return jsonOut({error: "Unknown action: " + a});',
+    '  } catch(err) { return jsonOut({error: err.message}); }',
     '}',
     '',
     'function jsonOut(obj) {',
-    '  return ContentService',
-    '    .createTextOutput(JSON.stringify(obj))',
-    '    .setMimeType(ContentService.MimeType.JSON);',
+    '  return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);',
     '}',
     '',
     'function handlePing(e) {',
     '  var ss = SpreadsheetApp.openById(SS_ID);',
     '  var sh = ss.getSheetByName("Ping_Log") || ss.insertSheet("Ping_Log");',
-    '  if (sh.getLastRow() === 0) sh.appendRow(["Timestamp","Action"]);',
+    '  if(sh.getLastRow()===0) sh.appendRow(["Timestamp","Action"]);',
     '  sh.appendRow([new Date().toLocaleString("en-IN"), "ping"]);',
     '  return jsonOut({status:"ok", pong:true});',
     '}',
     '',
-    '// \u2500\u2500 MONTHLY SHEET NAME \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500',
+    '// ── MONTHLY SHEET HELPERS ──────────────────────────────────────────',
     'function getMonthTag(dateStr) {',
-    '  // dateStr = "YYYY-MM-DD" -> returns "YYYY-MM" for sheet name',
-    '  if (!dateStr || dateStr === "undefined") {',
+    '  if(!dateStr || dateStr==="undefined") {',
     '    dateStr = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd");',
     '  }',
-    '  return dateStr.slice(0, 7); // "2026-04"',
-    '}',
-    '',
-    'function getOrdersSheetName(dateStr) {',
-    '  return "Orders_" + getMonthTag(dateStr);',
-    '}',
-    '',
-    'function getPaymentsSheetName(dateStr) {',
-    '  return "Payments_" + getMonthTag(dateStr);',
-    '}',
-    '',
-    '// \u2500\u2500 LOG / UPDATE ORDER \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500',
-    'function logOrder(p) {',
-    '  var ss = SpreadsheetApp.openById(SS_ID);',
-    '  var rawDate = String(p.date || "").trim();',
-    '  if (!rawDate || rawDate === "undefined") {',
-    '    rawDate = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd");',
-    '  }',
-    '  var sheetName = getOrdersSheetName(rawDate);',
-    '  var sh = getOrCreateSheet(ss, sheetName);',
-    '  var headers = ["Order ID","Date","Customer","Category","Area","Status",',
-    '    "Total (Rs)","Payment Mode","Payment Amt","Items","Notes","Mod Notes","Created By","Synced At","Items Raw"];',
-    '  if (sh.getLastRow() === 0) {',
-    '    sh.appendRow(headers);',
-    '    sh.getRange(1,1,1,headers.length).setFontWeight("bold").setBackground("#1A3A1F").setFontColor("#FFFFFF");',
-    '    sh.setFrozenRows(1);',
-    '  }',
-    '  var items = [];',
-    '  try { items = JSON.parse(p.items || "[]"); } catch(ex) {}',
-    '  var itemStr = items.map(function(i) {',
-    '    return i.qty + " " + i.unit + " " + i.name + " @Rs" + i.rate;',
-    '  }).join(", ");',
-    '  var now = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "dd/MM/yyyy HH:mm");',
-    '  var data = sh.getDataRange().getValues();',
-    '  // Check if this is a day-total separator row (skip it) or order row',
-    '  for (var r = 1; r < data.length; r++) {',
-    '    if (String(data[r][0]) === String(p.orderId)) {',
-    '      sh.getRange(r+1,1,1,headers.length).setValues([[',
-    '        p.orderId, p.date, p.customerName, p.customerCategory||"", p.customerArea||"",',
-    '        p.status, parseFloat(p.total)||0, p.paymentMode||"", parseFloat(p.paymentAmount)||0,',
-    '        itemStr, p.notes||"", p.modNotes||"", p.createdBy||"", now, p.items||""',
-    '      ]]);',
-    '      applyRowColor(sh, r+1, p.status);',
-    '      updateDayTotals(sh, rawDate);',
-    '      return jsonOut({status:"updated", row:r+1});',
-    '    }',
-    '  }',
-    '  // New row — append before inserting/updating day total',
-    '  sh.appendRow([',
-    '    p.orderId, p.date, p.customerName, p.customerCategory||"", p.customerArea||"",',
-    '    p.status, parseFloat(p.total)||0, p.paymentMode||"", parseFloat(p.paymentAmount)||0,',
-    '    itemStr, p.notes||"", p.modNotes||"", p.createdBy||"", now, p.items||""',
-    '  ]);',
-    '  var newRow = sh.getLastRow();',
-    '  applyRowColor(sh, newRow, p.status);',
-    '  updateDayTotals(sh, rawDate);',
-    '  return jsonOut({status:"ok", row:newRow});',
-    '}',
-    '',
-    '// \u2500\u2500 DAY TOTALS \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500',
-    '// Called after every order write. Removes old day-total row and re-inserts',
-    '// a fresh summary row at the bottom for that day.',
-    'function updateDayTotals(sh, dateStr) {',
-    '  var data = sh.getDataRange().getValues();',
-    '  // Remove existing total rows for this date (col A starts with "TOTAL:")',
-    '  var rowsToDelete = [];',
-    '  for (var r = data.length - 1; r >= 1; r--) {',
-    '    if (String(data[r][0]).indexOf("TOTAL:" + dateStr) === 0) {',
-    '      rowsToDelete.push(r + 1); // 1-based',
-    '    }',
-    '  }',
-    '  // Delete from bottom up to maintain row indices',
-    '  rowsToDelete.sort(function(a,b){return b-a;});',
-    '  rowsToDelete.forEach(function(r){ sh.deleteRow(r); });',
-    '  // Re-read after deletions',
-    '  data = sh.getDataRange().getValues();',
-    '  // Sum all rows matching this date',
-    '  var totalSales = 0, totalPaid = 0, orderCount = 0;',
-    '  for (var i = 1; i < data.length; i++) {',
-    '    var rowDate = String(data[i][0]).indexOf("TOTAL:") === 0 ? null : String(data[i][1]);',
-    '    if (rowDate === dateStr) {',
-    '      totalSales += parseFloat(data[i][6]) || 0;',
-    '      totalPaid  += parseFloat(data[i][8]) || 0;',
-    '      orderCount++;',
-    '    }',
-    '  }',
-    '  if (orderCount === 0) return;',
-    '  // Append total row',
-    '  var d = new Date(dateStr + "T00:00:00");',
-    '  var dateLabel = Utilities.formatDate(d, Session.getScriptTimeZone(), "dd/MM/yyyy");',
-    '  sh.appendRow([',
-    '    "TOTAL:" + dateStr, dateStr,',
-    '    "\u25ba DAY TOTAL \u2014 " + dateLabel + " (" + orderCount + " orders)",',
-    '    "", "", "SUMMARY",',
-    '    totalSales, "", totalPaid,',
-    '    "Sales: Rs" + totalSales + " | Collected: Rs" + totalPaid + " | Due: Rs" + (totalSales-totalPaid),',
-    '    "", "", "", "", ""',
-    '  ]);',
-    '  var totalRow = sh.getLastRow();',
-    '  sh.getRange(totalRow,1,1,15)',
-    '    .setBackground("#1A3A1F").setFontColor("#FFFFFF").setFontWeight("bold");',
-    '}',
-    '',
-    'function applyRowColor(sh, row, status) {',
-    '  var colors = {',
-    '    confirmed:"#E8F5E9", modified:"#FFF3E0", delivered:"#E3F2FD",',
-    '    paid:"#E8F5E9", due:"#FFEBEE", partial:"#FFF8E1", draft:"#F5F5F5"',
-    '  };',
-    '  sh.getRange(row,1,1,15).setBackground(colors[status] || "#FFFFFF");',
-    '}',
-    '',
-    '// \u2500\u2500 LOG PAYMENT \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500',
-    'function logPayment(p) {',
-    '  var ss = SpreadsheetApp.openById(SS_ID);',
-    '  var rawDate = String(p.date || "").trim();',
-    '  if (!rawDate || rawDate === "undefined") {',
-    '    rawDate = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd");',
-    '  }',
-    '  var sheetName = getPaymentsSheetName(rawDate);',
-    '  var sh = getOrCreateSheet(ss, sheetName);',
-    '  var headers = ["Pay ID","Date","Customer","Cust ID","Amount (Rs)","Mode","Reference","Notes","Created By","Synced At"];',
-    '  if (sh.getLastRow() === 0) {',
-    '    sh.appendRow(headers);',
-    '    sh.getRange(1,1,1,headers.length).setFontWeight("bold").setBackground("#0D47A1").setFontColor("#FFFFFF");',
-    '    sh.setFrozenRows(1);',
-    '  }',
-    '  var now = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "dd/MM/yyyy HH:mm");',
-    '  // Update existing entry if payId matches',
-    '  var data = sh.getDataRange().getValues();',
-    '  for (var r = 1; r < data.length; r++) {',
-    '    if (String(data[r][0]) === String(p.payId)) {',
-    '      sh.getRange(r+1,1,1,headers.length).setValues([[',
-    '        p.payId, p.date, p.custName||"", p.custId||"",',
-    '        parseFloat(p.amount)||0, p.mode||"", p.ref||"", p.notes||"",',
-    '        p.createdBy||"", now',
-    '      ]]);',
-    '      sh.getRange(r+1,1,1,headers.length).setBackground("#E8F5E9");',
-    '      return jsonOut({status:"updated", row:r+1});',
-    '    }',
-    '  }',
-    '  sh.appendRow([',
-    '    p.payId, p.date, p.custName||"", p.custId||"",',
-    '    parseFloat(p.amount)||0, p.mode||"", p.ref||"", p.notes||"",',
-    '    p.createdBy||"", now',
-    '  ]);',
-    '  sh.getRange(sh.getLastRow(),1,1,headers.length).setBackground("#E8F5E9");',
-    '  return jsonOut({status:"ok", row:sh.getLastRow()});',
-    '}',
-    '',
-    'function getOrders(p) {',
-    '  var ss = SpreadsheetApp.openById(SS_ID);',
-    '  var rawDate2 = String(p.date || "").trim();',
-    '  if (!rawDate2 || rawDate2 === "undefined") rawDate2 = TODAY();',
-    '  var sheetName = getOrdersSheetName(rawDate2);',
-    '  var sh = ss.getSheetByName(sheetName);',
-    '  if (!sh) return jsonOut({orders:[], error:"No sheet for " + p.date});',
-    '  var data = sh.getDataRange().getValues();',
-    '  if (data.length < 2) return jsonOut({orders:[], date:p.date});',
-    '  var headers = data[0];',
-    '  // Filter only rows for the requested date (skip TOTAL: rows and other dates)',
-    '  var orders = data.slice(1).filter(function(row) {',
-    '    var id = String(row[0]);',
-    '    return id && id.indexOf("TOTAL:") !== 0 && String(row[1]) === rawDate2;',
-    '  }).map(function(row) {',
-    '    var obj = {};',
-    '    headers.forEach(function(h,i){ obj[h] = row[i] !== undefined ? row[i] : ""; });',
-    '    return obj;',
-    '  }).filter(function(o){ return o["Order ID"]; });',
-    '  return jsonOut({orders:orders, date:p.date, count:orders.length});',
-    '}',
-    '',
-    'function TODAY() {',
-    '  return Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd");',
+    '  return dateStr.slice(0,7);',
     '}',
     '',
     'function getOrCreateSheet(ss, name) {',
     '  return ss.getSheetByName(name) || ss.insertSheet(name);',
+    '}',
+    '',
+    '// ── LOG ORDER ───────────────────────────────────────────────────────',
+    'function logOrder(p) {',
+    '  var ss = SpreadsheetApp.openById(SS_ID);',
+    '  var rawDate = String(p.date||"").trim();',
+    '  if(!rawDate||rawDate==="undefined") rawDate = Utilities.formatDate(new Date(),Session.getScriptTimeZone(),"yyyy-MM-dd");',
+    '  var shName = "Orders_" + getMonthTag(rawDate);',
+    '  var sh = getOrCreateSheet(ss, shName);',
+    '  var headers = ["Order ID","Date","Customer","Category","Area","Status","Total (Rs)","Payment Mode","Payment Amt","Items","Notes","Mod Notes","Created By","Synced At","Items Raw"];',
+    '  if(sh.getLastRow()===0) {',
+    '    sh.appendRow(headers);',
+    '    sh.getRange(1,1,1,headers.length).setFontWeight("bold").setBackground("#1A3A1F").setFontColor("#fff");',
+    '    sh.setFrozenRows(1);',
+    '  }',
+    '  var items=[];',
+    '  try{items=JSON.parse(p.items||"[]");}catch(ex){}',
+    '  var itemStr=items.map(function(i){return i.qty+" "+i.unit+" "+i.name+" @Rs"+i.rate;}).join(", ");',
+    '  var now=Utilities.formatDate(new Date(),Session.getScriptTimeZone(),"dd/MM/yyyy HH:mm");',
+    '  var rowData=[p.orderId,rawDate,p.customerName,p.customerCategory||"",p.customerArea||"",',
+    '    p.status,parseFloat(p.total)||0,p.paymentMode||"",parseFloat(p.paymentAmount)||0,',
+    '    itemStr,p.notes||"",p.modNotes||"",p.createdBy||"",now,p.items||""];',
+    '  // Update existing row if orderId matches (handles edits & date changes)',
+    '  var data=sh.getDataRange().getValues();',
+    '  for(var r=1;r<data.length;r++) {',
+    '    if(String(data[r][0]).indexOf("TOTAL:")===0) continue; // skip total rows',
+    '    if(String(data[r][0])===String(p.orderId)) {',
+    '      sh.getRange(r+1,1,1,headers.length).setValues([rowData]);',
+    '      applyRowColor(sh,r+1,p.status);',
+    '      updateDayTotals(sh,rawDate);',
+    '      return jsonOut({status:"updated",row:r+1});',
+    '    }',
+    '  }',
+    '  // Also check OTHER month sheets in case date was changed',
+    '  var allSheets=ss.getSheets();',
+    '  for(var s=0;s<allSheets.length;s++) {',
+    '    var shOther=allSheets[s];',
+    '    if(shOther.getName()===shName) continue;',
+    '    if(shOther.getName().indexOf("Orders_")!==0) continue;',
+    '    var dataOther=shOther.getDataRange().getValues();',
+    '    for(var r2=1;r2<dataOther.length;r2++) {',
+    '      if(String(dataOther[r2][0]).indexOf("TOTAL:")===0) continue;',
+    '      if(String(dataOther[r2][0])===String(p.orderId)) {',
+    '        // Found in old sheet — delete from there, add to new sheet',
+    '        shOther.deleteRow(r2+1);',
+    '        var oldDate=String(dataOther[r2][1]);',
+    '        updateDayTotals(shOther,oldDate);',
+    '        break;',
+    '      }',
+    '    }',
+    '  }',
+    '  // Append new row',
+    '  sh.appendRow(rowData);',
+    '  var newRow=sh.getLastRow();',
+    '  applyRowColor(sh,newRow,p.status);',
+    '  updateDayTotals(sh,rawDate);',
+    '  return jsonOut({status:"ok",row:newRow});',
+    '}',
+    '',
+    '// ── DAY TOTALS ──────────────────────────────────────────────────────',
+    'function updateDayTotals(sh, dateStr) {',
+    '  // Remove old TOTAL row for this date',
+    '  var data=sh.getDataRange().getValues();',
+    '  for(var r=data.length-1;r>=1;r--) {',
+    '    if(String(data[r][0])==="TOTAL:"+dateStr) { sh.deleteRow(r+1); }',
+    '  }',
+    '  // Re-read and sum all rows for this date',
+    '  data=sh.getDataRange().getValues();',
+    '  var totSales=0,totPaid=0,count=0;',
+    '  for(var i=1;i<data.length;i++) {',
+    '    if(String(data[i][0]).indexOf("TOTAL:")===0) continue;',
+    '    if(String(data[i][1])===dateStr) {',
+    '      totSales+=parseFloat(data[i][6])||0;',
+    '      totPaid +=parseFloat(data[i][8])||0;',
+    '      count++;',
+    '    }',
+    '  }',
+    '  if(count===0) return;',
+    '  // Find the last row for this date and insert total after it',
+    '  var lastDateRow=1;',
+    '  data=sh.getDataRange().getValues();',
+    '  for(var j=1;j<data.length;j++) {',
+    '    if(String(data[j][0]).indexOf("TOTAL:")===0) continue;',
+    '    if(String(data[j][1])===dateStr) lastDateRow=j+1;',
+    '  }',
+    '  sh.insertRowAfter(lastDateRow);',
+    '  var d=new Date(dateStr+"T00:00:00");',
+    '  var dlabel=Utilities.formatDate(d,Session.getScriptTimeZone(),"dd/MM/yyyy");',
+    '  var totalRow=["TOTAL:"+dateStr,dateStr,',
+    '    "DAY TOTAL — "+dlabel+" ("+count+" orders)","","","SUMMARY",',
+    '    totSales,"",totPaid,',
+    '    "Sales: Rs"+totSales+" | Collected: Rs"+totPaid+" | Due: Rs"+(totSales-totPaid),',
+    '    "","","","",""];',
+    '  sh.getRange(lastDateRow+1,1,1,totalRow.length).setValues([totalRow]);',
+    '  sh.getRange(lastDateRow+1,1,1,totalRow.length).setBackground("#1A3A1F").setFontColor("#fff").setFontWeight("bold");',
+    '}',
+    '',
+    'function applyRowColor(sh,row,status) {',
+    '  var colors={confirmed:"#E8F5E9",modified:"#FFF3E0",delivered:"#E3F2FD",',
+    '    paid:"#E8F5E9",due:"#FFEBEE",partial:"#FFF8E1",draft:"#F5F5F5"};',
+    '  sh.getRange(row,1,1,15).setBackground(colors[status]||"#FFFFFF");',
+    '}',
+    '',
+    '// ── LOG PAYMENT ─────────────────────────────────────────────────────',
+    'function logPayment(p) {',
+    '  var ss=SpreadsheetApp.openById(SS_ID);',
+    '  var rawDate=String(p.date||"").trim();',
+    '  if(!rawDate||rawDate==="undefined") rawDate=Utilities.formatDate(new Date(),Session.getScriptTimeZone(),"yyyy-MM-dd");',
+    '  var shName="Payments_"+getMonthTag(rawDate);',
+    '  var sh=getOrCreateSheet(ss,shName);',
+    '  var headers=["Pay ID","Date","Customer","Cust ID","Amount (Rs)","Mode","Reference","Notes","Created By","Synced At"];',
+    '  if(sh.getLastRow()===0) {',
+    '    sh.appendRow(headers);',
+    '    sh.getRange(1,1,1,headers.length).setFontWeight("bold").setBackground("#0D47A1").setFontColor("#fff");',
+    '    sh.setFrozenRows(1);',
+    '  }',
+    '  var now=Utilities.formatDate(new Date(),Session.getScriptTimeZone(),"dd/MM/yyyy HH:mm");',
+    '  var data=sh.getDataRange().getValues();',
+    '  for(var r=1;r<data.length;r++) {',
+    '    if(String(data[r][0])===String(p.payId)) {',
+    '      sh.getRange(r+1,1,1,headers.length).setValues([[p.payId,p.date,p.custName||"",p.custId||"",',
+    '        parseFloat(p.amount)||0,p.mode||"",p.ref||"",p.notes||"",p.createdBy||"",now]]);',
+    '      sh.getRange(r+1,1,1,headers.length).setBackground("#E8F5E9");',
+    '      return jsonOut({status:"updated",row:r+1});',
+    '    }',
+    '  }',
+    '  sh.appendRow([p.payId,p.date,p.custName||"",p.custId||"",parseFloat(p.amount)||0,p.mode||"",p.ref||"",p.notes||"",p.createdBy||"",now]);',
+    '  sh.getRange(sh.getLastRow(),1,1,headers.length).setBackground("#E8F5E9");',
+    '  return jsonOut({status:"ok",row:sh.getLastRow()});',
+    '}',
+    '',
+    '// ── GET ORDERS ──────────────────────────────────────────────────────',
+    'function getOrders(p) {',
+    '  var ss=SpreadsheetApp.openById(SS_ID);',
+    '  var rawDate=String(p.date||"").trim();',
+    '  if(!rawDate||rawDate==="undefined") rawDate=Utilities.formatDate(new Date(),Session.getScriptTimeZone(),"yyyy-MM-dd");',
+    '  var shName="Orders_"+getMonthTag(rawDate);',
+    '  var sh=ss.getSheetByName(shName);',
+    '  if(!sh) return jsonOut({orders:[],error:"No sheet for "+rawDate});',
+    '  var data=sh.getDataRange().getValues();',
+    '  if(data.length<2) return jsonOut({orders:[],date:p.date});',
+    '  var headers=data[0];',
+    '  var orders=data.slice(1).filter(function(row){',
+    '    var id=String(row[0]);',
+    '    return id&&id.indexOf("TOTAL:")!==0&&String(row[1])===rawDate;',
+    '  }).map(function(row){',
+    '    var obj={}; headers.forEach(function(h,i){obj[h]=row[i]!==undefined?row[i]:"";});',
+    '    return obj;',
+    '  }).filter(function(o){return o["Order ID"];});',
+    '  return jsonOut({orders:orders,date:p.date,count:orders.length});',
     '}',
   ];
   return lines.join('\n');
