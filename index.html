@@ -3201,9 +3201,17 @@ function copyWhatsApp() {
       } else {
         lines.push('   • ' + item.name + ': ' + item.qty + ' ' + item.unit + ' @ ₹' + item.rate + ' = ₹' + item.amount.toLocaleString('en-IN'));
       }
-      if (!prodTotals[item.name]) prodTotals[item.name] = {qty:0, unit:item.unit, amt:0};
-      prodTotals[item.name].qty  += item.qty;
-      prodTotals[item.name].amt  += item.amount;
+      if (!prodTotals[item.name]) prodTotals[item.name] = {qty:0, unit:item.unit, amt:0, isLaadi:false, ladis:0, weightKg:0};
+      if(item.weightPending!==undefined || item.product==='pl') {
+        // Laadi: accumulate both ladi count AND confirmed/estimated weight
+        prodTotals[item.name].isLaadi = true;
+        prodTotals[item.name].ladis  += (item.qty||0);
+        prodTotals[item.name].weightKg += (item.confirmedWeightKg||item.estKg||0);
+        prodTotals[item.name].amt    += (item.amount||0);
+      } else {
+        prodTotals[item.name].qty  += item.qty;
+        prodTotals[item.name].amt  += item.amount;
+      }
     });
     lines.push('   💵 *Total: ₹' + (o.total||0).toLocaleString('en-IN') + '*');
     if (o.notes) lines.push('   📝 ' + o.notes);
@@ -3229,7 +3237,19 @@ function copyWhatsApp() {
     lines.push('');
     lines.push('📦 *PRODUCT-WISE DISPATCH*');
     Object.entries(prodTotals).forEach(([name, v]) => {
-      lines.push('• ' + name + ': ' + v.qty.toFixed(v.qty%1===0?0:1) + ' ' + v.unit);
+      if(v.isLaadi) {
+        // Show: ladi count + total weight (confirmed or estimated)
+        const wt = v.weightKg>0 ? v.weightKg.toFixed(2)+'kg' : '⚖️ wt pending';
+        const ladisLabel = v.ladis + ' ladi' + (v.ladis!==1?'s':'');
+        lines.push('• ' + name + ': ' + ladisLabel + ' · ' + wt + (v.amt>0?' = ₹'+v.amt.toLocaleString('en-IN'):''));
+      } else {
+        // For Chaas: show unit clearly as '1L btl' or '500ml btl'
+        let displayUnit = v.unit;
+        if(name==='Chaas 1 Litre') displayUnit = '1L btl';
+        if(name==='Chaas 500ml')   displayUnit = '500ml btl';
+        const qtyDisplay = v.qty%1===0 ? v.qty : v.qty.toFixed(1);
+        lines.push('• ' + name + ': ' + qtyDisplay + ' ' + displayUnit);
+      }
     });
   }
 
