@@ -4303,7 +4303,7 @@ function renderHistoryOrders(orders, date) {
       </div>`;
     }
 
-    // Payment button: show for sales/owner on any unpaid order
+    // Payment + Edit buttons for sales/owner
     const isPaid = o.status==='paid' || (o.payment?.received && o.payment?.amount >= (o.total||0));
     const payBtn = (canPayRole && !isPaid) ? `
       <button onclick="openHistoryPayment('${o.id}','${date}')"
@@ -4311,6 +4311,12 @@ function renderHistoryOrders(orders, date) {
           background:${o.status==='due'||o.status==='partial'?'var(--green)':'var(--amber)'};
           color:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif;">
         💰 ${o.status==='due'||o.status==='partial'?'Collect Payment':'Record Payment'}
+      </button>` : '';
+    const editBtn = canPayRole ? `
+      <button onclick="openEditOrder('${o.id}')"
+        style="margin-top:6px;width:100%;padding:9px;border-radius:8px;border:1.5px solid var(--border);
+          background:#fff;color:var(--ink);font-size:13px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif;">
+        ✏ Edit Order
       </button>` : '';
 
     return `
@@ -4329,6 +4335,7 @@ function renderHistoryOrders(orders, date) {
         ${o.notes?`<div style="font-size:11px;color:#795548;margin-top:4px;">📝 ${o.notes}</div>`:''}
         ${payInfo}
         ${payBtn}
+        ${editBtn}
         <div style="font-size:10px;color:var(--muted);margin-top:6px;opacity:0.6;">#${o.id}${o.createdBy?' · '+o.createdBy:''}</div>
       </div>`;
   }).join('');
