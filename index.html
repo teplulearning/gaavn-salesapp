@@ -5449,6 +5449,44 @@ if(document.readyState === 'loading') {
   // DOM already parsed (common on GitHub Pages with defer/async)
   _startApp();
 }
+
+// ── PAGE VISIBILITY HANDLER ─────────────────────────────────────────
+// On Android, switching to WhatsApp and back can suspend/reload the page.
+// When the page becomes visible again, re-merge orders from localStorage.
+document.addEventListener('visibilitychange', function() {
+  if(document.visibilityState === 'visible' && STATE && STATE.role) {
+    var existingIds = new Set(STATE.orders.map(function(o){return o.id;}));
+    for(var i=0; i<localStorage.length; i++) {
+      var key = localStorage.key(i);
+      if(!key || key.indexOf(LS_PREFIX)!==0) continue;
+      var date = key.slice(LS_PREFIX.length);
+      if(date.length!==10) continue; // must be yyyy-mm-dd
+      try {
+        var stored = JSON.parse(localStorage.getItem(key)||'[]');
+        stored.forEach(function(o) {
+          if(!existingIds.has(o.id)) {
+            STATE.orders.push(o);
+            existingIds.add(o.id);
+          }
+        });
+      } catch(e) {}
+    }
+    if(typeof renderOrdersList==='function') renderOrdersList();
+    if(typeof renderDashboard==='function') renderDashboard();
+    if(typeof renderHistory==='function') {
+      var h = document.getElementById('screen-history');
+      if(h && h.classList.contains('active')) renderHistory();
+    }
+  }
+});
+
+// pageshow fires on back-navigation (bfcache restore)
+window.addEventListener('pageshow', function(e) {
+  if(e.persisted && STATE && STATE.role) {
+    if(typeof renderOrdersList==='function') renderOrdersList();
+    if(typeof renderDashboard==='function') renderDashboard();
+  }
+});
 </script>
 </body>
 </html>
