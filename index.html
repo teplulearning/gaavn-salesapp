@@ -319,6 +319,7 @@ h1,h2,h3,.serif{font-family:'DM Serif Display',serif;}
       <div class="page-title" id="orders-screen-title">Orders</div>
       <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;" id="orders-action-btns">
         <button onclick="syncOrdersFromSheet()" id="btn-sync-orders" style="background:var(--blue,#1A527A);color:#fff;border:none;border-radius:8px;padding:7px 10px;font-size:11px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif;">☁ Sync</button>
+        <button onclick="submitAllDayOrders()" id="btn-submit-all" style="background:#E67E22;color:#fff;border:none;border-radius:8px;padding:7px 10px;font-size:11px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif;">📤 Submit All</button>
         <button onclick="copyWhatsApp()" id="btn-wa" style="background:#25D366;color:#fff;border:none;border-radius:8px;padding:7px 10px;font-size:11px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif;">💬 WA</button>
         <button onclick="openSequenceScreen()" id="btn-seq" style="background:var(--amber);color:#fff;border:none;border-radius:8px;padding:7px 10px;font-size:11px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif;">🔢 Sequence</button>
         <button onclick="shareToDelivery()" id="btn-share" style="background:var(--blue);color:#fff;border:none;border-radius:8px;padding:7px 10px;font-size:11px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif;">📦 Share</button>
@@ -348,8 +349,9 @@ h1,h2,h3,.serif{font-family:'DM Serif Display',serif;}
   <div class="screen" id="screen-customers">
     <div class="page-title">Customers</div>
     <div class="page-sub" id="cust-page-sub">392 accounts loaded</div>
-    <div id="add-cust-btn-wrap" style="display:none;margin-bottom:12px;">
+    <div id="add-cust-btn-wrap" style="display:none;margin-bottom:12px;display:flex;gap:8px;flex-wrap:wrap;">
       <button class="btn btn-primary" onclick="showAddCustomer()">+ Add Customer</button>
+      <button id="btn-download-custs" onclick="downloadCustomerList()" style="display:none;background:var(--ink);color:#fff;border:none;border-radius:8px;padding:9px 14px;font-size:12px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif;">⬇ Download List</button>
     </div>
     <div class="search-box">
       <span class="search-icon">🔍</span>
@@ -1685,6 +1687,8 @@ function initApp() {
     if(idx >= 0) STATE.customers[idx] = {...STATE.customers[idx], ...ex};
     else STATE.customers.push(ex);
   });
+  // Fetch customers from sheet in background so all devices share the same list
+  if(STATE.sheetUrl) setTimeout(syncCustomersFromSheet, 2000);
   // Load today's orders from localStorage
   STATE.orders = JSON.parse(localStorage.getItem(LS_ORDERS)||'[]');
   // Load payment ledger
@@ -3009,6 +3013,8 @@ function saveNewCustomer() {
   closeModal('modal-add-customer');
   showToast('✓ Customer added: '+name);
   renderCustomerList();
+  // Sync new customer to Google Sheet so all devices can see it
+  if(STATE.sheetUrl) syncCustomerToSheet(customer);
 }
 
 // ── DUES ─────────────────────────────────────────────────────────────
@@ -3205,9 +3211,97 @@ function fireAndForget(fullUrl) {
   });
 }
 
-async function syncOneOrder(orderId) {
+function downloadCustomerList() {
+  // Owner-only: download all customers as CSV with full details
+  const all = STATE.customers.slice().sort((a,b)=>a.name.localeCompare(b.name));
+  const rows = [
+    ['ID','Name','Category','Phone','Area','Address','Balance','Opening Balance','Created At','Source']
+  ];
+  all.forEach(c => {
+    rows.push([
+      c.id||'',
+      c.name||'',
+      c.category||'',
+      c.phone||'',
+      c.area||'',
+      c.address||'',
+      c.balance||0,
+      c.openingBalance||0,
+      c.createdAt ? new Date(c.createdAt).toLocaleDateString('en-IN') : '',
+      c.id.startsWith('cu') ? 'App-created' : 'Master list',
+    ]);
+  });
+
+  // Build CSV
+  const csv = rows.map(row =>
+    row.map(v => '"'+String(v||'').replace(/"/g,'""')+'"').join(',')
+  ).join('\n');
+
+  const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url;
+  a.download = 'GaavnFresh_Customers_'+TODAY_KEY+'.csv';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  showToast('✓ Downloaded '+all.length+' customers');
+}
+
+async function syncCustomersFromSheet() {
+  // Fetch all customers from Google Sheet Customers tab
+  // so customers added on any device are visible everywhere
+  if(!STATE.sheetUrl) return;
+  try {
+    const url = STATE.sheetUrl + '?action=getCustomers';
+    const res = await fetch(url);
+    const json = await res.json();
+    if(!json.customers || !json.customers.length) return;
+    const extras = JSON.parse(localStorage.getItem(LS_CUSTS)||'[]');
+    let added = 0;
+    json.customers.forEach(function(c) {
+      if(!c.id || !c.name) return;
+      const existsInState = STATE.customers.find(x => x.id===c.id || x.name.toLowerCase()===c.name.toLowerCase());
+      if(!existsInState) {
+        STATE.customers.push(c);
+        extras.push(c);
+        added++;
+      }
+    });
+    if(added > 0) {
+      localStorage.setItem(LS_CUSTS, JSON.stringify(extras));
+      showToast('✓ '+added+' new customer(s) synced');
+    }
+  } catch(e) {
+    console.warn('Customer sync from sheet failed:', e);
+  }
+}
+
+async function syncCustomerToSheet(customer) {
+  // Sync a newly created customer to the Customers sheet
+  if(!STATE.sheetUrl) return;
+  try {
+    const params = new URLSearchParams({
+      action: 'logCustomer',
+      id: customer.id,
+      name: customer.name,
+      category: customer.category||'',
+      phone: customer.phone||'',
+      area: customer.area||'',
+      address: customer.address||'',
+      balance: customer.balance||0,
+      createdBy: STATE.role||'',
+    });
+    await fetch(STATE.sheetUrl + '?' + params.toString());
+  } catch(e) {
+    console.warn('Customer sync failed:', e);
+  }
+}
+
+async function syncOneOrder(orderId, orderObj) {
   const url=getSheetUrl(); if(!url) return;
-  const order=STATE.orders.find(o=>o.id===orderId); if(!order) return;
+  const order=orderObj||STATE.orders.find(o=>o.id===orderId); if(!order) return;
   // BUG3 FIX: always ensure date is a valid string, never undefined
   const orderDate = (order.date && order.date !== 'undefined') ? order.date : TODAY_KEY;
   if(!order.date || order.date === 'undefined') { order.date = orderDate; saveOrders(); }
@@ -3445,10 +3539,12 @@ function getAppsScriptCode() {
     'function doGet(e) {',
     '  try {',
     '    var a = e.parameter.action || "";',
-    '    if (a === "ping")       return handlePing(e);',
-    '    if (a === "logOrder")   return logOrder(e.parameter);',
-    '    if (a === "logPayment") return logPayment(e.parameter);',
-    '    if (a === "getOrders")  return getOrders(e.parameter);',
+    '    if (a === "ping")         return handlePing(e);',
+    '    if (a === "logOrder")     return logOrder(e.parameter);',
+    '    if (a === "logPayment")   return logPayment(e.parameter);',
+    '    if (a === "getOrders")    return getOrders(e.parameter);',
+    '    if (a === "logCustomer")  return logCustomer(e.parameter);',
+    '    if (a === "getCustomers") return getCustomers(e.parameter);',
     '    return jsonOut({error: "Unknown action: " + a});',
     '  } catch(err) { return jsonOut({error: err.message}); }',
     '}',
@@ -3699,24 +3795,64 @@ function getAppsScriptCode() {
     '  SpreadsheetApp.getUi().alert("Done! " + migrated + " orders migrated to monthly sheets. You can delete the old daily sheets.");',
     '}',
     '',
+    '// ── LOG CUSTOMER ─────────────────────────────────────────────────',
+    'function logCustomer(p) {',
+    '  var ss=SpreadsheetApp.openById(SS_ID);',
+    '  var sh=getOrCreateSheet(ss,"Customers");',
+    '  if(sh.getLastRow()===0){',
+    '    sh.appendRow(["ID","Name","Category","Phone","Area","Address","Balance","Created By","Created At"]);',
+    '    sh.getRange(1,1,1,9).setFontWeight("bold").setBackground("#1A3A1F").setFontColor("#fff");',
+    '    sh.setFrozenRows(1);',
+    '  }',
+    '  // Check if already exists',
+    '  var data=sh.getDataRange().getValues();',
+    '  for(var r=1;r<data.length;r++){',
+    '    if(String(data[r][0])===String(p.id)) return jsonOut({status:"exists"});',
+    '  }',
+    '  var now=Utilities.formatDate(new Date(),Session.getScriptTimeZone(),"dd/MM/yyyy HH:mm");',
+    '  sh.appendRow([p.id,p.name,p.category||"",p.phone||"",p.area||"",p.address||"",parseFloat(p.balance)||0,p.createdBy||"",now]);',
+    '  return jsonOut({status:"ok"});',
+    '}',
+    '',
+    'function getCustomers(p) {',
+    '  var ss=SpreadsheetApp.openById(SS_ID);',
+    '  var sh=ss.getSheetByName("Customers");',
+    '  if(!sh||sh.getLastRow()<=1) return jsonOut({customers:[]});',
+    '  var data=sh.getDataRange().getValues();',
+    '  var headers=data[0];',
+    '  var customers=data.slice(1).map(function(row){',
+    '    var obj={};',
+    '    headers.forEach(function(h,i){obj[h]=row[i]!==undefined?row[i]:"";});',
+    '    return {id:String(obj["ID"]),name:String(obj["Name"]),category:String(obj["Category"]||"Retail"),',
+    '      phone:String(obj["Phone"]||""),area:String(obj["Area"]||""),address:String(obj["Address"]||""),',
+    '      balance:parseFloat(obj["Balance"])||0};',
+    '  }).filter(function(c){return c.id&&c.name;});',
+    '  return jsonOut({customers:customers});',
+    '}',
+    '',
     '// ── GET ORDERS ──────────────────────────────────────────────────────',
     'function getOrders(p) {',
     '  var ss=SpreadsheetApp.openById(SS_ID);',
     '  var rawDate=String(p.date||"").trim();',
     '  if(!rawDate||rawDate==="undefined") rawDate=Utilities.formatDate(new Date(),Session.getScriptTimeZone(),"yyyy-MM-dd");',
-    '  var shName="Orders_"+getMonthTag(rawDate);',
-    '  var sh=ss.getSheetByName(shName);',
+    '  var sh=ss.getSheetByName("Orders_"+getMonthTag(rawDate));',
     '  if(!sh) return jsonOut({orders:[],error:"No sheet for "+rawDate});',
     '  var data=sh.getDataRange().getValues();',
     '  if(data.length<2) return jsonOut({orders:[],date:p.date});',
     '  var headers=data[0];',
+    '  var dateOrderIds={};',
+    '  data.slice(1).forEach(function(row){',
+    '    var id=String(row[0]||"").trim();',
+    '    var dt=String(row[1]||"").trim();',
+    '    if(id&&id.indexOf("TOTAL:")!==0&&dt===rawDate) dateOrderIds[id]=true;',
+    '  });',
     '  var orders=data.slice(1).filter(function(row){',
-    '    var id=String(row[0]);',
-    '    return id&&id.indexOf("TOTAL:")!==0&&String(row[1])===rawDate;',
+    '    var id=String(row[0]||"").trim();',
+    '    return id&&id.indexOf("TOTAL:")!==0&&dateOrderIds[id];',
     '  }).map(function(row){',
     '    var obj={}; headers.forEach(function(h,i){obj[h]=row[i]!==undefined?row[i]:"";});',
     '    return obj;',
-    '  }).filter(function(o){return o["Order ID"];});',
+    '  });',
     '  return jsonOut({orders:orders,date:p.date,count:orders.length});',
     '}',
   ];
@@ -4516,33 +4652,68 @@ async function fetchHistoryDate() {
       return;
     }
 
-    // Parse sheet rows into order objects
-    const orders = rawOrders.map(row => {
-      let items = [];
-      try { items = JSON.parse(row['Items Raw']||row['items']||'[]'); } catch(e) {
-        const itemStr = String(row['Items']||'');
-        items = itemStr.split(', ').map(s => {
-          const m = s.match(/^([\d.]+)\s+(\w+)\s+(.+?)\s+@[Rs₹]?([\d.]+)$/);
-          return m ? {qty:parseFloat(m[1]),unit:m[2],name:m[3],rate:parseFloat(m[4]),amount:parseFloat(m[1])*parseFloat(m[4])} : null;
-        }).filter(Boolean);
+    // Parse sheet rows — handle both new per-item format and old single-row format
+    const orderMap = {};
+    const orderSeq = [];
+    rawOrders.forEach(row => {
+      const oid = String(row['Order ID']||'').trim();
+      if(!oid) return;
+      if(!orderMap[oid]) {
+        // First row for this order — has order-level fields
+        orderMap[oid] = {
+          id: oid,
+          date: date,
+          customerName:     String(row['Customer']||''),
+          customerCategory: String(row['Category']||''),
+          customerArea:     String(row['Area']||''),
+          customerPhone:    '',
+          status:  String(row['Status']||'confirmed'),
+          total:   parseFloat(row['Order Total (Rs)']||row['Total (Rs)']||row['Total']||0)||0,
+          items:   [],
+          notes:    String(row['Notes']||''),
+          modNotes: String(row['Mod Notes']||''),
+          payment: {
+            mode:   String(row['Payment Mode']||''),
+            amount: parseFloat(row['Payment Amt']||0)||0,
+            received: !!(row['Payment Mode'] && row['Payment Mode']!=='pending'),
+          },
+          createdBy: String(row['Created By']||''),
+          synced: true, fromSheet: true,
+        };
+        orderSeq.push(oid);
+
+        // Try old format Items Raw JSON if present
+        const rawJson = row['Items Raw']||row['items']||'';
+        if(rawJson) {
+          try {
+            const parsed = JSON.parse(rawJson);
+            if(Array.isArray(parsed) && parsed.length) {
+              orderMap[oid].items = parsed.map(i=>({
+                name:i.name||'', qty:parseFloat(i.qty)||0,
+                unit:i.unit||'', rate:parseFloat(i.rate)||0,
+                amount:parseFloat(i.amount)||(parseFloat(i.qty)*parseFloat(i.rate))||0
+              }));
+            }
+          } catch(e) {}
+        }
       }
-      return {
-        id:      String(row['Order ID']||'').trim(),
-        date:    date,
-        customerName:     String(row['Customer']||''),
-        customerCategory: String(row['Category']||''),
-        customerArea:     String(row['Area']||''),
-        customerPhone:    '',
-        status:  String(row['Status']||'confirmed'),
-        total:   parseFloat(row['Total (Rs)']||row['Total']||0)||0,
-        items,
-        notes:    String(row['Notes']||''),
-        modNotes: String(row['Mod Notes']||''),
-        payment:  {mode:String(row['Payment Mode']||''),amount:parseFloat(row['Payment Amt']||0)||0,received:!!row['Payment Mode']&&row['Payment Mode']!=='pending'},
-        createdBy:String(row['Created By']||''),
-        synced:   true, fromSheet:true,
-      };
-    }).filter(o => o.id);
+      // New per-item format: add item from Product column
+      const prod = String(row['Product']||'').trim();
+      if(prod && prod !== '(no items)') {
+        // Only add if not already populated from Items Raw
+        const alreadyHas = orderMap[oid].items.some(i=>i.name===prod);
+        if(!alreadyHas) {
+          orderMap[oid].items.push({
+            name: prod,
+            qty:  parseFloat(row['Qty'])||0,
+            unit: String(row['Unit']||''),
+            rate: parseFloat(row['Rate (Rs)'])||0,
+            amount: parseFloat(row['Amount (Rs)'])||0,
+          });
+        }
+      }
+    });
+    const orders = orderSeq.map(id=>orderMap[id]).filter(o=>o.id);
 
     // Cache to localStorage
     cacheOrdersForDate(date, orders);
@@ -4655,6 +4826,52 @@ function resetSequence() {
 // ── LOAD PAST DUES FOR DELIVERY ──────────────────────────────────────
 // Delivery person needs to see outstanding dues from previous days
 // so they can collect payment during their round.
+async function submitAllDayOrders() {
+  // Bulk re-sync ALL of today's orders to the sheet (overwrites existing rows)
+  // This is the reliable way to ensure sheet is up to date
+  if(!STATE.sheetUrl) { showToast('No Sheet URL — go to Setup'); return; }
+
+  const btn = document.getElementById('btn-submit-all');
+  if(btn) { btn.textContent = '⏳ Submitting...'; btn.disabled = true; }
+
+  // Get all orders for today from STATE + localStorage
+  const todayOrders = STATE.orders.filter(o => (o.date||TODAY_KEY) === TODAY_KEY);
+
+  // Also pull from localStorage in case some aren't in STATE
+  const lsOrders = JSON.parse(localStorage.getItem(LS_ORDERS)||'[]');
+  const allIds = new Set(todayOrders.map(o=>o.id));
+  lsOrders.forEach(o => { if(!allIds.has(o.id)) { todayOrders.push(o); allIds.add(o.id); } });
+
+  if(!todayOrders.length) {
+    showToast('No orders for today to submit');
+    if(btn) { btn.textContent = '📤 Submit All'; btn.disabled = false; }
+    return;
+  }
+
+  let synced = 0, failed = 0;
+  for(const o of todayOrders) {
+    try {
+      await syncOneOrder(o.id, o); // pass order directly to avoid lookup issues
+      o.synced = true;
+      synced++;
+    } catch(e) {
+      failed++;
+    }
+  }
+
+  // Update localStorage with synced status
+  saveOrders();
+
+  if(btn) { btn.textContent = '📤 Submit All'; btn.disabled = false; }
+
+  if(failed === 0) {
+    showToast('✓ All '+synced+' orders submitted to sheet');
+    renderOrdersList(); // refresh sync badges
+  } else {
+    showToast('⚠ '+synced+' submitted, '+failed+' failed — check connection');
+  }
+}
+
 async function syncOrdersFromSheet() {
   // Fetch today's AND recent orders from Google Sheet into STATE.orders + localStorage
   if(!STATE.sheetUrl) {
@@ -4685,34 +4902,53 @@ async function syncOrdersFromSheet() {
         const res = await fetch(url);
         const json = await res.json();
         if(json.orders && json.orders.length) {
-          const dateOrders = [];
+          // Group rows by Order ID (new format has one row per item)
+          const orderMap = {};
           json.orders.forEach(row => {
-            // Parse order from sheet row
             const orderId = String(row['Order ID']||'').trim();
             if(!orderId) return;
-            let items = [];
-            try { items = JSON.parse(row['Items Raw']||'[]'); } catch(e) {}
-            const o = {
-              id: orderId,
-              date: date,
-              customerName: row['Customer']||'',
-              customerCategory: row['Category']||'',
-              customerArea: row['Area']||'',
-              status: row['Status']||'confirmed',
-              total: parseFloat(row['Total (Rs)'])||0,
-              items: items,
-              notes: row['Notes']||'',
-              synced: true,
-              loadedFromSheet: true,
-            };
-            dateOrders.push(o);
-            if(!existingIds.has(orderId)) {
+            if(!orderMap[orderId]) {
+              // First row for this order — has order-level fields
+              orderMap[orderId] = {
+                id: orderId,
+                date: date,
+                customerName: row['Customer']||'',
+                customerCategory: row['Category']||'',
+                customerArea: row['Area']||'',
+                status: row['Status']||'confirmed',
+                total: parseFloat(row['Order Total (Rs)']||row['Total (Rs)'])||0,
+                items: [],
+                notes: row['Notes']||'',
+                synced: true,
+                loadedFromSheet: true,
+                payment: {
+                  mode: row['Payment Mode']||'',
+                  amount: parseFloat(row['Payment Amt'])||0,
+                  received: (parseFloat(row['Payment Amt'])||0) > 0,
+                },
+              };
+            }
+            // Add item from this row (new per-item format)
+            const product = String(row['Product']||row['Items']||'').trim();
+            if(product && product !== '(no items)') {
+              orderMap[orderId].items.push({
+                name: product,
+                qty: parseFloat(row['Qty'])||0,
+                unit: row['Unit']||'',
+                rate: parseFloat(row['Rate (Rs)'])||0,
+                amount: parseFloat(row['Amount (Rs)'])||0,
+              });
+            }
+          });
+          // Add orders to STATE
+          const dateOrders = Object.values(orderMap);
+          dateOrders.forEach(o => {
+            if(!existingIds.has(o.id)) {
               STATE.orders.push(o);
-              existingIds.add(orderId);
+              existingIds.add(o.id);
               totalAdded++;
             }
           });
-          // Save to localStorage for offline access
           if(dateOrders.length) {
             localStorage.setItem(LS_PREFIX + date, JSON.stringify(dateOrders));
           }
@@ -5456,6 +5692,9 @@ function applyRoleUI() {
   const btnSheet = document.getElementById('btn-sheet');
   if(btnWA)    btnWA.style.display    = isDelivery?'none':'';
   if(btnShare) btnShare.style.display = isDelivery?'none':'';
+  // Download customer list: owner only
+  const dlBtn = document.getElementById('btn-download-custs');
+  if(dlBtn) dlBtn.style.display = (STATE.role==='owner') ? 'inline-block' : 'none';
   if(btnSheet) btnSheet.style.display = isDelivery?'none':'';
   // Start polling for delivery
   if(isDelivery && getSheetUrl()) startDeliveryPoll();
