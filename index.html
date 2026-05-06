@@ -1422,17 +1422,11 @@ function allocatePaymentFIFO(custId, amountReceived) {
   return {allocated, surplus: remaining};
 }
 
-// ── STOP ORDER CHECK ──────────────────────────────────────────────────
+// ── OVERDUE CHECK (no stop order — sales can always place orders) ──────
 function isCustomerBlocked(custId) {
-  if(STATE.role === 'owner') return false; // owner can always order
-  const custOrders = STATE.orders.filter(o =>
-    o.customerId===custId &&
-    (o.status==='due'||o.status==='partial'||o.status==='confirmed'||o.status==='delivered')
-  );
-  return custOrders.some(o => {
-    const cs = getCreditStatus(o);
-    return cs.stopOrder;
-  });
+  // Stop orders removed — function kept for dues screen display only
+  // Always returns false so no orders are ever blocked
+  return false;
 }
 
 function getCustomerCreditAlerts(custId) {
@@ -1735,21 +1729,48 @@ function updateSheetDot() {
 
 // ── SAVE ORDERS ──────────────────────────────────────────────────────
 function saveOrders() {
-  // Group orders by date and save each group to its own key
-  // This ensures past dues updated by delivery are saved to the right date
+  // MERGE with existing localStorage before writing — prevents overwrite on page reload
+  // Read all existing orders from localStorage first
+  const allOrders = {};
+  for(let i=0; i<localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if(!key || !key.startsWith(LS_PREFIX)) continue;
+    const date = key.slice(LS_PREFIX.length);
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
+    try {
+      const stored = JSON.parse(localStorage.getItem(key)||'[]');
+      stored.forEach(o => { allOrders[o.id] = o; });
+    } catch(e) {}
+  }
+  // Also read LS_ORDERS (legacy key)
+  try {
+    const legacy = JSON.parse(localStorage.getItem(LS_ORDERS)||'[]');
+    legacy.forEach(o => { if(!allOrders[o.id]) allOrders[o.id] = o; });
+  } catch(e) {}
+
+  // Merge STATE.orders into the combined set (STATE takes priority for updates)
+  STATE.orders.forEach(o => { allOrders[o.id] = o; });
+
+  // Group merged orders by date and write back
   const byDate = {};
-  STATE.orders.forEach(o => {
+  Object.values(allOrders).forEach(o => {
     const dateKey = (o.date && o.date !== 'undefined') ? o.date : TODAY_KEY;
     if(!byDate[dateKey]) byDate[dateKey] = [];
     byDate[dateKey].push(o);
   });
+
   Object.entries(byDate).forEach(([date, orders]) => {
     localStorage.setItem(LS_PREFIX + date, JSON.stringify(orders));
-    // Also maintain LS_ORDERS for today so initial load always works
     if(date === TODAY_KEY) {
       localStorage.setItem(LS_ORDERS, JSON.stringify(orders));
     }
   });
+
+  // Update STATE.orders to include everything (so My Orders shows all)
+  const merged = Object.values(allOrders);
+  if(merged.length > STATE.orders.length) {
+    STATE.orders = merged;
+  }
 }
 
 // ── DASHBOARD ────────────────────────────────────────────────────────
@@ -2129,7 +2150,19 @@ function renderOrdersList() {
     byDate[d].sort((a,b)=>(priority[a.status]??2)-(priority[b.status]??2));
   });
 
+  // Summary banner — shows TOTAL across all dates so she knows to scroll
+  const totalOrders = orders.length;
+  const totalValue  = orders.reduce((s,o)=>s+(o.total||0),0);
+  const totalDays   = dates.length;
   let html = '';
+  if(totalOrders > 0) {
+    const scrollHint = totalDays > 1 ? ' · '+totalDays+' days — scroll ↓' : '';
+    html += '<div style="background:var(--amber);border-radius:10px;padding:10px 14px;'
+      +'margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;">'
+      +'<span style="font-size:13px;font-weight:700;color:#fff;">📦 '+totalOrders+' orders'+scrollHint+'</span>'
+      +'<span style="font-size:13px;font-weight:700;color:#fff;">₹'+totalValue.toLocaleString('en-IN')+'</span>'
+      +'</div>';
+  }
   dates.forEach(d => {
     const dayOrders = byDate[d];
     const dayTotal  = dayOrders.reduce((s,o)=>s+(o.total||0),0);
@@ -2229,12 +2262,11 @@ function searchCustomers(q) {
 
 function selectCustomer(id) {
   STATE.selectedCustomer = STATE.customers.find(c=>c.id===id);
-  if(STATE.selectedCustomer && STATE.role!=='owner') {
-    const blocked = isCustomerBlocked(id);
-    if(blocked) {
-      const alerts = getCustomerCreditAlerts(id);
+  if(STATE.selectedCustomer) {
+    const alerts = getCustomerCreditAlerts(id);
+    if(alerts.length) {
       const totalOwed = alerts.reduce((s,x)=>s+((x.order.total||0)-(x.order.payment?.amount||0)),0);
-      showToast('🚫 STOP ORDER — ₹'+totalOwed.toLocaleString('en-IN')+' overdue. Cannot place order.');
+      showToast('⚠ ₹'+totalOwed.toLocaleString('en-IN')+' payment overdue — please follow up');
     }
   }
   if(!STATE.selectedCustomer) return;
@@ -2252,9 +2284,11 @@ function selectCustomer(id) {
     const _blocked = isCustomerBlocked(_id);
     const _alerts  = getCustomerCreditAlerts(_id);
     if(_blocked) {
+      // No stop order — just show overdue warning
+      const _owed2 = _alerts.reduce((s,x)=>s+((x.order.total||0)-(x.order.payment?.amount||0)),0);
       _alertEl.style.display='block';
-      _alertEl.style.background='#C0392B';
-      _alertEl.textContent='🚫 STOP ORDER — payment overdue. Owner must override to place order.';
+      _alertEl.style.background='#E67E22';
+      _alertEl.textContent='⚠ Payment overdue: ₹'+_owed2.toLocaleString('en-IN')+' — please follow up before delivering';
     } else if(_alerts.length) {
       const _owed = _alerts.reduce((s,x)=>s+((x.order.total||0)-(x.order.payment?.amount||0)),0);
       _alertEl.style.display='block';
@@ -2517,11 +2551,7 @@ function submitOrder() {
   }).filter(x=>x.qty>0);
   if(!items.length) { showToast('Add at least one product'); return; }
   if(!STATE.selectedCustomer) { showToast('Select a customer first'); return; }
-  // Stop order check (owner bypasses)
-  if(STATE.role !== 'owner' && isCustomerBlocked(STATE.selectedCustomer.id)) {
-    showToast('🚫 STOP ORDER — payment overdue. Owner must override.');
-    return;
-  }
+  // No stop order block — sales person gets alert on customer selection instead
   const total = items.reduce((s,i)=>s+i.amount,0);
   const orderId = 'ORD'+Date.now().toString().slice(-8);
   // Use the date selected in the picker (defaults to today)
@@ -3004,19 +3034,13 @@ function renderDues() {
 
   document.getElementById('due-count').textContent  = unpaidOrders.length + custsDue.length;
   document.getElementById('due-amount').textContent  = '₹'+(totalDue/1000).toFixed(1)+'k';
-  document.getElementById('due-overdue').textContent = stopCount ? '🚫'+stopCount : overdueCount+'⚠';
+  document.getElementById('due-overdue').textContent = overdueCount > 0 ? overdueCount+'⚠' : '0';
 
   const list = document.getElementById('dues-list');
   let html = '';
 
-  // ── STOP ORDERS banner ────────────────────────────────────────────
-  const stopOrders = unpaidOrders.filter(o=>getCreditStatus(o).stopOrder);
-  if(stopOrders.length) {
-    html += '<div style="background:#C0392B;color:#fff;border-radius:10px;padding:12px 14px;margin-bottom:12px;">'
-      +'<div style="font-weight:700;font-size:14px;margin-bottom:4px;">🚫 STOP ORDER — '+stopOrders.length+' customer(s)</div>'
-      +'<div style="font-size:12px;opacity:0.9;">New orders blocked until payment is received. Owner can override.</div>'
-    +'</div>';
-  }
+  // ── OVERDUE ALERT banner (no blocking — alert only) ─────────────
+
 
   // ── Group all unpaid orders by customer ───────────────────────────
   const byCust = {};
@@ -3045,8 +3069,8 @@ function renderDues() {
       const isBlocked = cg.orders.some(o=>getCreditStatus(o).stopOrder);
       const hasOverdue = cg.orders.some(o=>{const cs=getCreditStatus(o);return cs.status==='overdue'||cs.status==='due';});
       const hasWarning = cg.orders.some(o=>getCreditStatus(o).status==='warning');
-      const borderColor = isBlocked?'#C0392B':hasOverdue?'#E67E22':hasWarning?'#F39C12':'var(--border)';
-      const statusBg    = isBlocked?'#C0392B':hasOverdue?'#E67E22':hasWarning?'#F39C12':'var(--green)';
+      const borderColor = (isBlocked||hasOverdue)?'#E67E22':hasWarning?'#F39C12':'var(--border)';
+      const statusBg    = (isBlocked||hasOverdue)?'#E67E22':hasWarning?'#F39C12':'var(--green)';
 
       html += '<div class="card" style="margin-bottom:10px;border-left:4px solid '+borderColor+';">'
         +'<div class="card-head">'
@@ -3056,8 +3080,7 @@ function renderDues() {
           +'</div>'
           +'<div style="text-align:right;">'
             +'<div style="font-size:18px;font-weight:700;color:var(--red);">₹'+totalOwed.toLocaleString('en-IN')+'</div>'
-            +(isBlocked?'<span style="background:#C0392B;color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;">🚫 STOP ORDER</span>'
-              :hasOverdue?'<span style="background:#E67E22;color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;">🔴 OVERDUE</span>'
+            +(hasOverdue||isBlocked?'<span style="background:#E67E22;color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;">🔴 OVERDUE</span>'
               :hasWarning?'<span style="background:#F39C12;color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;">⚠ DUE SOON</span>':'')
           +'</div>'
         +'</div>'
@@ -3147,7 +3170,2480 @@ function sendCreditWA(custId, type) {
       +(cust.phone?'\nPhone: '+cust.phone:'')
       +'\n\nOverdue Invoices:\n'+orderLines
       +'\n\nTotal Due: \u20b9'+totalOwed.toLocaleString('en-IN')
-      +(blocked?'\n\n\u26d4 STOP ORDER ACTIVE \u2014 New orders are blocked for this customer.':'')
+      +(blocked?'\n\n⚠ Payment significantly overdue — please prioritise collection.':'')
+      +'\n\nPlease follow up for payment immediately.';
+  }
+
+  const phone = type==='client' ? (cust.phone||'').replace(/\D/g,'') : '';
+  const waUrl = phone
+    ? 'https://wa.me/91'+phone+'?text='+encodeURIComponent(msg)
+    : 'https://wa.me/?text='+encodeURIComponent(msg);
+  window.open(waUrl,'_blank');
+}
+
+
+function getSheetUrl() { return STATE.sheetUrl||localStorage.getItem(LS_URL)||''; }
+
+// Send a GET request that works from file:// (no-cors + img fallback)
+function fireAndForget(fullUrl) {
+  return new Promise((resolve) => {
+    // Try fetch with no-cors first (works in most Chrome versions from file://)
+    if (typeof fetch !== 'undefined') {
+      fetch(fullUrl, { method:'GET', mode:'no-cors', cache:'no-store' })
+        .then(() => resolve(true))
+        .catch(() => {
+          // Fallback: img trick — always works from file://
+          const img = new Image();
+          img.onload = img.onerror = () => resolve(true);
+          img.src = fullUrl;
+        });
+    } else {
+      const img = new Image();
+      img.onload = img.onerror = () => resolve(true);
+      img.src = fullUrl;
+    }
+  });
+}
+
+async function syncOneOrder(orderId) {
+  const url=getSheetUrl(); if(!url) return;
+  const order=STATE.orders.find(o=>o.id===orderId); if(!order) return;
+  // BUG3 FIX: always ensure date is a valid string, never undefined
+  const orderDate = (order.date && order.date !== 'undefined') ? order.date : TODAY_KEY;
+  if(!order.date || order.date === 'undefined') { order.date = orderDate; saveOrders(); }
+  const params=new URLSearchParams({
+    action:'logOrder',
+    orderId:order.id,
+    date:orderDate,
+    customerName:order.customerName||'Unknown',
+    customerCategory:order.customerCategory||'',
+    customerArea:order.customerArea||'',
+    status:order.status,
+    total:order.total||0,
+    paymentMode:order.payment?.mode||'',
+    paymentAmount:order.payment?.amount||0,
+    notes:order.notes||'',
+    items:JSON.stringify(order.items||[]),
+    createdBy:order.createdBy||'',
+    modNotes:order.modNotes||'',
+  });
+  await fireAndForget(url+'?'+params.toString());
+  order.synced=true; saveOrders();
+  renderOrdersList(); renderDashboard();
+}
+
+async function manualSyncOrder(orderId) {
+  const url = getSheetUrl();
+  if(!url) { showToast('⚠ No Sheet URL — go to Setup first'); showScreen('setup'); return; }
+  showToast('⏳ Syncing order...');
+  await syncOneOrder(orderId);
+  showToast('✓ Order synced to Sheet');
+}
+
+async function exportTodayToSheet() {
+  const url=getSheetUrl();
+  if(!url) { showToast('⚙ Set Sheet URL in Setup first'); showScreen('setup'); return; }
+  showToast('⏳ Syncing all orders...');
+  let synced=0;
+  for(const o of STATE.orders) {
+    await syncOneOrder(o.id);
+    synced++;
+  }
+  showToast(`✓ ${synced} orders synced to Sheet`);
+  renderOrdersList();
+}
+
+async function exportDuesToSheet() {
+  const url=getSheetUrl();
+  if(!url) { showToast('⚙ Set Sheet URL in Setup first'); showScreen('setup'); return; }
+  const dueOrders=STATE.orders.filter(o=>o.status==='due'||o.status==='partial');
+  if(!dueOrders.length) { showToast('No dues to export'); return; }
+  showToast('⏳ Exporting dues...');
+  for(const o of dueOrders) await syncOneOrder(o.id);
+  showToast(`✓ ${dueOrders.length} due orders exported`);
+}
+
+// ── UPLOAD CUSTOMERS ─────────────────────────────────────────────────
+async function uploadCustomers(input) {
+  const file=input.files[0]; if(!file) return;
+  showToast('⏳ Processing...');
+  try {
+    const {read,utils}=await import('https://cdn.sheetjs.com/xlsx-0.20.1/package/xlsx.mjs');
+    const ab=await file.arrayBuffer();
+    const wb=read(ab);
+    const ws=wb.Sheets[wb.SheetNames[0]];
+    const rows=utils.sheet_to_json(ws,{defval:''});
+    let added=0,updated=0;
+    const extras=JSON.parse(localStorage.getItem(LS_CUSTS)||'[]');
+    for(const row of rows) {
+      const name=String(row['Customer Name']||row['Name']||row['name']||'').trim();
+      if(!name) continue;
+      const pricing={};
+      PRODUCTS.forEach(p=>{
+        const newKey=p.name+' Rate (₹/'+p.unit+')';
+        const oldKey=p.id+'_Rate';
+        const val=parseFloat(row[newKey]||row[oldKey]||0);
+        if(val>0) pricing[p.id]=val;
+      });
+      const openBal=parseFloat(row['Opening Balance (₹)']||row['Opening_Balance']||0)||0;
+      const cat=String(row['Category']||row['category']||'').trim();
+      const customer={name,category:cat||'Retail',
+        phone:String(row['Phone']||'').trim(),area:String(row['Area / Route']||row['Area']||'').trim(),
+        pricing,balance:openBal,openingBalance:openBal,
+        openingBalanceDate:new Date().toLocaleDateString('en-IN'),createdAt:Date.now()};
+      const idx=STATE.customers.findIndex(c=>c.name.toLowerCase()===name.toLowerCase());
+      if(idx>=0) { Object.assign(STATE.customers[idx],customer); updated++; }
+      else { customer.id='cu'+Date.now()+added; STATE.customers.push(customer); extras.push(customer); added++; }
+    }
+    localStorage.setItem(LS_CUSTS,JSON.stringify(extras));
+    showToast(`✓ ${added} added, ${updated} updated`);
+    renderCustomerList();
+  } catch(e) { showToast('Upload failed: '+e.message); }
+}
+
+function downloadTemplate() {
+  const prodHeaders=PRODUCTS.map(p=>p.name+' Rate (₹/'+p.unit+')');
+  const headers=['Customer Name','Category','Phone','Area / Route','Opening Balance (₹)',...prodHeaders].join(',');
+  const ex1=['Hotel Ramkrishna Khedshivapur','HORECA','9876543210','Khedshivapur','0','260','270','650','','234','','22','23','23',''].join(',');
+  const ex2=['Omkar Konde Nasrapur','Distributor -Retail','9765432109','Nasrapur','0','230','','','','','','','','',''].join(',');
+  const csv=[headers,ex1,ex2].join('\n');
+  const a=document.createElement('a');
+  a.href='data:text/csv;charset=utf-8,\uFEFF'+encodeURIComponent(csv);
+  a.download='GaavnFresh_Customer_Template.csv'; a.click();
+  showToast('✓ Template downloaded');
+}
+
+// ── SETUP SCREEN ─────────────────────────────────────────────────────
+function renderSetup() {
+  const savedUrl=localStorage.getItem(LS_URL)||'';
+  document.getElementById('gs_url').value=savedUrl;
+  // Show PIN management only for owner
+  const pinSection = document.getElementById('pin-mgmt-section');
+  if(pinSection) pinSection.style.display = STATE.role==='owner' ? 'block' : 'none';
+  // Load current PINs into fields (owner only)
+  if(STATE.role==='owner') {
+    const pins = JSON.parse(localStorage.getItem('gf_pins')||'{}');
+    const po = document.getElementById('pin-owner');
+    const ps = document.getElementById('pin-sales');
+    const pd = document.getElementById('pin-delivery');
+    if(po) po.value = pins.owner||'';
+    if(ps) ps.value = pins.sales||'';
+    if(pd) pd.value = pins.delivery||'';
+  }
+  document.getElementById('script-code').textContent=getAppsScriptCode();
+  // Show share link section if URL is configured
+  const shareLinkDiv = document.getElementById('share-link-section');
+  if(shareLinkDiv) {
+    if(savedUrl) {
+      const baseUrl = window.location.href.split('?')[0];
+      const shareUrl = baseUrl + '?sheetUrl=' + encodeURIComponent(savedUrl);
+      document.getElementById('share-link-text').value = shareUrl;
+      shareLinkDiv.style.display = 'block';
+    } else {
+      shareLinkDiv.style.display = 'none';
+    }
+  }
+}
+
+function saveUrl() {
+  const url=document.getElementById('gs_url').value.trim();
+  if(url && !url.startsWith('https://script.google.com')) { showToast('Paste the full Apps Script URL'); return; }
+  STATE.sheetUrl=url;
+  localStorage.setItem(LS_URL,url);
+  updateSheetDot();
+  showToast(url?'✓ URL saved — Share link ready below':'URL cleared');
+  // Restart poll if delivery
+  if(url && STATE.role==='delivery') { stopDeliveryPoll(); startDeliveryPoll(); }
+  // Re-render setup so share link section appears immediately
+  renderSetup();
+}
+
+async function testConnection() {
+  const url = document.getElementById('gs_url').value.trim();
+  if (!url) { showToast('Enter URL first'); return; }
+  if (!url.startsWith('https://script.google.com')) {
+    showToast('Paste the full Apps Script Web App URL'); return;
+  }
+  saveUrl();
+  renderSetup();
+  const statusEl = document.getElementById('conn-status');
+  statusEl.className = 'connection-status untested';
+  document.getElementById('conn-dot').textContent = '⏳';
+  document.getElementById('conn-text').textContent = 'Sending ping…';
+
+  // Running from file:// means fetch+cors always fails (browser security).
+  // Use no-cors fetch + img fallback — same as Production Tracker.
+  const pingUrl = url + '?action=ping&t=' + Date.now();
+  let fired = false;
+  try {
+    await fetch(pingUrl, { method:'GET', mode:'no-cors', cache:'no-store' });
+    fired = true;
+  } catch(e) {
+    await new Promise(resolve => {
+      const img = new Image();
+      img.onload = img.onerror = () => { fired = true; resolve(); };
+      img.src = pingUrl;
+      setTimeout(resolve, 4000);
+    });
+  }
+
+  if (fired) {
+    statusEl.className = 'connection-status connected';
+    document.getElementById('conn-dot').textContent = '✅';
+    document.getElementById('conn-text').textContent = 'Ping sent! ✓ Verify: check your Google Sheet — a Ping_Log tab should appear within 5 seconds.';
+    showToast('✅ Ping sent — check Sheet!');
+  } else {
+    statusEl.className = 'connection-status disconnected';
+    document.getElementById('conn-dot').textContent = '❌';
+    document.getElementById('conn-text').textContent = 'Could not reach Script — check URL & redeploy as Web App';
+    showToast('❌ Could not reach Script URL');
+  }
+}
+
+function copyShareLink() {
+  const txt = document.getElementById('share-link-text')?.value;
+  if(!txt) return;
+  navigator.clipboard?.writeText(txt)
+    .then(()=>showToast('✓ Link copied — send to sales person via WhatsApp!'))
+    .catch(()=>{
+      const el = document.getElementById('share-link-text');
+      el.select(); document.execCommand('copy');
+      showToast('✓ Link copied');
+    });
+}
+
+function copyScript() {
+  const code=document.getElementById('script-code').textContent;
+  navigator.clipboard.writeText(code).then(()=>showToast('✓ Script copied!')).catch(()=>showToast('Select text manually and copy'));
+}
+
+function exportLocalData() {
+  const data={date:TODAY_KEY,orders:STATE.orders,exportedAt:new Date().toISOString()};
+  const a=document.createElement('a');
+  a.href='data:application/json;charset=utf-8,'+encodeURIComponent(JSON.stringify(data,null,2));
+  a.download='GaavnFresh_Orders_'+TODAY_KEY+'.json'; a.click();
+  showToast('✓ Data exported');
+}
+
+function clearLocalOrders() {
+  if(!confirm('Clear all of today\'s locally stored orders? This cannot be undone.')) return;
+  STATE.orders=[];
+  localStorage.removeItem(LS_ORDERS);
+  renderDashboard(); renderOrdersList();
+  showToast('✓ Today\'s orders cleared');
+}
+
+// ── APPS SCRIPT CODE ─────────────────────────────────────────────────
+function getAppsScriptCode() {
+  var lines = [
+    '// GAAVN FRESH — Sales App · Google Apps Script v3 — Monthly sheets + per-item rows',
+    '// Deploy: Execute as Me | Who has access: Anyone',
+    '// Paste entire script → Save → Deploy → New Deployment → Web App',
+    '',
+    'var SS_ID = SpreadsheetApp.getActiveSpreadsheet().getId();',
+    '',
+    'function doGet(e) {',
+    '  try {',
+    '    var a = e.parameter.action || "";',
+    '    if (a === "ping")       return handlePing(e);',
+    '    if (a === "logOrder")   return logOrder(e.parameter);',
+    '    if (a === "logPayment") return logPayment(e.parameter);',
+    '    if (a === "getOrders")  return getOrders(e.parameter);',
+    '    return jsonOut({error: "Unknown action: " + a});',
+    '  } catch(err) { return jsonOut({error: err.message}); }',
+    '}',
+    '',
+    'function jsonOut(obj) {',
+    '  return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);',
+    '}',
+    '',
+    'function handlePing(e) {',
+    '  var ss = SpreadsheetApp.openById(SS_ID);',
+    '  var sh = ss.getSheetByName("Ping_Log") || ss.insertSheet("Ping_Log");',
+    '  if(sh.getLastRow()===0) sh.appendRow(["Timestamp","Action","Version"]);',
+    '  sh.appendRow([new Date().toLocaleString("en-IN"), "ping", "v3-monthly-per-item"]);',
+    '  return jsonOut({status:"ok", pong:true, version:"v3-monthly-per-item"});',
+    '}',
+    '',
+    '// ── MONTHLY SHEET HELPERS ──────────────────────────────────────────',
+    'function getMonthTag(dateStr) {',
+    '  if(!dateStr || dateStr==="undefined") {',
+    '    dateStr = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd");',
+    '  }',
+    '  return dateStr.slice(0,7);',
+    '}',
+    '',
+    'function getOrCreateSheet(ss, name) {',
+    '  return ss.getSheetByName(name) || ss.insertSheet(name);',
+    '}',
+    '',
+    '// ── LOG ORDER ───────────────────────────────────────────────────────',
+    'function logOrder(p) {',
+    '  var ss = SpreadsheetApp.openById(SS_ID);',
+    '  var rawDate = String(p.date||"").trim();',
+    '  if(!rawDate||rawDate==="undefined") rawDate = Utilities.formatDate(new Date(),Session.getScriptTimeZone(),"yyyy-MM-dd");',
+    '  var shName = "Orders_" + getMonthTag(rawDate);',
+    '  var sh = getOrCreateSheet(ss, shName);',
+    '  // Headers: one row per item — order info repeated, then item details',
+    '  var headers = [',
+    '    "Order ID","Date","Customer","Category","Area","Status",',
+    '    "Order Total (Rs)","Payment Mode","Payment Amt",',
+    '    "Product","Qty","Unit","Rate (Rs)","Amount (Rs)",',
+    '    "Notes","Created By","Synced At"',
+    '  ];',
+    '  if(sh.getLastRow()===0) {',
+    '    sh.appendRow(headers);',
+    '    var hRange = sh.getRange(1,1,1,headers.length);',
+    '    hRange.setFontWeight("bold").setBackground("#1A3A1F").setFontColor("#fff");',
+    '    sh.setFrozenRows(1);',
+    '    // Set column widths',
+    '    sh.setColumnWidth(3,180); sh.setColumnWidth(10,200);',
+    '    sh.setColumnWidth(1,130); sh.setColumnWidth(2,100);',
+    '  }',
+    '  var items=[];',
+    '  try{items=JSON.parse(p.items||"[]");}catch(ex){}',
+    '  if(items.length===0) items=[{name:"(no items)",qty:0,unit:"",rate:0,amount:0}];',
+    '  var now=Utilities.formatDate(new Date(),Session.getScriptTimeZone(),"dd/MM/yyyy HH:mm");',
+    '  var orderTotal=parseFloat(p.total)||0;',
+    '  var payMode=p.paymentMode||"";',
+    '  var payAmt=parseFloat(p.paymentAmount)||0;',
+    '  // Delete existing rows for this orderId first (handles edits)',
+    '  var data=sh.getDataRange().getValues();',
+    '  var rowsToDelete=[];',
+    '  for(var r=data.length-1;r>=1;r--) {',
+    '    var cell=String(data[r][0]||"").trim();',
+    '    if(cell===String(p.orderId)) rowsToDelete.push(r+1);',
+    '    if(cell.indexOf("TOTAL:")===0) continue;',
+    '  }',
+    '  rowsToDelete.forEach(function(rn){ sh.deleteRow(rn); });',
+    '  // Also check OTHER month sheets in case date was changed',
+    '  var allSheets=ss.getSheets();',
+    '  for(var s=0;s<allSheets.length;s++) {',
+    '    var shOther=allSheets[s];',
+    '    if(shOther.getName()===shName) continue;',
+    '    if(shOther.getName().indexOf("Orders_")!==0) continue;',
+    '    var dataOther=shOther.getDataRange().getValues();',
+    '    for(var r2=1;r2<dataOther.length;r2++) {',
+    '      if(String(dataOther[r2][0]).indexOf("TOTAL:")===0) continue;',
+    '      if(String(dataOther[r2][0])===String(p.orderId)) {',
+    '        // Found in old sheet — delete from there, add to new sheet',
+    '        shOther.deleteRow(r2+1);',
+    '        var oldDate=String(dataOther[r2][1]);',
+    '        updateDayTotals(shOther,oldDate);',
+    '        break;',
+    '      }',
+    '    }',
+    '  }',
+    '  // Append one row per item',
+    '  var firstRow = -1;',
+    '  items.forEach(function(item, idx) {',
+    '    var qty    = parseFloat(item.qty)||0;',
+    '    var rate   = parseFloat(item.rate)||0;',
+    '    var amt    = parseFloat(item.amount)||(qty*rate);',
+    '    var unit   = item.unit||"";',
+    '    var name   = item.name||"";',
+    '    // Only show order-level fields on first item row (cleaner to read)',
+    '    var rowData = [',
+    '      p.orderId,',
+    '      rawDate,',
+    '      idx===0 ? p.customerName : "",',
+    '      idx===0 ? (p.customerCategory||"") : "",',
+    '      idx===0 ? (p.customerArea||"") : "",',
+    '      idx===0 ? p.status : "",',
+    '      idx===0 ? orderTotal : "",',
+    '      idx===0 ? payMode : "",',
+    '      idx===0 ? payAmt : "",',
+    '      name, qty, unit, rate, amt,',
+    '      idx===0 ? (p.notes||"") : "",',
+    '      idx===0 ? (p.createdBy||"") : "",',
+    '      idx===0 ? now : ""',
+    '    ];',
+    '    sh.appendRow(rowData);',
+    '    var nr = sh.getLastRow();',
+    '    if(firstRow===-1) firstRow=nr;',
+    '    // Color item rows: first row uses status color, continuation rows lighter',
+    '    if(idx===0) {',
+    '      applyRowColor(sh, nr, p.status);',
+    '    } else {',
+    '      sh.getRange(nr,1,1,headers.length).setBackground("#F9F9F9");',
+    '    }',
+    '    // Bold the amount column',
+    '    sh.getRange(nr,14,1,1).setFontWeight("bold");',
+    '  });',
+    '  updateDayTotals(sh, rawDate);',
+    '  return jsonOut({status:"ok", row:firstRow, items:items.length});',
+    '}',
+    '',
+    '// ── DAY TOTALS ──────────────────────────────────────────────────────',
+    'function updateDayTotals(sh, dateStr) {',
+    '  // Remove old TOTAL row for this date',
+    '  var data=sh.getDataRange().getValues();',
+    '  for(var r=data.length-1;r>=1;r--) {',
+    '    if(String(data[r][0])==="TOTAL:"+dateStr) { sh.deleteRow(r+1); }',
+    '  }',
+    '  // Re-read and sum all rows for this date',
+    '  data=sh.getDataRange().getValues();',
+    '  var totSales=0,totPaid=0,count=0;',
+    '  var seenOrders={};',
+    '  for(var i=1;i<data.length;i++) {',
+    '    if(String(data[i][0]).indexOf("TOTAL:")===0) continue;',
+    '    if(String(data[i][1])===dateStr) {',
+    '      var oid=String(data[i][0]);',
+    '      if(!seenOrders[oid]) {',
+    '        // First row for this order — sum order-level totals',
+    '        totSales+=parseFloat(data[i][6])||0;',
+    '        totPaid +=parseFloat(data[i][8])||0;',
+    '        count++;',
+    '        seenOrders[oid]=true;',
+    '      }',
+    '    }',
+    '  }',
+    '  if(count===0) return;',
+    '  // Find the last row for this date and insert total after it',
+    '  var lastDateRow=1;',
+    '  data=sh.getDataRange().getValues();',
+    '  for(var j=1;j<data.length;j++) {',
+    '    if(String(data[j][0]).indexOf("TOTAL:")===0) continue;',
+    '    if(String(data[j][1])===dateStr) lastDateRow=j+1;',
+    '  }',
+    '  sh.insertRowAfter(lastDateRow);',
+    '  var d=new Date(dateStr+"T00:00:00");',
+    '  var dlabel=Utilities.formatDate(d,Session.getScriptTimeZone(),"dd/MM/yyyy");',
+    '  var totalRow=["TOTAL:"+dateStr,dateStr,',
+    '    "DAY TOTAL — "+dlabel+" ("+count+" orders)","","","SUMMARY",',
+    '    totSales,"",totPaid,',
+    '    "Sales: Rs"+totSales+" | Collected: Rs"+totPaid+" | Due: Rs"+(totSales-totPaid),',
+    '    "","","","","","",""];',
+    '  sh.getRange(lastDateRow+1,1,1,totalRow.length).setValues([totalRow]);',
+    '  sh.getRange(lastDateRow+1,1,1,totalRow.length).setBackground("#1A3A1F").setFontColor("#fff").setFontWeight("bold");',
+    '}',
+    '',
+    'function applyRowColor(sh,row,status) {',
+    '  var colors={confirmed:"#E8F5E9",modified:"#FFF3E0",delivered:"#E3F2FD",',
+    '    paid:"#E8F5E9",due:"#FFEBEE",partial:"#FFF8E1",draft:"#F5F5F5"};',
+    '  sh.getRange(row,1,1,sh.getLastColumn()||17).setBackground(colors[status]||"#FFFFFF");',
+    '}',
+    '',
+    '// ── LOG PAYMENT ─────────────────────────────────────────────────────',
+    'function logPayment(p) {',
+    '  var ss=SpreadsheetApp.openById(SS_ID);',
+    '  var rawDate=String(p.date||"").trim();',
+    '  if(!rawDate||rawDate==="undefined") rawDate=Utilities.formatDate(new Date(),Session.getScriptTimeZone(),"yyyy-MM-dd");',
+    '  var shName="Payments_"+getMonthTag(rawDate);',
+    '  var sh=getOrCreateSheet(ss,shName);',
+    '  var headers=["Pay ID","Date","Customer","Cust ID","Amount (Rs)","Mode","Reference","Notes","Created By","Synced At"];',
+    '  if(sh.getLastRow()===0) {',
+    '    sh.appendRow(headers);',
+    '    sh.getRange(1,1,1,headers.length).setFontWeight("bold").setBackground("#0D47A1").setFontColor("#fff");',
+    '    sh.setFrozenRows(1);',
+    '  }',
+    '  var now=Utilities.formatDate(new Date(),Session.getScriptTimeZone(),"dd/MM/yyyy HH:mm");',
+    '  var data=sh.getDataRange().getValues();',
+    '  for(var r=1;r<data.length;r++) {',
+    '    if(String(data[r][0])===String(p.payId)) {',
+    '      sh.getRange(r+1,1,1,headers.length).setValues([[p.payId,p.date,p.custName||"",p.custId||"",',
+    '        parseFloat(p.amount)||0,p.mode||"",p.ref||"",p.notes||"",p.createdBy||"",now]]);',
+    '      sh.getRange(r+1,1,1,headers.length).setBackground("#E8F5E9");',
+    '      return jsonOut({status:"updated",row:r+1});',
+    '    }',
+    '  }',
+    '  sh.appendRow([p.payId,p.date,p.custName||"",p.custId||"",parseFloat(p.amount)||0,p.mode||"",p.ref||"",p.notes||"",p.createdBy||"",now]);',
+    '  sh.getRange(sh.getLastRow(),1,1,headers.length).setBackground("#E8F5E9");',
+    '  return jsonOut({status:"ok",row:sh.getLastRow()});',
+    '}',
+    '',
+    '// ── MIGRATE DAILY SHEETS TO MONTHLY ─────────────────────────────',
+    '// Run ONCE from Apps Script editor: select migrateDailyToMonthly → Run',
+    'function migrateDailyToMonthly() {',
+    '  var ss = SpreadsheetApp.openById(SS_ID);',
+    '  var sheets = ss.getSheets();',
+    '  var migrated = 0;',
+    '  sheets.forEach(function(sh) {',
+    '    var name = sh.getName();',
+    '    if(!/^Orders_[0-9]{8}$/.test(name)) return;',
+    '    var ds = name.slice(7);',
+    '    var isoDate = ds.slice(0,4)+"-"+ds.slice(4,6)+"-"+ds.slice(6,8);',
+    '    var monthTag = ds.slice(0,4)+"-"+ds.slice(4,6);',
+    '    var targetName = "Orders_"+monthTag;',
+    '    var target = getOrCreateSheet(ss, targetName);',
+    '    var hdrs = ["Order ID","Date","Customer","Category","Area","Status","Total (Rs)","Payment Mode","Payment Amt","Items Summary","Notes","Mod Notes","Created By","Synced At","Items Raw"];',
+    '    if(target.getLastRow()===0) {',
+    '      target.appendRow(hdrs);',
+    '      target.getRange(1,1,1,hdrs.length).setFontWeight("bold").setBackground("#1A3A1F").setFontColor("#fff");',
+    '      target.setFrozenRows(1);',
+    '    }',
+    '    var data = sh.getDataRange().getValues();',
+    '    if(data.length<=1) return;',
+    '    var hdr = data[0];',
+    '    var totalIdx = hdr.indexOf("Total (Rs)"); if(totalIdx<0) totalIdx=6;',
+    '    var itemsIdx = hdr.indexOf("Items Summary"); if(itemsIdx<0) itemsIdx=hdr.indexOf("Items"); if(itemsIdx<0) itemsIdx=9;',
+    '    var statusIdx= hdr.indexOf("Status"); if(statusIdx<0) statusIdx=5;',
+    '    var existing = target.getDataRange().getValues().slice(1).map(function(r){return String(r[0]);});',
+    '    data.slice(1).forEach(function(row) {',
+    '      var oid = String(row[0]||"").trim();',
+    '      if(!oid || existing.indexOf(oid)>=0) return;',
+    '      var itemsStr = String(row[itemsIdx]||"");',
+    '      try {',
+    '        var p = JSON.parse(itemsStr);',
+    '        if(Array.isArray(p)) itemsStr = p.map(function(i){return i.qty+" "+i.unit+" "+i.name+" @Rs"+i.rate+" = Rs"+i.amount;}).join(" | ");',
+    '      } catch(e){}',
+    '      target.appendRow([oid,isoDate,String(row[2]||""),String(row[3]||""),String(row[4]||""),',
+    '        String(row[statusIdx]||"confirmed"),parseFloat(row[totalIdx])||0,',
+    '        String(row[7]||""),parseFloat(row[8])||0,itemsStr,',
+    '        String(row[10]||""),String(row[11]||""),String(row[12]||""),String(row[13]||""),String(row[hdr.length-1]||"")]);',
+    '      existing.push(oid);',
+    '      migrated++;',
+    '    });',
+    '    updateDayTotals(target, isoDate);',
+    '  });',
+    '  SpreadsheetApp.getUi().alert("Done! " + migrated + " orders migrated to monthly sheets. You can delete the old daily sheets.");',
+    '}',
+    '',
+    '// ── GET ORDERS ──────────────────────────────────────────────────────',
+    'function getOrders(p) {',
+    '  var ss=SpreadsheetApp.openById(SS_ID);',
+    '  var rawDate=String(p.date||"").trim();',
+    '  if(!rawDate||rawDate==="undefined") rawDate=Utilities.formatDate(new Date(),Session.getScriptTimeZone(),"yyyy-MM-dd");',
+    '  var shName="Orders_"+getMonthTag(rawDate);',
+    '  var sh=ss.getSheetByName(shName);',
+    '  if(!sh) return jsonOut({orders:[],error:"No sheet for "+rawDate});',
+    '  var data=sh.getDataRange().getValues();',
+    '  if(data.length<2) return jsonOut({orders:[],date:p.date});',
+    '  var headers=data[0];',
+    '  var orders=data.slice(1).filter(function(row){',
+    '    var id=String(row[0]);',
+    '    return id&&id.indexOf("TOTAL:")!==0&&String(row[1])===rawDate;',
+    '  }).map(function(row){',
+    '    var obj={}; headers.forEach(function(h,i){obj[h]=row[i]!==undefined?row[i]:"";});',
+    '    return obj;',
+    '  }).filter(function(o){return o["Order ID"];});',
+    '  return jsonOut({orders:orders,date:p.date,count:orders.length});',
+    '}',
+  ];
+  return lines.join('\n');
+}
+
+
+// ── WHATSAPP ORDER SUMMARY ───────────────────────────────────────────
+function getDeliverySequence() {
+  // Returns saved sequence as array of order IDs (empty if none set)
+  try { return JSON.parse(localStorage.getItem(LS_SEQ)||'[]'); }
+  catch(e) { return []; }
+}
+
+function copyWhatsApp() {
+  // Only include TODAY's orders in the WhatsApp summary
+  const orders = STATE.orders.filter(o => (o.date || TODAY_KEY) === TODAY_KEY);
+  if (!orders.length) { showToast('No orders for today to share'); return; }
+
+  const d = new Date();
+  const dateStr = d.toLocaleDateString('en-IN', {weekday:'long', day:'numeric', month:'long', year:'numeric'});
+  const timeStr = d.toLocaleTimeString('en-IN', {hour:'2-digit', minute:'2-digit'});
+
+  let lines = [];
+  lines.push('🐄 *GAAVN FRESH — Daily Order Sheet*');
+  lines.push('📅 ' + dateStr);
+  lines.push('🕐 Prepared at ' + timeStr);
+  lines.push('─'.repeat(30));
+
+  // Use STATE.orders directly — already in delivery sequence order
+  // (sequence set via the 🔢 Sequence button)
+  const prodTotals = {};
+  const seqSet = getDeliverySequence();
+  const hasSeq = seqSet.length > 0;
+  if (hasSeq) {
+    lines.push('📍 *Delivery sequence order*');
+  }
+
+  orders.forEach((o, idx) => {
+    const statusIcon = {confirmed:'✅',modified:'⚠️',delivered:'✅',paid:'💰',due:'🔴',partial:'🟡',draft:'📝'}[o.status] || '📦';
+    const catEmoji = {'Distributor -Retail':'🏭','Distributor -HORECA':'🏭','HORECA':'🏨','Retail':'🛒'}[o.customerCategory] || '📦';
+    lines.push('');
+    lines.push((idx+1) + '. ' + statusIcon + ' *' + o.customerName + '* ' + catEmoji);
+    if (o.customerArea) lines.push('   📍 ' + o.customerArea);
+    (o.items || []).forEach(item => {
+      if(item.weightPending || item.product==='pl') {
+        const confirmedWt = item.confirmedWeightKg||0;
+        const estWt = item.estKg||0;
+        const wtStr = confirmedWt>0
+          ? confirmedWt.toFixed(2)+'kg (confirmed) @ ₹'+item.rate+'/kg = ₹'+item.amount.toLocaleString('en-IN')
+          : estWt>0 ? '~'+estWt+'kg (est.) @ ₹'+item.rate+'/kg ≈ ₹'+item.amount.toLocaleString('en-IN')+' · ⚖️ weight at delivery'
+          : '⚖️ weight to be confirmed at delivery';
+        lines.push('   • ' + item.name + ': ' + item.qty + ' ladi' + (item.qty>1?'s':'') + ' · ' + wtStr);
+      } else {
+        lines.push('   • ' + item.name + ': ' + item.qty + ' ' + item.unit + ' @ ₹' + item.rate + ' = ₹' + item.amount.toLocaleString('en-IN'));
+      }
+      if (!prodTotals[item.name]) prodTotals[item.name] = {qty:0, unit:item.unit, amt:0, isLaadi:false, ladis:0, weightKg:0};
+      if(item.weightPending!==undefined || item.product==='pl') {
+        // Laadi: accumulate both ladi count AND confirmed/estimated weight
+        prodTotals[item.name].isLaadi = true;
+        prodTotals[item.name].ladis  += (item.qty||0);
+        prodTotals[item.name].weightKg += (item.confirmedWeightKg||item.estKg||0);
+        prodTotals[item.name].amt    += (item.amount||0);
+      } else {
+        prodTotals[item.name].qty  += item.qty;
+        prodTotals[item.name].amt  += item.amount;
+      }
+    });
+    lines.push('   💵 *Total: ₹' + (o.total||0).toLocaleString('en-IN') + '*');
+    if (o.notes) lines.push('   📝 ' + o.notes);
+    if (o.payment?.mode && o.payment.mode !== 'due')
+      lines.push('   💳 Payment: ' + o.payment.mode + (o.payment.amount ? ' ₹'+o.payment.amount : ''));
+  });
+
+  // Day summary
+  const grandTotal = orders.reduce((s,o) => s + (o.total||0), 0);
+  const paidTotal  = orders.filter(o => o.status==='paid'||o.payment?.received).reduce((s,o) => s+(o.payment?.amount||o.total||0), 0);
+  const dueTotal   = orders.filter(o => o.status==='due'||o.status==='partial').reduce((s,o) => s+(o.total-(o.payment?.amount||0)), 0);
+
+  lines.push('');
+  lines.push('─'.repeat(30));
+  lines.push('📊 *DAY SUMMARY*');
+  lines.push('Total Orders: ' + orders.length);
+  lines.push('Gross Revenue: *₹' + grandTotal.toLocaleString('en-IN') + '*');
+  if (paidTotal > 0) lines.push('Collected: ₹' + paidTotal.toLocaleString('en-IN'));
+  if (dueTotal  > 0) lines.push('Due/Pending: ₹' + dueTotal.toLocaleString('en-IN'));
+
+  // Product-wise totals
+  if (Object.keys(prodTotals).length) {
+    lines.push('');
+    lines.push('📦 *PRODUCT-WISE DISPATCH*');
+    Object.entries(prodTotals).forEach(([name, v]) => {
+      if(v.isLaadi) {
+        // Show: ladi count + total weight (confirmed or estimated)
+        const wt = v.weightKg>0 ? v.weightKg.toFixed(2)+'kg' : '⚖️ wt pending';
+        const ladisLabel = v.ladis + ' ladi' + (v.ladis!==1?'s':'');
+        lines.push('• ' + name + ': ' + ladisLabel + ' · ' + wt + (v.amt>0?' = ₹'+v.amt.toLocaleString('en-IN'):''));
+      } else {
+        // For Chaas: show unit clearly as '1L btl' or '500ml btl'
+        let displayUnit = v.unit;
+        if(name==='Chaas 1 Litre') displayUnit = '1L btl';
+        if(name==='Chaas 500ml')   displayUnit = '500ml btl';
+        const qtyDisplay = v.qty%1===0 ? v.qty : v.qty.toFixed(1);
+        lines.push('• ' + name + ': ' + qtyDisplay + ' ' + displayUnit);
+      }
+    });
+  }
+
+  lines.push('');
+  lines.push('_Sent from Gaavn Fresh Sales App_');
+
+  const msg = lines.join('\n');
+  document.getElementById('wa-text').value = msg;
+  document.getElementById('wa-copy-confirm').style.display = 'none';
+  document.getElementById('wa-copy-btn').textContent = '📋 Copy Message';
+  document.getElementById('modal-whatsapp').classList.add('open');
+}
+
+function doCopyWA() {
+  const txt = document.getElementById('wa-text').value;
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(txt)
+      .then(() => {
+        document.getElementById('wa-copy-btn').textContent = '✓ Copied!';
+        document.getElementById('wa-copy-confirm').style.display = 'block';
+      })
+      .catch(() => fallbackCopyWA(txt));
+  } else {
+    fallbackCopyWA(txt);
+  }
+}
+
+function copyApprovalMsg() {
+  const txt = document.getElementById('approval-wa-msg').value;
+  const copy = (t) => {
+    if(navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(t).then(()=>showToast('✓ Copied — paste to WhatsApp now')).catch(()=>fallback(t));
+    } else { fallback(t); }
+  };
+  const fallback = (t) => {
+    const el = document.getElementById('approval-wa-msg');
+    el.select(); el.setSelectionRange(0,99999);
+    try { document.execCommand('copy'); showToast('✓ Copied — paste to WhatsApp'); } catch(e){}
+  };
+  copy(txt);
+}
+
+function openInWhatsApp() {
+  const txt = document.getElementById('wa-text').value;
+  if(!txt) return;
+  // wa.me with text opens WhatsApp with the message pre-filled
+  // Works on mobile (opens app) and desktop (opens WhatsApp Web)
+  const encoded = encodeURIComponent(txt);
+  const url = 'https://wa.me/?text=' + encoded;
+  window.open(url, '_blank');
+}
+
+function fallbackCopyWA(txt) {
+  const el = document.getElementById('wa-text');
+  el.select(); el.setSelectionRange(0, 99999);
+  try {
+    document.execCommand('copy');
+    document.getElementById('wa-copy-btn').textContent = '✓ Copied!';
+    document.getElementById('wa-copy-confirm').style.display = 'block';
+  } catch(e) {
+    showToast('Long-press the text above and select Copy');
+  }
+}
+
+
+// ── MANAGE CUSTOMERS ─────────────────────────────────────────────────
+let _manageCustFilter = '';
+
+function renderManageCustomers(q='') {
+  _manageCustFilter = q;
+  let custs = [...STATE.customers];
+  if(q) custs = custs.filter(c=>c.name.toLowerCase().includes(q.toLowerCase())||
+    (c.phone||'').includes(q)||(c.area||'').toLowerCase().includes(q.toLowerCase()));
+  custs.sort((a,b)=>a.name.localeCompare(b.name));
+
+  const list = document.getElementById('manage-list');
+  if(!custs.length){ list.innerHTML='<div class="empty-state"><div class="empty-icon">👥</div><p>No customers found</p></div>'; return; }
+  list.innerHTML = custs.map(c=>{
+    const bal = c.balance||0;
+    const balTag = bal>0
+      ? `<span style="font-size:11px;font-weight:700;color:var(--red);">₹${bal.toLocaleString('en-IN')} due</span>`
+      : `<span style="font-size:11px;color:var(--green);">✓ Clear</span>`;
+    return `<div style="background:var(--surface);border:1.5px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px;display:flex;align-items:center;justify-content:space-between;cursor:pointer;" onclick="openManageCustomer('${c.id}')">
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:14px;font-weight:600;">${c.name}</div>
+        <div style="display:flex;align-items:center;gap:8px;margin-top:3px;flex-wrap:wrap;">
+          <span style="font-size:10px;font-weight:700;padding:1px 7px;border-radius:20px;background:${CAT_BG[c.category]||'#eee'};color:${CAT_COLOR[c.category]||'#888'};">${c.category||'—'}</span>
+          ${c.phone?`<span style="font-size:11px;color:var(--blue);">📞 ${c.phone}</span>`:'<span style="font-size:11px;color:var(--muted);">No phone</span>'}
+          ${balTag}
+        </div>
+      </div>
+      <span style="color:var(--amber);font-size:18px;">✏️</span>
+    </div>`;
+  }).join('');
+}
+
+function openManageCustomer(id) {
+  const c = STATE.customers.find(x=>x.id===id); if(!c) return;
+  document.getElementById('mc-title').textContent = c.name;
+  document.getElementById('mc-id').value = id;
+  document.getElementById('mc-name').value = c.name||'';
+  document.getElementById('mc-category').value = c.category||'Retail';
+  document.getElementById('mc-phone').value = c.phone||'';
+  document.getElementById('mc-area').value = c.area||'';
+  document.getElementById('mc-balance').value = c.balance||0;
+
+  // Rates
+  const ratesEl = document.getElementById('mc-rates');
+  ratesEl.innerHTML = PRODUCTS.map(p=>{
+    const cur = c.pricing?.[p.id]||'';
+    return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+      <span style="font-size:13px;flex:1;">${p.emoji} ${p.name}</span>
+      <input type="number" id="mcr-${p.id}" value="${cur}" placeholder="₹${p.stdRate} (std)"
+        step="1" min="0"
+        style="width:90px;background:var(--cream);border:1.5px solid var(--border);border-radius:8px;padding:6px 8px;font-family:'DM Sans',sans-serif;font-size:13px;text-align:right;">
+      <span style="font-size:11px;color:var(--muted);width:36px;">/${p.unit}</span>
+    </div>`;
+  }).join('');
+  document.getElementById('modal-manage-cust').classList.add('open');
+}
+
+function saveManageCustomer() {
+  const id = document.getElementById('mc-id').value;
+  const c  = STATE.customers.find(x=>x.id===id); if(!c) return;
+
+  const pricing={};
+  PRODUCTS.forEach(p=>{
+    const v=parseFloat(document.getElementById('mcr-'+p.id)?.value);
+    if(!isNaN(v)&&v>0) pricing[p.id]=v;
+  });
+
+  const newBal = parseFloat(document.getElementById('mc-balance').value)||0;
+  Object.assign(c,{
+    name:    document.getElementById('mc-name').value.trim()||c.name,
+    category:document.getElementById('mc-category').value,
+    phone:   document.getElementById('mc-phone').value.trim(),
+    area:    document.getElementById('mc-area').value.trim(),
+    pricing,
+    balance:    newBal,
+    openingBalance: c.openingBalance!==undefined ? c.openingBalance : newBal,
+  });
+
+  // Persist to localStorage extras
+  const extras = JSON.parse(localStorage.getItem(LS_CUSTS)||'[]');
+  const ei = extras.findIndex(x=>x.id===id);
+  if(ei>=0) extras[ei]=c; else extras.push(c);
+  localStorage.setItem(LS_CUSTS, JSON.stringify(extras));
+
+  closeModal('modal-manage-cust');
+  showToast('✓ Customer updated: '+c.name);
+  renderManageCustomers(_manageCustFilter);
+  renderCustomerList();
+}
+
+
+// ── SHARE ORDERS TO DELIVERY ─────────────────────────────────────────
+function shareToDelivery() {
+  if(!STATE.orders.length){ showToast('No orders to share yet'); return; }
+  const payload = {
+    date: TODAY_KEY,
+    orders: STATE.orders.map(o=>({
+      id:o.id, customerName:o.customerName, customerCategory:o.customerCategory||'',
+      customerArea:o.customerArea||'', customerPhone:o.customerPhone||'',
+      status:o.status, items:o.items, total:o.total, notes:o.notes||'',
+    }))
+  };
+  const code = btoa(JSON.stringify(payload));
+  document.getElementById('delivery-share-text').value = code;
+  document.getElementById('modal-share-delivery').classList.add('open');
+}
+
+function copyDeliveryCode() {
+  const txt = document.getElementById('delivery-share-text').value;
+  navigator.clipboard?.writeText(txt).then(()=>showToast('✓ Code copied — send to delivery person'))
+    .catch(()=>{ document.getElementById('delivery-share-text').select(); document.execCommand('copy'); showToast('✓ Copied'); });
+}
+
+function openLoadOrders() {
+  document.getElementById('load-orders-text').value='';
+  document.getElementById('modal-load-orders').classList.add('open');
+}
+
+function loadOrdersFromCode() {
+  const txt = document.getElementById('load-orders-text').value.trim();
+  if(!txt){ showToast('Paste the order code first'); return; }
+  try {
+    const payload = JSON.parse(atob(txt));
+    if(!payload.orders?.length){ showToast('No orders found in code'); return; }
+    // Merge with existing — don't overwrite orders already in localStorage
+    const existing = new Set(STATE.orders.map(o=>o.id));
+    let added = 0;
+    payload.orders.forEach(o=>{
+      if(!existing.has(o.id)){
+        STATE.orders.push({...o, synced:false, loadedFromCode:true});
+        added++;
+      }
+    });
+    saveOrders();
+    closeModal('modal-load-orders');
+    showToast(`✓ ${added} orders loaded for ${payload.date}`);
+    renderOrdersList(); renderDashboard();
+  } catch(e){ showToast('Invalid code — ask sales to re-share'); }
+}
+
+// ── DELIVERY ORDER ACTIONS ────────────────────────────────────────────
+function openDeliveryOrder(orderId) {
+  const o = STATE.orders.find(x=>x.id===orderId); if(!o) return;
+  document.getElementById('modal-order-title').textContent = o.customerName;
+  const items = o.items||[];
+  document.getElementById('modal-order-content').innerHTML = `
+    <div style="font-size:12px;color:var(--muted);margin-bottom:4px;">${o.customerCategory||''} ${o.customerArea?'· '+o.customerArea:''}</div>
+    ${o.customerPhone?`<div style="font-size:13px;font-weight:600;color:var(--blue);margin-bottom:10px;">📞 ${o.customerPhone}</div>`:''}
+    <div class="section-label">Items to Deliver</div>
+    ${items.map((item,i)=>`
+    <div class="card" style="margin-bottom:8px;">
+      <div class="card-body" style="padding:10px 14px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+          <div style="font-size:14px;font-weight:600;">${item.name}</div>
+          <div style="font-size:13px;font-weight:700;color:var(--amber);">₹${(item.amount||0).toLocaleString('en-IN')}</div>
+        </div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:8px;">
+          Ordered: ${item.qty} ${item.unit} @ ₹${item.rate}
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;">
+          <label style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;width:80px;">Delivered</label>
+          <input type="number" id="del-qty-${i}" value="${item.qty}" min="0" step="0.5"
+            oninput="updateDeliveredAmt(${i},'${orderId}')"
+            style="width:70px;background:var(--cream);border:1.5px solid var(--amber);border-radius:8px;padding:6px 8px;font-size:14px;font-weight:700;text-align:center;">
+          <span style="font-size:12px;color:var(--muted);">${item.unit}</span>
+          <span style="font-size:13px;font-weight:600;color:var(--green);margin-left:auto;" id="del-amt-${i}">₹${(item.amount||0).toLocaleString('en-IN')}</span>
+        </div>
+      </div>
+    </div>`).join('')}
+    <div style="display:flex;justify-content:space-between;padding:10px 0;border-top:1.5px solid var(--border);margin-bottom:12px;">
+      <span style="font-weight:700;font-size:15px;">Delivery Total</span>
+      <span style="font-family:'DM Serif Display',serif;font-size:20px;color:var(--amber);" id="del-total">₹${(o.total||0).toLocaleString('en-IN')}</span>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-secondary btn-sm" onclick="openApprovalRequest('${orderId}')">⚠️ Report Shortfall</button>
+      <button class="btn btn-success" onclick="markDelivered('${orderId}')">✅ Mark Delivered</button>
+    </div>`;
+  document.getElementById('modal-order').classList.add('open');
+}
+
+function updateDeliveredAmt(i, orderId) {
+  const o = STATE.orders.find(x=>x.id===orderId); if(!o) return;
+  const item = o.items[i]; if(!item) return;
+  const qty = parseFloat(document.getElementById('del-qty-'+i)?.value)||0;
+  const amt = qty * item.rate;
+  const amtEl = document.getElementById('del-amt-'+i);
+  if(amtEl) amtEl.textContent = '₹'+(amt).toLocaleString('en-IN');
+  // Update total
+  let total = 0;
+  o.items.forEach((_,j)=>{
+    const qEl = document.getElementById('del-qty-'+j);
+    const q = qEl ? parseFloat(qEl.value)||0 : o.items[j].qty;
+    total += q * o.items[j].rate;
+  });
+  const totEl = document.getElementById('del-total');
+  if(totEl) totEl.textContent = '₹'+total.toLocaleString('en-IN');
+}
+
+function markDelivered(orderId) {
+  const o = STATE.orders.find(x=>x.id===orderId); if(!o) return;
+  // Capture any qty changes the delivery person made
+  const newItems = o.items.map((item,i)=>{
+    const qEl = document.getElementById('del-qty-'+i);
+    const qty = qEl ? parseFloat(qEl.value)||0 : item.qty;
+    return {...item, qty, amount:qty*item.rate};
+  });
+  const newTotal = newItems.reduce((s,i)=>s+i.amount,0);
+  Object.assign(o,{status:'delivered', items:newItems, total:newTotal,
+    deliveredBy:'delivery', deliveredAt:Date.now(), synced:false});
+  saveOrders();
+  if(STATE.sheetUrl) syncOneOrder(orderId);
+  closeModal('modal-order');
+  showToast('✅ Marked as delivered');
+  // Open payment modal
+  openDeliveryPaymentModal(orderId);
+}
+
+// ── APPROVAL REQUEST (delivery → sales) ─────────────────────────────
+function openApprovalRequest(orderId) {
+  const o = STATE.orders.find(x=>x.id===orderId); if(!o) return;
+  document.getElementById('ar-order-id').value = orderId;
+  document.getElementById('ar-reason').value = '';
+  // Show current items with editable qty
+  document.getElementById('ar-items').innerHTML = `
+    <div class="section-label">Revised Quantities</div>
+    ${o.items.map((item,i)=>`
+    <div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--border);">
+      <span style="flex:1;font-size:13px;font-weight:600;">${item.name}</span>
+      <input type="number" id="ar-qty-${i}" value="${item.qty}" min="0" step="0.5"
+        style="width:64px;background:var(--cream);border:1.5px solid var(--border);border-radius:8px;padding:5px 8px;font-size:13px;text-align:center;">
+      <span style="font-size:12px;color:var(--muted);">/ ${item.qty} ${item.unit}</span>
+    </div>`).join('')}`;
+  document.getElementById('modal-approval-request').classList.add('open');
+}
+
+function submitApprovalRequest() {
+  const orderId = document.getElementById('ar-order-id').value;
+  const reason  = document.getElementById('ar-reason').value.trim();
+  if(!reason){ showToast('Please describe the issue'); return; }
+  const o = STATE.orders.find(x=>x.id===orderId); if(!o) return;
+
+  const revisedItems = o.items.map((item,i)=>{
+    const qty = parseFloat(document.getElementById('ar-qty-'+i)?.value)||0;
+    return {...item, qty, amount:qty*item.rate};
+  });
+
+  Object.assign(o,{
+    status:'modified',
+    originalItems: o.originalItems||o.items,
+    items: revisedItems,
+    total: revisedItems.reduce((s,i)=>s+i.amount,0),
+    modifiedBy:'delivery', modNotes:reason, synced:false,
+  });
+  saveOrders();
+  // Sync to sheet — sales person's app polls sheet and will see modified status
+  if(STATE.sheetUrl) syncOneOrder(orderId);
+  closeModal('modal-approval-request');
+  closeModal('modal-order');
+  renderOrdersList();
+
+  // BUG1 FIX: Since delivery & sales are on different devices/browsers,
+  // show a WhatsApp message the delivery person can immediately send to sales
+  const itemSummary = revisedItems.map(i=>`${i.name}: ${i.qty} ${i.unit}`).join(', ');
+  const waMsg = `⚠️ APPROVAL NEEDED — Order #${orderId}
+Customer: ${o.customerName}
+Reason: ${reason}
+Revised: ${itemSummary}
+New Total: ₹${revisedItems.reduce((s,i)=>s+i.amount,0).toLocaleString('en-IN')}
+
+Please approve or reject in the Sales App → Approvals tab.`;
+  document.getElementById('approval-wa-msg').value = waMsg;
+  document.getElementById('modal-approval-notify').classList.add('open');
+}
+
+// ── DELIVERY PAYMENT ─────────────────────────────────────────────────
+function openDeliveryPaymentModal(orderId) {
+  const o = STATE.orders.find(x=>x.id===orderId); if(!o) return;
+  document.getElementById('dp-order-id').value = orderId;
+  document.getElementById('dp-customer').textContent = o.customerName;
+  document.getElementById('dp-amount').textContent = '₹'+(o.total||0).toLocaleString('en-IN');
+  document.getElementById('dp-pay-amount').value = o.total||0;
+  document.getElementById('dp-remarks').value = '';
+  document.querySelectorAll('#modal-delivery-payment .pay-mode-btn').forEach(b=>b.classList.remove('selected'));
+  document.getElementById('modal-delivery-payment').classList.add('open');
+}
+
+function saveDeliveryPayment() {
+  const orderId = document.getElementById('dp-order-id').value;
+  const o = STATE.orders.find(x=>x.id===orderId); if(!o) return;
+  const btn = document.querySelector('#modal-delivery-payment .pay-mode-btn.selected');
+  if(!btn){ showToast('Select payment mode or Pending'); return; }
+  const mode   = btn.dataset.mode;
+  const amount = parseFloat(document.getElementById('dp-pay-amount').value)||0;
+  const remarks= document.getElementById('dp-remarks').value.trim();
+  const isPending = mode==='pending';
+  const isPart    = !isPending && amount < (o.total||0);
+  const newStatus = isPending ? 'due' : isPart ? 'partial' : 'paid';
+
+  Object.assign(o,{
+    status: newStatus,
+    payment:{mode:isPending?'pending':mode, amount:isPending?0:amount, received:!isPending,
+             remarks, receivedAt:Date.now()},
+    dueDate: isPending?TODAY_KEY:null, daysOverdue:0, synced:false,
+  });
+  // Reduce opening balance for customer
+  if(!isPending && amount>0) {
+    const cust=STATE.customers.find(c=>c.id===o.customerId);
+    if(cust&&(cust.balance||0)>0){
+      cust.balance=Math.max(0,(cust.balance||0)-amount);
+      const extras=JSON.parse(localStorage.getItem(LS_CUSTS)||'[]');
+      const ei=extras.findIndex(x=>x.id===cust.id);
+      if(ei>=0) extras[ei].balance=cust.balance; else extras.push({...cust});
+      localStorage.setItem(LS_CUSTS,JSON.stringify(extras));
+    }
+  }
+  saveOrders();
+  if(STATE.sheetUrl) syncOneOrder(orderId);
+  closeModal('modal-delivery-payment');
+  showToast(isPending?'⏰ Marked as pending payment':isPart?`💰 Partial ₹${amount} recorded`:`✓ ₹${amount} collected via ${mode}`);
+  renderDashboard(); renderOrdersList();
+}
+
+// ── SETUP SCREEN: Add Load Orders button for delivery ────────────────
+function renderSetupExtra() {
+  if(STATE.role==='delivery') {
+    const sec = document.createElement('div');
+    sec.className='setup-card';
+    sec.innerHTML=`<div class="section-label" style="margin-top:0;">Load Orders from Sales Person</div>
+      <p style="font-size:13px;color:var(--muted);margin-bottom:10px;">Ask your sales person to tap "Share" on the Orders screen and send you the code.</p>
+      <button class="btn btn-primary" onclick="openLoadOrders()">📥 Load Today's Orders</button>`;
+    const setupScreen = document.getElementById('screen-setup');
+    if(setupScreen) setupScreen.insertBefore(sec, setupScreen.firstChild);
+  }
+}
+
+
+// ── ORDER HISTORY ────────────────────────────────────────────────────
+
+// Key prefix for all daily order stores
+const LS_PREFIX = 'gf_orders_';
+
+// Get all stored dates from localStorage (gf_orders_YYYY-MM-DD)
+function getAllStoredDates() {
+  const dates = [];
+  for(let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if(key && key.startsWith(LS_PREFIX)) {
+      const date = key.slice(LS_PREFIX.length);
+      if(/^\d{4}-\d{2}-\d{2}$/.test(date)) dates.push(date);
+    }
+  }
+  return dates.sort().reverse(); // newest first
+}
+
+// Get orders for a specific date from localStorage
+function getOrdersForDate(date) {
+  const key = LS_PREFIX + date;
+  try { return JSON.parse(localStorage.getItem(key)||'[]'); }
+  catch(e) { return []; }
+}
+
+// Store orders fetched from sheet into localStorage for offline access
+function cacheOrdersForDate(date, orders) {
+  if(!date || !orders.length) return;
+  const key = LS_PREFIX + date;
+  const existing = getOrdersForDate(date);
+  // Merge: sheet orders may have newer status than local cache
+  const merged = [...existing];
+  orders.forEach(o => {
+    const idx = merged.findIndex(x => x.id === o.id);
+    if(idx >= 0) merged[idx] = {...merged[idx], ...o};
+    else merged.push(o);
+  });
+  localStorage.setItem(key, JSON.stringify(merged));
+}
+
+function renderHistory() {
+  const filterDate = document.getElementById('hist-date-filter')?.value || '';
+  let dates = getAllStoredDates();
+
+  // Also include today if not already
+  if(!dates.includes(TODAY_KEY)) {
+    const todayOrders = JSON.parse(localStorage.getItem(LS_ORDERS)||'[]');
+    if(todayOrders.length) dates = [TODAY_KEY, ...dates];
+  }
+
+  if(filterDate) dates = dates.filter(d => d === filterDate);
+
+  const listEl  = document.getElementById('hist-list');
+  const summEl  = document.getElementById('hist-summary');
+
+  if(!dates.length) {
+    listEl.innerHTML = '<div class="empty-state"><div class="empty-icon">📅</div><p>No past orders found.<br>Orders are stored per device.<br>Use "Load from Sheet" to fetch older dates.</p></div>';
+    summEl.innerHTML = '';
+    return;
+  }
+
+  // Summary chips — totals across all visible dates
+  let totalRev = 0, totalOrders = 0, totalCustomers = new Set();
+  dates.forEach(d => {
+    const orders = d === TODAY_KEY ? JSON.parse(localStorage.getItem(LS_ORDERS)||'[]') : getOrdersForDate(d);
+    orders.forEach(o => {
+      totalRev += o.total || 0;
+      totalOrders++;
+      totalCustomers.add(o.customerName);
+    });
+  });
+
+  summEl.innerHTML = `
+    <div style="background:var(--amber-soft,#FFF8E1);border:1.5px solid var(--amber,#C8830A);border-radius:20px;padding:4px 12px;font-size:11px;font-weight:700;color:var(--amber,#C8830A);">
+      ₹${totalRev.toLocaleString('en-IN')} total
+    </div>
+    <div style="background:var(--surface);border:1.5px solid var(--border);border-radius:20px;padding:4px 12px;font-size:11px;font-weight:600;color:var(--muted);">
+      ${totalOrders} orders
+    </div>
+    <div style="background:var(--surface);border:1.5px solid var(--border);border-radius:20px;padding:4px 12px;font-size:11px;font-weight:600;color:var(--muted);">
+      ${totalCustomers.size} customers
+    </div>
+    <div style="background:var(--surface);border:1.5px solid var(--border);border-radius:20px;padding:4px 12px;font-size:11px;font-weight:600;color:var(--muted);">
+      ${dates.length} days
+    </div>
+  `;
+
+  // Build date group cards
+  listEl.innerHTML = dates.map(date => {
+    const isToday = date === TODAY_KEY;
+    const orders  = isToday
+      ? JSON.parse(localStorage.getItem(LS_ORDERS)||'[]')
+      : getOrdersForDate(date);
+
+    if(!orders.length) return '';
+
+    const dayRev    = orders.reduce((s,o) => s+(o.total||0), 0);
+    const dayCount  = orders.length;
+    const paid      = orders.filter(o=>o.status==='paid').length;
+    const due       = orders.filter(o=>o.status==='due'||o.status==='partial').length;
+    const confirmed = orders.filter(o=>o.status==='confirmed'||o.status==='delivered').length;
+
+    // Friendly date label
+    const d = new Date(date + 'T00:00:00');
+    const dayName = isToday ? 'Today' : d.toLocaleDateString('en-IN', {weekday:'short',day:'numeric',month:'short',year:'numeric'});
+
+    const statusBar = `
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;">
+        ${paid>0 ? `<span style="background:#E8F5E9;color:#2A7A45;font-size:10px;font-weight:700;padding:2px 8px;border-radius:12px;">✓ ${paid} paid</span>` : ''}
+        ${due>0  ? `<span style="background:#FFEBEE;color:#C62828;font-size:10px;font-weight:700;padding:2px 8px;border-radius:12px;">⏰ ${due} due</span>` : ''}
+        ${confirmed>0 ? `<span style="background:#FFF3E0;color:#E65100;font-size:10px;font-weight:700;padding:2px 8px;border-radius:12px;">📦 ${confirmed} active</span>` : ''}
+      </div>`;
+
+    return `
+      <div style="background:var(--surface);border:1.5px solid var(--border);border-radius:12px;margin-bottom:10px;overflow:hidden;">
+        <!-- Date header — tap to expand/collapse -->
+        <div onclick="toggleHistoryDay('hday-${date}')" style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;cursor:pointer;background:${isToday?'var(--cream)':'var(--surface)'};">
+          <div style="flex:1;">
+            <div style="font-size:14px;font-weight:700;color:var(--ink);">${dayName}${isToday?' 🟢':''}</div>
+            <div style="font-size:12px;color:var(--muted);margin-top:2px;">${dayCount} orders${statusBar}</div>
+          </div>
+          <div style="text-align:right;flex-shrink:0;">
+            <div style="font-family:'DM Serif Display',serif;font-size:20px;color:var(--amber);">₹${dayRev.toLocaleString('en-IN')}</div>
+            <div style="font-size:10px;color:var(--muted);margin-top:2px;" id="hday-${date}-chevron">▼ tap to view</div>
+          </div>
+        </div>
+        <!-- Orders for this date (collapsed by default unless today) -->
+        <div id="hday-${date}" style="display:${isToday?'block':'none'};border-top:1px solid var(--border);padding:10px 12px;">
+          ${renderHistoryOrders(orders, date)}
+        </div>
+      </div>`;
+  }).filter(Boolean).join('');
+
+  if(!listEl.innerHTML) {
+    listEl.innerHTML = '<div class="empty-state"><div class="empty-icon">📅</div><p>No orders for selected date</p></div>';
+  }
+}
+
+function toggleHistoryDay(id) {
+  const el = document.getElementById(id);
+  const ch = document.getElementById(id+'-chevron');
+  if(!el) return;
+  const open = el.style.display !== 'none';
+  el.style.display = open ? 'none' : 'block';
+  if(ch) ch.textContent = open ? '▼ tap to view' : '▲ tap to collapse';
+}
+
+function renderHistoryOrders(orders, date) {
+  if(!orders.length) return '<div style="color:var(--muted);font-size:13px;padding:8px 0;">No orders</div>';
+
+  const sorted = [...orders].sort((a,b) => (b.createdAt||0) - (a.createdAt||0));
+
+  const statusLabel = {confirmed:'Confirmed',modified:'Modified',delivered:'Delivered',
+    paid:'Paid ✓',due:'Due 💰',partial:'Partial',draft:'Draft'};
+  const statusColor = {confirmed:'#2A7A45',modified:'#E65100',delivered:'#1565C0',
+    paid:'#2A7A45',due:'#C62828',partial:'#F57F17',draft:'#888'};
+  const statusBg    = {confirmed:'#E8F5E9',modified:'#FFF3E0',delivered:'#E3F2FD',
+    paid:'#E8F5E9',due:'#FFEBEE',partial:'#FFF8E1',draft:'#F5F5F5'};
+
+  const canPayRole = STATE.role==='sales' || STATE.role==='owner';
+
+  return sorted.map(o => {
+    const items = (o.items||[]).map(i => `${i.qty} ${i.unit} ${i.name} @₹${i.rate}`).join(' · ');
+
+    // Payment status line
+    let payInfo = '';
+    if(o.payment?.received) {
+      payInfo = `<div style="background:#E8F5E9;border-radius:8px;padding:6px 10px;margin-top:6px;font-size:12px;color:#2A7A45;font-weight:600;">
+        ✓ Paid ₹${(o.payment.amount||0).toLocaleString('en-IN')} · ${PI_MODES[o.payment.mode]||o.payment.mode||''}
+        ${o.payment.ref||o.payment.chequeNo?` · ${o.payment.ref||o.payment.chequeNo}`:''}
+        ${o.payment.remarks?' — '+o.payment.remarks:''}
+      </div>`;
+    } else if(o.status==='due'||o.status==='partial') {
+      const balance = (o.total||0) - (o.payment?.amount||0);
+      payInfo = `<div style="background:#FFEBEE;border-radius:8px;padding:6px 10px;margin-top:6px;font-size:12px;color:#C62828;font-weight:600;">
+        ⏰ ₹${balance.toLocaleString('en-IN')} pending${o.daysOverdue?' · '+o.daysOverdue+'d overdue':''}
+      </div>`;
+    }
+
+    // Payment + Edit buttons for sales/owner
+    const isPaid = o.status==='paid' || (o.payment?.received && o.payment?.amount >= (o.total||0));
+    const payBtn = (canPayRole && !isPaid) ? `
+      <button onclick="openHistoryPayment('${o.id}','${date}')"
+        style="margin-top:8px;width:100%;padding:9px;border-radius:8px;border:none;
+          background:${o.status==='due'||o.status==='partial'?'var(--green)':'var(--amber)'};
+          color:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif;">
+        💰 ${o.status==='due'||o.status==='partial'?'Collect Payment':'Record Payment'}
+      </button>` : '';
+    const editBtn = canPayRole ? `
+      <button onclick="openEditOrder('${o.id}')" ontouchstart=""
+        style="margin-top:6px;width:100%;padding:9px;border-radius:8px;border:1.5px solid var(--border);
+          background:#fff;color:var(--ink);font-size:13px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif;-webkit-tap-highlight-color:rgba(0,0,0,0.1);">
+        ✏ Edit Order
+      </button>` : '';
+    const deleteBtn = (STATE.role==='owner' || STATE.role==='sales') ? `
+      <button data-oid="${o.id}" data-odate="${o.date||date}" onclick="deleteOrderFromHistory(this.dataset.oid, this.dataset.odate)" ontouchstart=""
+        style="margin-top:4px;width:100%;padding:8px;border-radius:8px;border:1.5px solid #FFCDD2;
+          background:#fff;color:#C62828;font-size:12px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif;">
+        🗑 Delete Order
+      </button>` : '';
+
+    return `
+      <div id="hcard-${o.id}" style="border:1.5px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px;background:#fff;">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:6px;">
+          <div style="flex:1;min-width:0;">
+            <div style="font-size:14px;font-weight:700;color:var(--ink);">${o.customerName}</div>
+            ${o.customerPhone?`<div style="font-size:11px;color:var(--blue,#1A527A);margin-top:1px;">📞 ${o.customerPhone}</div>`:''}
+          </div>
+          <div style="text-align:right;flex-shrink:0;margin-left:10px;">
+            <div style="font-family:'DM Serif Display',serif;font-size:17px;color:var(--amber);">₹${(o.total||0).toLocaleString('en-IN')}</div>
+            <span style="background:${statusBg[o.status]||'#eee'};color:${statusColor[o.status]||'#888'};font-size:10px;font-weight:700;padding:2px 8px;border-radius:12px;margin-top:2px;display:inline-block;">${statusLabel[o.status]||o.status}</span>
+          </div>
+        </div>
+        <div style="font-size:11px;color:var(--muted);line-height:1.6;border-top:1px solid var(--border);padding-top:6px;">${items}</div>
+        ${o.notes?`<div style="font-size:11px;color:#795548;margin-top:4px;">📝 ${o.notes}</div>`:''}
+        ${payInfo}
+        ${payBtn}
+        ${editBtn}
+        ${deleteBtn}
+        <div style="font-size:10px;color:var(--muted);margin-top:6px;opacity:0.6;">#${o.id}${o.createdBy?' · '+o.createdBy:''}</div>
+      </div>`;
+  }).join('');
+}
+
+// ── Open payment modal from History / Orders context ──────────────────
+function openHistoryPayment(orderId, date) {
+  // Find the order — could be in STATE.orders (today) or a past date key
+  let order = STATE.orders.find(o=>o.id===orderId);
+  let isPastDate = false;
+
+  if(!order && date) {
+    const pastOrders = getOrdersForDate(date);
+    order = pastOrders.find(o=>o.id===orderId);
+    if(order) isPastDate = true;
+  }
+  if(!order) { showToast('Order not found'); return; }
+
+  // Pre-fill the Payment-In form
+  document.getElementById('pi-modal-title').textContent = 'Record Payment — ' + order.customerName;
+  document.getElementById('pi-edit-id').value = '';
+  document.getElementById('pi-cust-input').value = order.customerName;
+  document.getElementById('pi-cust-id').value = order.customerId||'';
+  document.getElementById('pi-date').value = date||TODAY_KEY;
+  // Pre-fill amount = outstanding balance
+  const paid = order.payment?.received ? (order.payment.amount||0) : 0;
+  document.getElementById('pi-amount').value = Math.max(0,(order.total||0)-paid) || '';
+  document.getElementById('pi-ref').value = '';
+  document.getElementById('pi-notes').value = `Order #${orderId}`;
+  document.getElementById('pi-cust-dropdown').style.display='none';
+  document.querySelectorAll('#pi-pay-modes .pay-mode-btn').forEach(b=>b.classList.remove('selected'));
+  // Show outstanding balance
+  const bal = order.total - paid;
+  const balEl = document.getElementById('pi-cust-balance');
+  if(bal>0) { balEl.textContent='Order balance: ₹'+bal.toLocaleString('en-IN'); balEl.style.display='block'; }
+  else balEl.style.display='none';
+
+  // Store order ref for post-save status update
+  document.getElementById('modal-payment-in').dataset.orderId = orderId;
+  document.getElementById('modal-payment-in').dataset.orderDate = date||TODAY_KEY;
+  document.getElementById('modal-payment-in').classList.add('open');
+}
+
+// ── FETCH HISTORY FROM SHEET ──────────────────────────────────────────
+function openHistoryFetch() {
+  // Default to yesterday
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  const yStr = yesterday.toISOString().slice(0,10);
+  document.getElementById('hist-fetch-date').value = yStr;
+  document.getElementById('hist-fetch-status').textContent = '';
+  document.getElementById('modal-hist-fetch').classList.add('open');
+}
+
+async function fetchHistoryDate() {
+  const date = document.getElementById('hist-fetch-date').value;
+  if(!date) { showToast('Select a date first'); return; }
+  const url = getSheetUrl();
+  if(!url) { showToast('⚙ Set Sheet URL in Setup first'); closeModal('modal-hist-fetch'); showScreen('setup'); return; }
+
+  const statusEl = document.getElementById('hist-fetch-status');
+  statusEl.textContent = '⏳ Fetching from Sheet...';
+  statusEl.style.color = 'var(--muted)';
+
+  try {
+    const res = await fetch(url + '?action=getOrders&date=' + date, {cache:'no-store'});
+    const data = await res.json();
+    const rawOrders = data.orders || [];
+
+    if(!rawOrders.length) {
+      statusEl.textContent = '⚠ No orders found for ' + date + ' in the Sheet.';
+      statusEl.style.color = 'var(--amber,#C8830A)';
+      return;
+    }
+
+    // Parse sheet rows into order objects
+    const orders = rawOrders.map(row => {
+      let items = [];
+      try { items = JSON.parse(row['Items Raw']||row['items']||'[]'); } catch(e) {
+        const itemStr = String(row['Items']||'');
+        items = itemStr.split(', ').map(s => {
+          const m = s.match(/^([\d.]+)\s+(\w+)\s+(.+?)\s+@[Rs₹]?([\d.]+)$/);
+          return m ? {qty:parseFloat(m[1]),unit:m[2],name:m[3],rate:parseFloat(m[4]),amount:parseFloat(m[1])*parseFloat(m[4])} : null;
+        }).filter(Boolean);
+      }
+      return {
+        id:      String(row['Order ID']||'').trim(),
+        date:    date,
+        customerName:     String(row['Customer']||''),
+        customerCategory: String(row['Category']||''),
+        customerArea:     String(row['Area']||''),
+        customerPhone:    '',
+        status:  String(row['Status']||'confirmed'),
+        total:   parseFloat(row['Total (Rs)']||row['Total']||0)||0,
+        items,
+        notes:    String(row['Notes']||''),
+        modNotes: String(row['Mod Notes']||''),
+        payment:  {mode:String(row['Payment Mode']||''),amount:parseFloat(row['Payment Amt']||0)||0,received:!!row['Payment Mode']&&row['Payment Mode']!=='pending'},
+        createdBy:String(row['Created By']||''),
+        synced:   true, fromSheet:true,
+      };
+    }).filter(o => o.id);
+
+    // Cache to localStorage
+    cacheOrdersForDate(date, orders);
+
+    statusEl.textContent = `✓ ${orders.length} orders loaded for ${date}`;
+    statusEl.style.color = 'var(--green,#2E7D32)';
+
+    setTimeout(() => {
+      closeModal('modal-hist-fetch');
+      // Set filter to that date and refresh
+      const filt = document.getElementById('hist-date-filter');
+      if(filt) filt.value = date;
+      renderHistory();
+      showToast(`✓ ${orders.length} orders loaded for ${date}`);
+    }, 800);
+
+  } catch(e) {
+    statusEl.textContent = '✗ Failed to fetch — check Sheet URL in Setup';
+    statusEl.style.color = 'var(--red,#C62828)';
+  }
+}
+
+
+// ── DELIVERY SEQUENCE ────────────────────────────────────────────────
+const LS_SEQ = 'gf_sequence';
+
+function applySequenceToOrders() {
+  // Reorder STATE.orders according to saved sequence (by order ID)
+  const seq = JSON.parse(localStorage.getItem(LS_SEQ)||'[]');
+  if(!seq.length) return;
+  STATE.orders.sort((a,b) => {
+    const ia = seq.indexOf(a.id);
+    const ib = seq.indexOf(b.id);
+    if(ia === -1 && ib === -1) return 0;
+    if(ia === -1) return 1;
+    if(ib === -1) return -1;
+    return ia - ib;
+  });
+}
+
+function openSequenceScreen() {
+  // Build draggable list of today's confirmed/active orders
+  const orders = STATE.orders.filter(o => o.status==='confirmed'||o.status==='modified'||o.status==='delivered');
+  if(!orders.length) { showToast('No active orders to sequence'); return; }
+  const list = document.getElementById('sequence-list');
+  if(!list) { showToast('Sequence panel not found'); return; }
+  list.innerHTML = orders.map((o,i) => `
+    <div class="seq-row" data-id="${o.id}" style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--cream);border:1.5px solid var(--border);border-radius:10px;margin-bottom:8px;cursor:grab;user-select:none;">
+      <span style="font-size:18px;color:var(--muted);">☰</span>
+      <div style="flex:1;">
+        <div style="font-weight:700;font-size:14px;">${o.customerName}</div>
+        <div style="font-size:12px;color:var(--muted);">₹${(o.total||0).toLocaleString('en-IN')} · ${o.status}</div>
+      </div>
+      <span style="font-size:13px;font-weight:700;color:var(--amber);">#${i+1}</span>
+    </div>`).join('');
+  // Simple touch-drag reorder
+  enableDragSort(list);
+  document.getElementById('modal-sequence').classList.add('open');
+}
+
+function enableDragSort(list) {
+  let dragging = null;
+  list.querySelectorAll('.seq-row').forEach(row => {
+    row.addEventListener('touchstart', e => { dragging = row; row.style.opacity='0.5'; }, {passive:true});
+    row.addEventListener('touchend', e => {
+      if(dragging) { dragging.style.opacity='1'; dragging=null; updateSeqNumbers(list); }
+    }, {passive:true});
+    row.addEventListener('touchmove', e => {
+      if(!dragging) return;
+      const touch = e.touches[0];
+      const els = list.querySelectorAll('.seq-row');
+      els.forEach(el => {
+        if(el===dragging) return;
+        const rect = el.getBoundingClientRect();
+        if(touch.clientY > rect.top && touch.clientY < rect.bottom) {
+          const mid = rect.top + rect.height/2;
+          if(touch.clientY < mid) list.insertBefore(dragging, el);
+          else list.insertBefore(dragging, el.nextSibling);
+        }
+      });
+    }, {passive:true});
+  });
+}
+
+function updateSeqNumbers(list) {
+  list.querySelectorAll('.seq-row').forEach((row,i) => {
+    const badge = row.querySelector('span:last-child');
+    if(badge) badge.textContent = '#'+(i+1);
+  });
+}
+
+function saveSequence() {
+  const list = document.getElementById('sequence-list');
+  if(!list) return;
+  const ids = [...list.querySelectorAll('.seq-row')].map(r => r.dataset.id);
+  localStorage.setItem(LS_SEQ, JSON.stringify(ids));
+  closeModal('modal-sequence');
+  showToast('✓ Delivery sequence saved');
+  renderOrdersList();
+}
+
+function resetSequence() {
+  localStorage.removeItem(LS_SEQ);
+  closeModal('modal-sequence');
+  showToast('Sequence reset to default');
+  renderOrdersList();
+}
+
+
+// ── LOAD PAST DUES FOR DELIVERY ──────────────────────────────────────
+// Delivery person needs to see outstanding dues from previous days
+// so they can collect payment during their round.
+async function syncOrdersFromSheet() {
+  // Fetch today's AND recent orders from Google Sheet into STATE.orders + localStorage
+  if(!STATE.sheetUrl) {
+    showToast('No Sheet URL configured — go to Setup'); return;
+  }
+  const btn = document.getElementById('btn-sync-orders');
+  if(btn) { btn.textContent = '⏳ Syncing...'; btn.disabled = true; }
+
+  try {
+    // Fetch last 30 days
+    const today = new Date();
+    const dates = [];
+    for(let i=0; i<30; i++) {
+      const d = new Date(today);
+      d.setDate(today.getDate() - i);
+      const y = d.getFullYear();
+      const m = String(d.getMonth()+1).padStart(2,'0');
+      const day = String(d.getDate()).padStart(2,'0');
+      dates.push(y+'-'+m+'-'+day);
+    }
+
+    let totalAdded = 0;
+    const existingIds = new Set(STATE.orders.map(o=>o.id));
+
+    for(const date of dates) {
+      try {
+        const url = STATE.sheetUrl + '?action=getOrders&date=' + date;
+        const res = await fetch(url);
+        const json = await res.json();
+        if(json.orders && json.orders.length) {
+          const dateOrders = [];
+          json.orders.forEach(row => {
+            // Parse order from sheet row
+            const orderId = String(row['Order ID']||'').trim();
+            if(!orderId) return;
+            let items = [];
+            try { items = JSON.parse(row['Items Raw']||'[]'); } catch(e) {}
+            const o = {
+              id: orderId,
+              date: date,
+              customerName: row['Customer']||'',
+              customerCategory: row['Category']||'',
+              customerArea: row['Area']||'',
+              status: row['Status']||'confirmed',
+              total: parseFloat(row['Total (Rs)'])||0,
+              items: items,
+              notes: row['Notes']||'',
+              synced: true,
+              loadedFromSheet: true,
+            };
+            dateOrders.push(o);
+            if(!existingIds.has(orderId)) {
+              STATE.orders.push(o);
+              existingIds.add(orderId);
+              totalAdded++;
+            }
+          });
+          // Save to localStorage for offline access
+          if(dateOrders.length) {
+            localStorage.setItem(LS_PREFIX + date, JSON.stringify(dateOrders));
+          }
+        }
+      } catch(e) {
+        // Skip dates that fail (no sheet for that month etc.)
+      }
+    }
+
+    renderOrdersList();
+    renderDashboard();
+    showToast('✓ Synced ' + totalAdded + ' orders from Sheet');
+  } catch(err) {
+    showToast('Sync failed — check connection');
+  } finally {
+    if(btn) { btn.textContent = '☁ Sync'; btn.disabled = false; }
+  }
+}
+
+function loadAllPastOrders() {
+  // Load ALL orders from all date keys for sales/owner role
+  const todayIds = new Set(STATE.orders.map(o => o.id));
+  let added = 0;
+  const keys = [];
+  for(let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if(key && key.startsWith(LS_PREFIX)) keys.push(key);
+  }
+  // Sort keys so newest dates are loaded last (won't matter but cleaner)
+  keys.sort();
+  keys.forEach(key => {
+    const date = key.slice(LS_PREFIX.length);
+    if(date === TODAY_KEY) return; // already loaded
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(date)) return;
+    try {
+      const past = JSON.parse(localStorage.getItem(key)||'[]');
+      past.forEach(o => {
+        if(!todayIds.has(o.id)) {
+          STATE.orders.push(o);
+          todayIds.add(o.id);
+          added++;
+        }
+      });
+    } catch(e) {}
+  });
+  if(added > 0) console.log('Loaded', added, 'past orders for sales/owner view');
+}
+
+function loadPastDuesForDelivery() {
+  const todayIds = new Set(STATE.orders.map(o => o.id));
+  let added = 0;
+  // Scan all stored date keys
+  for(let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if(!key || !key.startsWith(LS_PREFIX)) continue;
+    const date = key.slice(LS_PREFIX.length);
+    if(date === TODAY_KEY) continue; // already loaded
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
+    try {
+      const past = JSON.parse(localStorage.getItem(key)||'[]');
+      past.forEach(o => {
+        // Include: due, partial (need collection), delivered (pending finalisation)
+        if((o.status==='due'||o.status==='partial'||o.status==='delivered') && !todayIds.has(o.id)) {
+          STATE.orders.push(o);
+          todayIds.add(o.id);
+          added++;
+        }
+      });
+    } catch(e) {}
+  }
+  if(added > 0) console.log('Loaded', added, 'past due/delivered orders for delivery');
+}
+
+// ── MODAL UTILS ──────────────────────────────────────────────────────
+function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+document.addEventListener('click', e => {
+  if(e.target.classList.contains('modal-overlay')) e.target.classList.remove('open');
+});
+
+// ── TOAST ────────────────────────────────────────────────────────────
+let _toastTimer;
+function showToast(msg, dur=2200) {
+  const t=document.getElementById('toast');
+  t.textContent=msg; t.classList.add('show');
+  clearTimeout(_toastTimer);
+  _toastTimer=setTimeout(()=>t.classList.remove('show'),dur);
+}
+
+// ── AUTO-UPDATE OVERDUE DAYS ─────────────────────────────────────────
+function updateDaysOverdue() {
+  const now=Date.now();
+  STATE.orders.forEach(o=>{
+    if(o.status==='due'&&o.dueDate) {
+      const due=new Date(o.dueDate+'T00:00:00');
+      o.daysOverdue=Math.floor((now-due.getTime())/86400000);
+    }
+  });
+}
+setInterval(updateDaysOverdue,60000);
+
+
+// ══════════════════════════════════════════════════════════════════════
+// ── PAYMENT-IN LEDGER ────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════
+
+const PI_MODES = {
+  cash:'💵 Cash', phonepay:'📱 PhonePe', gpay:'🔵 GPay', paytm:'💳 Paytm',
+  idbi:'🏦 IDBI', neft:'🌐 NEFT/Online', cheque:'📄 Cheque',
+  upi:'📲 Other UPI', other:'💬 Other'
+};
+
+function savePaymentLedger() {
+  localStorage.setItem(LS_PAYMENTS, JSON.stringify(STATE.payments));
+}
+
+// ── Filter state ─────────────────────────────────────────────────────
+let _piFilter = 'all';
+function piFilter(f, btn) {
+  _piFilter = f;
+  document.querySelectorAll('#screen-payment-in .filter-btn').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  renderPaymentIn();
+}
+
+// ── Render ────────────────────────────────────────────────────────────
+function renderPaymentIn() {
+  const q = (document.getElementById('pi-search')?.value||'').toLowerCase();
+  const now = new Date();
+  const todayStr = TODAY_KEY;
+  const monthStr = TODAY_KEY.slice(0,7); // YYYY-MM
+
+  let payments = [...STATE.payments].sort((a,b)=> (b.date||'').localeCompare(a.date||''));
+
+  // Stats — always across all
+  const todayTotal = payments.filter(p=>p.date===todayStr).reduce((s,p)=>s+(p.amount||0),0);
+  const monthTotal = payments.filter(p=>(p.date||'').startsWith(monthStr)).reduce((s,p)=>s+(p.amount||0),0);
+  const el_t = document.getElementById('pi-stat-today');
+  const el_m = document.getElementById('pi-stat-month');
+  const el_c = document.getElementById('pi-stat-count');
+  if(el_t) el_t.textContent = '₹'+(todayTotal/1000).toFixed(1)+'k';
+  if(el_m) el_m.textContent = '₹'+(monthTotal/1000).toFixed(1)+'k';
+  if(el_c) el_c.textContent = payments.length;
+
+  // Apply filter
+  if(_piFilter==='today')  payments = payments.filter(p=>p.date===todayStr);
+  if(_piFilter==='week') {
+    const weekAgo = new Date(now); weekAgo.setDate(weekAgo.getDate()-7);
+    const weekStr = weekAgo.toISOString().slice(0,10);
+    payments = payments.filter(p=>p.date>=weekStr);
+  }
+  if(_piFilter==='month') payments = payments.filter(p=>(p.date||'').startsWith(monthStr));
+
+  // Search
+  if(q) payments = payments.filter(p=>(p.custName||'').toLowerCase().includes(q)||(p.notes||'').toLowerCase().includes(q)||(p.ref||'').toLowerCase().includes(q));
+
+  const list = document.getElementById('pi-list');
+  if(!list) return;
+  if(!payments.length) {
+    list.innerHTML = '<div class="empty-state"><div class="empty-icon">💳</div><p>No payments recorded yet</p><p style="font-size:12px;margin-top:8px;">Tap <b>+ Record</b> to add a payment</p></div>';
+    return;
+  }
+
+  // Group by date
+  const byDate = {};
+  payments.forEach(p => {
+    const d = p.date || todayStr;
+    if(!byDate[d]) byDate[d] = [];
+    byDate[d].push(p);
+  });
+
+  list.innerHTML = Object.entries(byDate).map(([date, entries])=>{
+    const dayTotal = entries.reduce((s,p)=>s+(p.amount||0),0);
+    const d = new Date(date+'T00:00:00');
+    const dateLabel = d.toLocaleDateString('en-IN',{weekday:'short',day:'numeric',month:'short',year:'numeric'});
+    const rows = entries.map(p=>`
+      <div style="padding:10px 14px;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;gap:10px;">
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:14px;font-weight:700;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${p.custName||'—'}</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px;">${PI_MODES[p.mode]||p.mode||'—'}${p.ref?' · '+p.ref:''}</div>
+          ${p.notes?`<div style="font-size:11px;color:var(--muted);font-style:italic;">${p.notes}</div>`:''}
+        </div>
+        <div style="text-align:right;flex-shrink:0;">
+          <div style="font-family:'DM Serif Display',serif;font-size:18px;color:var(--green);">₹${(p.amount||0).toLocaleString('en-IN')}</div>
+          <div style="display:flex;gap:4px;justify-content:flex-end;margin-top:4px;">
+            <button onclick="editPaymentIn('${p.id}')" style="background:none;border:1.5px solid var(--border);border-radius:6px;padding:2px 8px;font-size:10px;cursor:pointer;color:var(--muted);">✏</button>
+            <button onclick="deletePaymentIn('${p.id}')" style="background:none;border:1.5px solid #FFEBEE;border-radius:6px;padding:2px 8px;font-size:10px;cursor:pointer;color:var(--red);">🗑</button>
+          </div>
+        </div>
+      </div>`).join('');
+    return `<div class="card" style="margin-bottom:12px;overflow:hidden;">
+      <div style="background:var(--cream);padding:8px 14px;border-bottom:1.5px solid var(--border);display:flex;justify-content:space-between;align-items:center;">
+        <span style="font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;">${dateLabel}</span>
+        <span style="font-family:'DM Serif Display',serif;font-size:16px;color:var(--green);">₹${dayTotal.toLocaleString('en-IN')}</span>
+      </div>
+      ${rows}
+    </div>`;
+  }).join('');
+}
+
+// ── Open form ─────────────────────────────────────────────────────────
+function openPaymentInForm(prefillCustId) {
+  document.getElementById('pi-modal-title').textContent = 'Record Payment';
+  document.getElementById('pi-edit-id').value = '';
+  document.getElementById('pi-cust-input').value = '';
+  document.getElementById('pi-cust-id').value = '';
+  document.getElementById('pi-cust-balance').style.display = 'none';
+  document.getElementById('pi-date').value = TODAY_KEY;
+  document.getElementById('pi-amount').value = '';
+  document.getElementById('pi-ref').value = '';
+  document.getElementById('pi-notes').value = '';
+  document.getElementById('pi-cust-dropdown').style.display = 'none';
+  // Deselect all mode buttons
+  document.querySelectorAll('#pi-pay-modes .pay-mode-btn').forEach(b=>b.classList.remove('selected'));
+  // Pre-fill customer if provided
+  if(prefillCustId) {
+    const c = STATE.customers.find(x=>x.id===prefillCustId);
+    if(c) {
+      document.getElementById('pi-cust-input').value = c.name;
+      document.getElementById('pi-cust-id').value = c.id;
+      showPiBalance(c);
+    }
+  }
+  document.getElementById('modal-payment-in').classList.add('open');
+}
+
+function editPaymentIn(id) {
+  const p = STATE.payments.find(x=>x.id===id); if(!p) return;
+  document.getElementById('pi-modal-title').textContent = 'Edit Payment';
+  document.getElementById('pi-edit-id').value = id;
+  document.getElementById('pi-cust-input').value = p.custName||'';
+  document.getElementById('pi-cust-id').value = p.custId||'';
+  document.getElementById('pi-date').value = p.date||TODAY_KEY;
+  document.getElementById('pi-amount').value = p.amount||'';
+  document.getElementById('pi-ref').value = p.ref||'';
+  document.getElementById('pi-notes').value = p.notes||'';
+  document.getElementById('pi-cust-dropdown').style.display = 'none';
+  document.querySelectorAll('#pi-pay-modes .pay-mode-btn').forEach(b=>{
+    b.classList.toggle('selected', b.dataset.mode===p.mode);
+  });
+  // Set mode data on buttons
+  document.querySelectorAll('#pi-pay-modes .pay-mode-btn').forEach(b=>{
+    if(!b.dataset.mode) {
+      const m = b.getAttribute('onclick')?.match(/piSelectMode\(this,'([^']+)'\)/)?.[1];
+      if(m) b.dataset.mode = m;
+    }
+  });
+  document.getElementById('modal-payment-in').classList.add('open');
+}
+
+function deletePaymentIn(id) {
+  if(!confirm('Delete this payment entry?')) return;
+  const p = STATE.payments.find(x=>x.id===id);
+  if(p && p.custId) {
+    // Reverse the payment — add amount back to customer balance
+    const cust = STATE.customers.find(c=>c.id===p.custId);
+    if(cust) {
+      cust.balance = (cust.balance||0) + (p.amount||0);
+      _saveCustomerBalance(cust);
+    }
+  }
+  STATE.payments = STATE.payments.filter(x=>x.id!==id);
+  savePaymentLedger();
+  renderPaymentIn();
+  renderDues();
+  showToast('Payment deleted — balance restored');
+}
+
+// ── Customer search dropdown ──────────────────────────────────────────
+function piCustomerSearch(q) {
+  const dd = document.getElementById('pi-cust-dropdown');
+  if(!q || q.length < 1) { dd.style.display='none'; return; }
+  const matches = STATE.customers.filter(c=>c.name.toLowerCase().includes(q.toLowerCase())).slice(0,8);
+  if(!matches.length) { dd.style.display='none'; return; }
+  dd.innerHTML = matches.map(c=>{
+    const bal = c.balance||0;
+    return `<div onclick="piSelectCustomer('${c.id}')"
+      style="padding:10px 14px;cursor:pointer;border-bottom:1px solid var(--border);font-size:13px;font-weight:600;"
+      onmouseover="this.style.background='#FFFBF0'" onmouseout="this.style.background=''">
+      ${c.name}
+      ${bal>0?`<span style="float:right;font-size:11px;color:var(--red);font-weight:700;">₹${bal.toLocaleString('en-IN')} due</span>`:''}
+    </div>`;
+  }).join('');
+  dd.style.display = 'block';
+}
+
+function piSelectCustomer(id) {
+  const c = STATE.customers.find(x=>x.id===id); if(!c) return;
+  document.getElementById('pi-cust-input').value = c.name;
+  document.getElementById('pi-cust-id').value = id;
+  document.getElementById('pi-cust-dropdown').style.display = 'none';
+  showPiBalance(c);
+}
+
+function showPiBalance(c) {
+  const bal = c.balance||0;
+  const el = document.getElementById('pi-cust-balance');
+  if(bal>0) {
+    el.textContent = `Outstanding balance: ₹${bal.toLocaleString('en-IN')}`;
+    el.style.display = 'block';
+  } else {
+    el.style.display = 'none';
+  }
+}
+
+function piSelectMode(btn, mode) {
+  document.querySelectorAll('#pi-pay-modes .pay-mode-btn').forEach(b=>b.classList.remove('selected'));
+  btn.classList.add('selected');
+  btn.dataset.mode = mode;
+}
+
+// ── Save payment ──────────────────────────────────────────────────────
+function savePaymentIn() {
+  const custName = document.getElementById('pi-cust-input').value.trim();
+  const custId   = document.getElementById('pi-cust-id').value;
+  const date     = document.getElementById('pi-date').value;
+  const amount   = parseFloat(document.getElementById('pi-amount').value)||0;
+  const ref      = document.getElementById('pi-ref').value.trim();
+  const notes    = document.getElementById('pi-notes').value.trim();
+  const modeBtn  = document.querySelector('#pi-pay-modes .pay-mode-btn.selected');
+  const mode     = modeBtn?.dataset?.mode || modeBtn?.getAttribute('onclick')?.match(/piSelectMode\(this,'([^']+)'\)/)?.[1] || '';
+
+  if(!custName) { showToast('Select a customer'); return; }
+  if(!amount || amount <= 0) { showToast('Enter amount received'); return; }
+  if(!mode) { showToast('Select payment mode'); return; }
+  if(!date) { showToast('Select payment date'); return; }
+
+  const editId = document.getElementById('pi-edit-id').value;
+  let oldAmount = 0;
+  let oldCustId = '';
+  if(editId) {
+    // Editing existing — reverse old balance impact first
+    const p = STATE.payments.find(x=>x.id===editId);
+    if(p) {
+      oldAmount = p.amount||0;
+      oldCustId = p.custId||'';
+      Object.assign(p, {custName,custId,date,amount,mode,ref,notes,updatedAt:Date.now()});
+    }
+  } else {
+    // New entry
+    const newEntry = {
+      id: 'PAY'+Date.now().toString().slice(-8),
+      custName, custId, date, amount, mode, ref, notes,
+      createdAt: Date.now(), createdBy: STATE.role
+    };
+    STATE.payments.unshift(newEntry);
+  }
+
+  // Update customer balance — reverse old, apply new
+  if(editId && oldCustId) {
+    const oldCust = STATE.customers.find(c=>c.id===oldCustId);
+    if(oldCust) {
+      oldCust.balance = Math.max(0, (oldCust.balance||0) + oldAmount);
+      _saveCustomerBalance(oldCust);
+    }
+  }
+  if(custId) {
+    const cust = STATE.customers.find(c=>c.id===custId);
+    if(cust) {
+      // First apply FIFO to outstanding orders
+      const {allocated, surplus} = allocatePaymentFIFO(custId, amount);
+      // Any surplus reduces opening balance
+      if(surplus > 0) {
+        cust.balance = Math.max(0, (cust.balance||0) - surplus);
+        _saveCustomerBalance(cust);
+      }
+      // Show allocation summary in toast
+      if(allocated.length > 0) {
+        const allocMsg = allocated.map(a=>'#'+a.orderId+' ₹'+a.applied.toLocaleString('en-IN')+' ('+a.newStatus+')').join(', ');
+        console.log('FIFO allocation:', allocMsg);
+      }
+    }
+  }
+
+  savePaymentLedger();
+
+  // Sync to Google Sheet (new and edited payments)
+  if(getSheetUrl()) {
+    const payEntry = editId ? STATE.payments.find(x=>x.id===editId) : STATE.payments[0];
+    if(payEntry) syncPaymentToSheet(payEntry);
+  }
+
+  // ── If this payment was opened from History/Orders context, update that order's status too ──
+  const modal = document.getElementById('modal-payment-in');
+  const linkedOrderId = modal?.dataset?.orderId;
+  const linkedDate    = modal?.dataset?.orderDate;
+  if(linkedOrderId && !editId) {
+    updateOrderPaymentStatus(linkedOrderId, linkedDate, amount, mode, ref);
+    modal.dataset.orderId = '';
+    modal.dataset.orderDate = '';
+  }
+
+  closeModal('modal-payment-in');
+  // Refresh whatever is currently on screen
+  const activeScreen = document.querySelector('.screen.active');
+  if(activeScreen?.id==='screen-history')    renderHistory();
+  else if(activeScreen?.id==='screen-orders') renderOrdersList();
+  else if(activeScreen?.id==='screen-payment-in') renderPaymentIn();
+  else renderPaymentIn();
+  renderDues();
+  showToast(editId?'✓ Payment updated — balance adjusted':'✓ Payment recorded — ₹'+amount.toLocaleString('en-IN'));
+}
+
+// Helper: persist a single customer's balance to localStorage extras
+function _saveCustomerBalance(cust) {
+  const extras = JSON.parse(localStorage.getItem(LS_CUSTS)||'[]');
+  const ei = extras.findIndex(x=>x.id===cust.id);
+  if(ei>=0) extras[ei].balance=cust.balance; else extras.push({id:cust.id,balance:cust.balance});
+  localStorage.setItem(LS_CUSTS, JSON.stringify(extras));
+}
+
+// Sync a payment entry to Google Sheet (Payments tab)
+async function syncPaymentToSheet(p) {
+  const url = getSheetUrl(); if(!url) return;
+  const params = new URLSearchParams({
+    action:'logPayment',
+    payId:   p.id,
+    date:    p.date||TODAY_KEY,
+    custName:p.custName||'',
+    custId:  p.custId||'',
+    amount:  p.amount||0,
+    mode:    p.mode||'',
+    ref:     p.ref||'',
+    notes:   p.notes||'',
+    createdBy: p.createdBy||STATE.role||'',
+  });
+  await fireAndForget(url+'?'+params.toString());
+}
+
+// Update order payment info and status in localStorage
+function updateOrderPaymentStatus(orderId, date, amount, mode, ref) {
+  const isToday = !date || date===TODAY_KEY;
+
+  // Helper to patch and save
+  function patchOrder(orders) {
+    const o = orders.find(x=>x.id===orderId);
+    if(!o) return false;
+    const prevPaid = o.payment?.received ? (o.payment.amount||0) : 0;
+    const newPaid  = prevPaid + amount;
+    const isDue    = newPaid < (o.total||0);
+    o.payment = {
+      mode, amount: newPaid, received: true,
+      ref: ref||'', receivedAt: Date.now()
+    };
+    o.status = isDue ? 'partial' : 'paid';
+    o.synced = false;
+    return true;
+  }
+
+  if(isToday) {
+    if(patchOrder(STATE.orders)) {
+      saveOrders();
+      renderDashboard();
+    }
+  } else if(date) {
+    const key = LS_PREFIX + date;
+    const pastOrders = JSON.parse(localStorage.getItem(key)||'[]');
+    if(patchOrder(pastOrders)) {
+      localStorage.setItem(key, JSON.stringify(pastOrders));
+    }
+  }
+  // Also sync to sheet if connected
+  if(getSheetUrl()) {
+    const allOrders = isToday ? STATE.orders :
+      JSON.parse(localStorage.getItem(LS_PREFIX+(date||TODAY_KEY))||'[]');
+    const o = allOrders.find(x=>x.id===orderId);
+    if(o) syncOneOrder(orderId);
+  }
+}
+
+// ── Upload payments from Excel/CSV ────────────────────────────────────
+let _uploadedPayments = [];
+
+function openPaymentUpload() {
+  _uploadedPayments = [];
+  document.getElementById('payment-upload-preview').style.display='none';
+  document.getElementById('payment-upload-confirm').style.display='none';
+  document.getElementById('payment-csv-upload').value='';
+  document.getElementById('modal-payment-upload').classList.add('open');
+}
+
+function downloadPaymentTemplate() {
+  const csv = `Date,Customer Name,Amount,Mode,Reference,Notes,Opening Balance
+${TODAY_KEY},MANKAR DOSA JEJURI,1000,cash,,Monthly payment,
+${TODAY_KEY},NIBM DORABJEES,500,phonepay,UTR123456,,
+15/04/2026,Misal katta\,bhiwadi,2000,neft,REF789,Old dues payment,
+,,,,,,,"Opening balance for new customer"
+`;
+  const blob = new Blob([csv], {type:'text/csv'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'GaavnFresh_Payment_Template.csv';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function handlePaymentUpload(input) {
+  const file = input.files[0]; if(!file) return;
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      let rows = [];
+      if(file.name.endsWith('.csv')) {
+        rows = parseCSVPayments(e.target.result);
+      } else {
+        showToast('For .xlsx files, please save as .csv first and re-upload');
+        return;
+      }
+      _uploadedPayments = rows;
+      showPaymentUploadPreview(rows);
+    } catch(err) {
+      showToast('Error reading file: '+err.message);
+    }
+  };
+  reader.readAsText(file);
+}
+
+function parseCSVPayments(text) {
+  const lines = text.trim().split('\n').filter(l=>l.trim());
+  if(lines.length < 2) throw new Error('File must have header row + data rows');
+  const headers = lines[0].split(',').map(h=>h.trim().toLowerCase().replace(/\s+/g,'_'));
+  const rows = [];
+  for(let i=1;i<lines.length;i++) {
+    const vals = lines[i].split(',').map(v=>v.trim().replace(/^"|"$/g,''));
+    if(vals.every(v=>!v)) continue; // skip blank rows
+    const obj = {};
+    headers.forEach((h,j) => obj[h] = vals[j]||'');
+    // Parse date
+    let dateStr = (obj['date']||'').trim();
+    if(dateStr) {
+      // Handle DD/MM/YYYY
+      const m = dateStr.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+      if(m) dateStr = `${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
+    }
+    const amount = parseFloat(obj['amount'])||0;
+    const openingBal = parseFloat(obj['opening_balance'])||0;
+    const custName = (obj['customer_name']||'').trim();
+    if(!custName) continue;
+    // Payment row
+    if(amount > 0) {
+      rows.push({
+        id: 'PAY'+Date.now().toString().slice(-8)+''+i,
+        custName, custId: findCustId(custName),
+        date: dateStr || TODAY_KEY,
+        amount, mode: (obj['mode']||'cash').toLowerCase().trim(),
+        ref: obj['reference']||'', notes: obj['notes']||'',
+        createdAt: Date.now(), createdBy: STATE.role||'import',
+        isOpeningBalance: false
+      });
+    }
+    // Opening balance row
+    if(openingBal > 0) {
+      rows.push({
+        id: 'BAL'+Date.now().toString().slice(-8)+''+i,
+        custName, custId: findCustId(custName),
+        date: dateStr || TODAY_KEY,
+        amount: openingBal, mode: 'opening_balance',
+        ref: '', notes: 'Opening balance import',
+        createdAt: Date.now(), createdBy: 'import',
+        isOpeningBalance: true
+      });
+    }
+  }
+  return rows;
+}
+
+function findCustId(name) {
+  const c = STATE.customers.find(x=>x.name.toLowerCase()===name.toLowerCase() ||
+    x.name.toLowerCase().includes(name.toLowerCase()) || name.toLowerCase().includes(x.name.toLowerCase()));
+  return c?.id||'';
+}
+
+function showPaymentUploadPreview(rows) {
+  const preview = document.getElementById('payment-upload-preview');
+  const tableEl = document.getElementById('payment-upload-table');
+  const sumEl   = document.getElementById('payment-upload-summary');
+  const confirmBtn = document.getElementById('payment-upload-confirm');
+
+  const preview5 = rows.slice(0,5);
+  tableEl.innerHTML = `<table style="width:100%;font-size:11px;border-collapse:collapse;">
+    <thead><tr style="background:var(--cream);">
+      <th style="padding:6px;text-align:left;border-bottom:1.5px solid var(--border);">Customer</th>
+      <th style="padding:6px;text-align:left;border-bottom:1.5px solid var(--border);">Date</th>
+      <th style="padding:6px;text-align:right;border-bottom:1.5px solid var(--border);">Amount</th>
+      <th style="padding:6px;text-align:left;border-bottom:1.5px solid var(--border);">Mode</th>
+    </tr></thead>
+    <tbody>${preview5.map(r=>`<tr>
+      <td style="padding:5px 6px;border-bottom:1px solid var(--border);">${r.custName}</td>
+      <td style="padding:5px 6px;border-bottom:1px solid var(--border);">${r.date}</td>
+      <td style="padding:5px 6px;border-bottom:1px solid var(--border);text-align:right;font-weight:700;">₹${r.amount.toLocaleString('en-IN')}</td>
+      <td style="padding:5px 6px;border-bottom:1px solid var(--border);">${PI_MODES[r.mode]||r.mode}</td>
+    </tr>`).join('')}</tbody>
+  </table>`;
+
+  const total = rows.reduce((s,r)=>s+(r.amount||0),0);
+  sumEl.textContent = `${rows.length} payments found · Total ₹${total.toLocaleString('en-IN')}`;
+  preview.style.display = 'block';
+  confirmBtn.style.display = 'block';
+}
+
+function confirmPaymentUpload() {
+  if(!_uploadedPayments.length) return;
+  // Merge, avoid duplicates by id
+  const existingIds = new Set(STATE.payments.map(p=>p.id));
+  let added = 0;
+  _uploadedPayments.forEach(p => {
+    if(!existingIds.has(p.id)) {
+      STATE.payments.push(p);
+      added++;
+    }
+    // Update opening balances for customers
+    if(p.isOpeningBalance && p.custId) {
+      const cust = STATE.customers.find(c=>c.id===p.custId);
+      if(cust) {
+        cust.balance = (cust.balance||0) + p.amount;
+        const extras = JSON.parse(localStorage.getItem(LS_CUSTS)||'[]');
+        const ei = extras.findIndex(x=>x.id===p.custId);
+        const balObj = {id:p.custId, name:cust.name, balance:cust.balance};
+        if(ei>=0) extras[ei] = {...extras[ei],...balObj}; else extras.push(balObj);
+        localStorage.setItem(LS_CUSTS, JSON.stringify(extras));
+      }
+    }
+  });
+  savePaymentLedger();
+  closeModal('modal-payment-upload');
+  renderPaymentIn();
+  showToast(`✓ ${added} payments imported`);
+  _uploadedPayments = [];
+}
+
+// Close dropdown when clicking outside
+document.addEventListener('click', function(e) {
+  const dd = document.getElementById('pi-cust-dropdown');
+  const inp = document.getElementById('pi-cust-input');
+  if(dd && inp && !dd.contains(e.target) && e.target !== inp) {
+    dd.style.display = 'none';
+  }
+});
+
+// ── END PAYMENT-IN LEDGER ─────────────────────────────────────────────
+
+// ── DELIVERY AUTO-POLL (every 30s) ───────────────────────────────────
+// Delivery person sees orders automatically — no copy-paste needed.
+// Polls the Apps Script ?action=getOrders&date=TODAY every 30 seconds.
+let _pollTimer = null;
+
+function startDeliveryPoll() {
+  if(_pollTimer) return; // already running
+  pollOrdersFromSheet(); // immediate first fetch
+  _pollTimer = setInterval(pollOrdersFromSheet, 30000);
+}
+
+function stopDeliveryPoll() {
+  if(_pollTimer) { clearInterval(_pollTimer); _pollTimer=null; }
+}
+
+async function pollOrdersFromSheet() {
+  const url = getSheetUrl();
+  if(!url || STATE.role!=='delivery') return;
+  try {
+    // Poll today AND the past 3 days to catch any dues/delivered not yet collected
+    const datesToPoll = [TODAY_KEY];
+    for(let i = 1; i <= 3; i++) {
+      const d = new Date(); d.setDate(d.getDate() - i);
+      datesToPoll.push(d.toISOString().slice(0,10));
+    }
+    // Use today for the primary fetch; past dates fetched silently
+    const res = await fetch(url+'?action=getOrders&date='+TODAY_KEY, {cache:'no-store'});
+    const data = await res.json();
+    if(!data.orders || !data.orders.length) return;
+    let added=0, updated=0;
+    data.orders.forEach(row => {
+      // Apps Script returns rows as objects with column headers as keys
+      const orderId = String(row['Order ID']||'').trim();
+      if(!orderId) return;
+      let itemsArr = [];
+      try { itemsArr = JSON.parse(row['Items Raw']||'[]'); } catch(e) {
+        // Items stored as text "2 kg Paneer @₹260" — parse back
+        const itemStr = String(row['Items']||'');
+        itemsArr = itemStr.split(', ').map(s=>{
+          const m = s.match(/^([\d.]+)\s+(\w+)\s+(.+?)\s+@[₹]?([\d.]+)$/);
+          if(m) return {qty:parseFloat(m[1]),unit:m[2],name:m[3],rate:parseFloat(m[4]),amount:parseFloat(m[1])*parseFloat(m[4]),product:m[3].toLowerCase().replace(/\s+/g,'')};
+          return null;
+        }).filter(Boolean);
+      }
+      const orderData = {
+        id: orderId,
+        date: String(row['Date']||TODAY_KEY),
+        customerName: String(row['Customer']||''),
+        customerCategory: String(row['Category']||''),
+        customerArea: String(row['Area']||''),
+        customerPhone: '',
+        status: String(row['Status']||'confirmed'),
+        items: itemsArr,
+        total: parseFloat(row['Total (Rs)']||0)||parseFloat(row['Total']||0)||0,
+        notes: String(row['Notes']||''),
+        modNotes: String(row['Mod Notes']||''),
+        payment: {mode:String(row['Payment Mode']||''),amount:parseFloat(row['Payment Amt']||0)||0,received:false},
+        synced: true, fromSheet: true,
+      };
+      // Match customer phone from master
+      const cust = STATE.customers.find(c=>c.name.toLowerCase()===orderData.customerName.toLowerCase());
+      if(cust) orderData.customerPhone = cust.phone||'';
+
+      const existing = STATE.orders.find(o=>o.id===orderId);
+      if(existing) {
+        // Only update if sheet has newer status info
+        const statusRank = {confirmed:1,modified:2,delivered:3,paid:4,due:3,partial:3};
+        const sheetRank  = statusRank[orderData.status]||0;
+        const localRank  = statusRank[existing.status]||0;
+        if(sheetRank > localRank) {
+          Object.assign(existing, orderData);
+          updated++;
+        }
+      } else {
+        STATE.orders.push(orderData);
+        added++;
+      }
+    });
+    if(added>0 || updated>0) {
+      saveOrders();
+      // Reload past dues to catch any that were just synced
+      if(STATE.role==='delivery') loadPastDuesForDelivery();
+      renderDashboard();
+      renderOrdersList();
+      if(added>0) showToast('📥 '+added+' new order'+(added>1?'s':'')+' loaded from Sheet');
+      const banner = document.getElementById('delivery-load-banner');
+      if(banner) banner.style.display='none';
+    }
+  } catch(e) {
+    console.warn('Poll failed:', e.message);
+  }
+}
+
+// ── HIDE/SHOW BUTTONS BY ROLE ─────────────────────────────────────────
+function applyRoleUI() {
+  const isDelivery = STATE.role==='delivery';
+  const isSalesOrOwner = STATE.role==='sales'||STATE.role==='owner';
+  // WA and Share buttons: hidden for delivery
+  const btnWA    = document.getElementById('btn-wa');
+  const btnShare = document.getElementById('btn-share');
+  const btnSheet = document.getElementById('btn-sheet');
+  if(btnWA)    btnWA.style.display    = isDelivery?'none':'';
+  if(btnShare) btnShare.style.display = isDelivery?'none':'';
+  if(btnSheet) btnSheet.style.display = isDelivery?'none':'';
+  // Start polling for delivery
+  if(isDelivery && getSheetUrl()) startDeliveryPoll();
+}
+
+// ── STARTUP ──────────────────────────────────────────────────────────
+// Build the role cards as soon as the DOM is ready.
+// Three methods to ensure it fires on every browser/origin combination:
+function _startApp() {
+  try { buildRoleScreen(); } catch(e) { console.error('buildRoleScreen failed:', e); }
+}
+if(document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', _startApp);
+} else {
+  // DOM already parsed (common on GitHub Pages with defer/async)
+  _startApp();
+}
+
+// ── PAGE VISIBILITY HANDLER ─────────────────────────────────────────
+// On Android, switching to WhatsApp and back can suspend/reload the page.
+// When the page becomes visible again, re-merge orders from localStorage.
+document.addEventListener('visibilitychange', function() {
+  if(document.visibilityState === 'visible' && STATE && STATE.role) {
+    var existingIds = new Set(STATE.orders.map(function(o){return o.id;}));
+    for(var i=0; i<localStorage.length; i++) {
+      var key = localStorage.key(i);
+      if(!key || key.indexOf(LS_PREFIX)!==0) continue;
+      var date = key.slice(LS_PREFIX.length);
+      if(date.length!==10) continue; // must be yyyy-mm-dd
+      try {
+        var stored = JSON.parse(localStorage.getItem(key)||'[]');
+        stored.forEach(function(o) {
+          if(!existingIds.has(o.id)) {
+            STATE.orders.push(o);
+            existingIds.add(o.id);
+          }
+        });
+      } catch(e) {}
+    }
+    if(typeof renderOrdersList==='function') renderOrdersList();
+    if(typeof renderDashboard==='function') renderDashboard();
+    if(typeof renderHistory==='function') {
+      var h = document.getElementById('screen-history');
+      if(h && h.classList.contains('active')) renderHistory();
+    }
+  }
+});
+
+// pageshow fires on back-navigation (bfcache restore)
+window.addEventListener('pageshow', function(e) {
+  if(e.persisted && STATE && STATE.role) {
+    if(typeof renderOrdersList==='function') renderOrdersList();
+    if(typeof renderDashboard==='function') renderDashboard();
+  }
+});
+</script>
+</body>
+</html
+
+  // ── Group all unpaid orders by customer ───────────────────────────
+  const byCust = {};
+  unpaidOrders.forEach(o=>{
+    if(!byCust[o.customerId]) byCust[o.customerId]={name:o.customerName,cat:o.customerCategory,orders:[]};
+    byCust[o.customerId].orders.push(o);
+  });
+  // Also add opening balance customers
+  custsDue.forEach(c=>{
+    if(!byCust[c.id]) byCust[c.id]={name:c.name,cat:c.category,orders:[]};
+    byCust[c.id].openBal = c.balance;
+  });
+
+  // Sort customers: stop first, then overdue, then warning
+  const custEntries = Object.entries(byCust);
+  custEntries.sort(([,a],[,b])=>{
+    const aWorst = Math.max(0,...a.orders.map(o=>{const cs=getCreditStatus(o);return cs.status==='stop'?3:cs.status==='overdue'?2:cs.status==='warning'?1:0;}));
+    const bWorst = Math.max(0,...b.orders.map(o=>{const cs=getCreditStatus(o);return cs.status==='stop'?3:cs.status==='overdue'?2:cs.status==='warning'?1:0;}));
+    return bWorst-aWorst;
+  });
+
+  if(custEntries.length) {
+    custEntries.forEach(([custId,cg])=>{
+      const totalOwed = (cg.orders.reduce((s,o)=>s+((o.total||0)-(o.payment?.amount||0)),0)) + (cg.openBal||0);
+      const cfg = getCreditConfig(cg.cat);
+      const isBlocked = cg.orders.some(o=>getCreditStatus(o).stopOrder);
+      const hasOverdue = cg.orders.some(o=>{const cs=getCreditStatus(o);return cs.status==='overdue'||cs.status==='due';});
+      const hasWarning = cg.orders.some(o=>getCreditStatus(o).status==='warning');
+      const borderColor = (isBlocked||hasOverdue)?'#E67E22':hasWarning?'#F39C12':'var(--border)';
+      const statusBg    = (isBlocked||hasOverdue)?'#E67E22':hasWarning?'#F39C12':'var(--green)';
+
+      html += '<div class="card" style="margin-bottom:10px;border-left:4px solid '+borderColor+';">'
+        +'<div class="card-head">'
+          +'<div>'
+            +'<div style="font-weight:700;font-size:14px;">'+cg.name+'</div>'
+            +'<div style="font-size:11px;color:var(--muted);">'+cg.cat+' · Credit: '+cfg.label+'</div>'
+          +'</div>'
+          +'<div style="text-align:right;">'
+            +'<div style="font-size:18px;font-weight:700;color:var(--red);">₹'+totalOwed.toLocaleString('en-IN')+'</div>'
+            +(hasOverdue||isBlocked?'<span style="background:#E67E22;color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;">🔴 OVERDUE</span>'
+              :hasWarning?'<span style="background:#F39C12;color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;">⚠ DUE SOON</span>':'')
+          +'</div>'
+        +'</div>'
+        +'<div class="card-body" style="padding:8px 14px;">';
+
+      // Opening balance if any
+      if(cg.openBal) {
+        html += '<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px dashed var(--border);font-size:12px;">'
+          +'<span style="color:var(--muted);">Opening balance</span><span style="font-weight:700;color:var(--red);">₹'+cg.openBal.toLocaleString('en-IN')+'</span></div>';
+      }
+
+      // Order rows with credit status
+      cg.orders.forEach(o=>{
+        const cs = getCreditStatus(o);
+        const outstanding = (o.total||0)-(o.payment?.amount||0);
+        const statusColors = {ok:'var(--green)',warning:'#F39C12',due:'#E67E22',overdue:'#C0392B',stop:'#C0392B',cash:'var(--green)'};
+        const statusLabels = {ok:'On time',warning:'Due '+cs.dueDate,due:'Due today',overdue:cs.daysOverdue+'d overdue',stop:cs.daysOverdue+'d STOP',cash:'Cash'};
+        html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px dashed var(--border);">'
+          +'<div>'
+            +'<div style="font-size:12px;font-weight:600;">#'+o.id+' · ₹'+outstanding.toLocaleString('en-IN')+'</div>'
+            +'<div style="font-size:11px;color:var(--muted);">Ordered '+o.date+(o.payment?.amount?' · Paid ₹'+o.payment.amount.toLocaleString('en-IN'):'')+'</div>'
+          +'</div>'
+          +'<span style="font-size:11px;font-weight:700;color:'+statusColors[cs.status||'ok']+';">'+statusLabels[cs.status||'ok']+'</span>'
+        +'</div>';
+      });
+
+      // WA Reminder button + Record Payment
+      const custPhone = STATE.customers.find(c=>c.id===custId)?.phone||'';
+      const _safeId = encodeURIComponent(custId);
+      html += '<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">';
+      html += '<button data-cid="'+_safeId+'" onclick="recordDuePayment(decodeURIComponent(this.dataset.cid))" style="flex:1;padding:8px;background:var(--green);color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">&#128176; Record Payment</button>';
+      if(custPhone) {
+        html += '<button data-cid="'+_safeId+'" data-tp="client" onclick="sendCreditWA(decodeURIComponent(this.dataset.cid),this.dataset.tp)" style="padding:8px 12px;background:#25D366;color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">&#128242; Remind Client</button>';
+      }
+      html += '<button data-cid="'+_safeId+'" data-tp="internal" onclick="sendCreditWA(decodeURIComponent(this.dataset.cid),this.dataset.tp)" style="padding:8px 12px;background:var(--amber);color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">&#128203; Alert Sales</button>';
+      html += '</div>';
+
+      html += '</div></div>';
+    });
+  }
+
+  if(!html) html = '<div class="empty-state"><div class="empty-icon">🎉</div><p>No outstanding dues!</p></div>';
+  list.innerHTML = html;
+}
+
+function recordDuePayment(custId) {
+  // Open payment-in modal pre-filled for this customer
+  const cust = STATE.customers.find(c=>c.id===custId);
+  if(!cust) return;
+  document.getElementById('pi-cust-input').value = cust.name;
+  document.getElementById('pi-cust-id').value    = cust.id;
+  document.getElementById('pi-date').value       = TODAY_KEY;
+  document.getElementById('pi-amount').value     = '';
+  document.getElementById('pi-ref').value        = '';
+  document.getElementById('pi-notes').value      = '';
+  document.querySelectorAll('#pi-pay-modes .pay-mode-btn').forEach(b=>b.classList.remove('selected'));
+  document.getElementById('modal-payment-in').classList.add('open');
+}
+
+function sendCreditWA(custId, type) {
+  const cust = STATE.customers.find(c=>c.id===custId);
+  if(!cust) return;
+  const alerts = getCustomerCreditAlerts(custId);
+  if(!alerts.length) { showToast('No overdue orders for this customer'); return; }
+
+  const totalOwed = alerts.reduce((s,x)=>s+((x.order.total||0)-(x.order.payment?.amount||0)),0);
+  const orderLines = alerts.map(x=>{
+    const outstanding = (x.order.total||0)-(x.order.payment?.amount||0);
+    return '\u2022 Order #'+x.order.id+' dated '+x.order.date+' \u2014 \u20b9'+outstanding.toLocaleString('en-IN')+' ('+x.cs.daysOverdue+'d overdue)';
+  }).join('\n');
+
+  const cfg = getCreditConfig(cust.category);
+  let msg = '';
+  if(type==='client') {
+    msg = 'Dear '+cust.name+','
+      +'\n\nThis is a gentle reminder from Gaavn Fresh regarding your outstanding payment.'
+      +'\n\nPending Invoices:'
+      +'\n'+orderLines
+      +'\n\nTotal Outstanding: \u20b9'+totalOwed.toLocaleString('en-IN')
+      +'\n\nYour credit period is '+cfg.label+'. Kindly arrange payment at the earliest to continue receiving our products.'
+      +'\n\nFor any queries, please contact us.\n\nThank you \ud83d\ude4f\n\u2014 Gaavn Fresh';
+  } else {
+    const blocked = alerts.some(x=>x.cs.stopOrder);
+    msg = '\ud83d\udd34 PAYMENT ALERT \u2014 Gaavn Fresh'
+      +'\n\nCustomer: '+cust.name
+      +'\nCategory: '+cust.category
+      +(cust.phone?'\nPhone: '+cust.phone:'')
+      +'\n\nOverdue Invoices:\n'+orderLines
+      +'\n\nTotal Due: \u20b9'+totalOwed.toLocaleString('en-IN')
+      +(blocked?'\n\n⚠ Payment significantly overdue — please prioritise collection.':'')
       +'\n\nPlease follow up for payment immediately.';
   }
 
