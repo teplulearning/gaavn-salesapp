@@ -286,6 +286,11 @@ h1,h2,h3,.serif{font-family:'DM Serif Display',serif;}
         <span class="search-icon">🔍</span>
         <input type="text" id="cust-search" placeholder="Search by name, area or category..." oninput="searchCustomers(this.value)">
       </div>
+      <div style="text-align:right;margin-top:6px;">
+        <button onclick="showAddCustomer()" ontouchstart="" style="background:none;border:none;color:var(--teal,#028090);font-size:12px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif;padding:4px 0;">
+          + Add New Customer
+        </button>
+      </div>
       <div id="cust-results"></div>
     </div>
     <!-- Step 2: Products -->
@@ -690,6 +695,21 @@ h1,h2,h3,.serif{font-family:'DM Serif Display',serif;}
       <input type="date" id="edit-order-date" style="width:100%;background:var(--cream);border:1.5px solid var(--amber);border-radius:10px;padding:10px 12px;font-size:14px;font-weight:700;color:var(--ink);outline:none;">
     </div>
     <div id="edit-order-items"></div>
+    <!-- Add Product Section -->
+    <div style="margin-top:12px;border-top:1.5px solid var(--border);padding-top:12px;">
+      <div style="font-size:12px;font-weight:700;color:var(--muted);margin-bottom:8px;">ADD PRODUCT TO ORDER</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+        <select id="eo-add-product" style="flex:1;min-width:140px;background:var(--cream);border:1.5px solid var(--border);border-radius:8px;padding:7px 10px;font-family:'DM Sans',sans-serif;font-size:13px;">
+          <option value="">Select product...</option>
+        </select>
+        <input type="number" id="eo-add-qty" placeholder="Qty" min="0" step="0.5"
+          style="width:70px;background:var(--cream);border:1.5px solid var(--border);border-radius:8px;padding:7px 10px;font-family:'DM Sans',sans-serif;font-size:13px;">
+        <button onclick="addProductToEditOrder()" ontouchstart=""
+          style="background:var(--amber);color:#fff;border:none;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif;">
+          + Add
+        </button>
+      </div>
+    </div>
     <div class="field" style="margin-top:10px;">
       <label>Notes</label>
       <input type="text" id="edit-order-notes" placeholder="Delivery note, instructions...">
@@ -2701,7 +2721,90 @@ function openEditOrder(orderId) {
     +'</div></div>';
   });
   document.getElementById('edit-order-items').innerHTML = html;
+  // Populate Add Product dropdown with all available products
+  const addProdSel = document.getElementById('eo-add-product');
+  if(addProdSel) {
+    addProdSel.innerHTML = '<option value="">Select product...</option>' +
+      PRODUCTS.map(p => `<option value="${p.id}">${p.emoji} ${p.name} (std ₹${getRate(p.id)||p.stdRate}/unit)</option>`).join('');
+  }
   document.getElementById('modal-edit-order').classList.add('open');
+}
+
+function addProductToEditOrder() {
+  const sel  = document.getElementById('eo-add-product');
+  const qtyEl = document.getElementById('eo-add-qty');
+  if(!sel || !sel.value) { showToast('Select a product'); return; }
+  if(!qtyEl || !parseFloat(qtyEl.value)) { showToast('Enter quantity'); return; }
+
+  const pid  = sel.value;
+  const qty  = parseFloat(qtyEl.value)||0;
+  const prod = PRODUCTS.find(p=>p.id===pid);
+  if(!prod) return;
+
+  const rate   = getRate(pid) || prod.stdRate;
+  const amount = qty * rate;
+
+  // Find the order currently being edited
+  const orderId = document.getElementById('edit-order-id').value;
+  let o = STATE.orders.find(x=>x.id===orderId);
+  if(!o) return;
+
+  // Add item to order object
+  if(!o.items) o.items = [];
+  o.items.push({ product:pid, name:prod.name, qty, unit:prod.unit||'kg', rate, amount });
+
+  // Rebuild the items HTML in the modal
+  const items = o.items;
+  let html = '';
+  items.forEach((item,i) => {
+    const isLaadi = item.product==='pl' || item.weightPending!==undefined;
+    html += '<div class="card" style="margin-bottom:8px;"><div class="card-body" style="padding:10px 14px;">'
+      +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">'
+      +'<div style="font-weight:700;font-size:13px;">'+item.name+'</div>'
+      +'<button onclick="removeEditItem('+i+')" style="background:none;border:none;color:#C62828;font-size:16px;cursor:pointer;padding:0 4px;" title="Remove">✕</button>'
+      +'</div>'
+      +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">'
+        +'<div class="field" style="margin-bottom:0;"><label>Qty ('+(isLaadi?'ladis':item.unit||'kg')+')</label>'
+          +'<input type="number" id="eo-qty-'+i+'" value="'+item.qty+'" min="0" step="'+(isLaadi?'1':'0.5')+'" oninput="recalcEditOrder('+i+')"></div>'
+        +'<div class="field" style="margin-bottom:0;"><label>Rate (₹)</label>'
+          +'<input type="number" id="eo-rate-'+i+'" value="'+item.rate+'" min="0" step="1" oninput="recalcEditOrder('+i+')"></div>'
+      +'</div>'
+      +'<div style="text-align:right;font-size:13px;font-weight:700;margin-top:6px;color:var(--amber);" id="eo-amt-'+i+'">₹'+(item.amount||0).toLocaleString('en-IN')+'</div>'
+      +'</div></div>';
+  });
+  document.getElementById('edit-order-items').innerHTML = html;
+
+  // Reset add form
+  sel.value = '';
+  qtyEl.value = '';
+  showToast('✓ '+prod.name+' added');
+}
+
+function removeEditItem(itemIndex) {
+  const orderId = document.getElementById('edit-order-id').value;
+  let o = STATE.orders.find(x=>x.id===orderId);
+  if(!o || !o.items) return;
+  o.items.splice(itemIndex, 1);
+  // Rebuild modal HTML
+  const items = o.items;
+  let html = '';
+  items.forEach((item,i) => {
+    html += '<div class="card" style="margin-bottom:8px;"><div class="card-body" style="padding:10px 14px;">'
+      +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">'
+      +'<div style="font-weight:700;font-size:13px;">'+item.name+'</div>'
+      +'<button onclick="removeEditItem('+i+')" style="background:none;border:none;color:#C62828;font-size:16px;cursor:pointer;padding:0 4px;">✕</button>'
+      +'</div>'
+      +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">'
+        +'<div class="field" style="margin-bottom:0;"><label>Qty</label>'
+          +'<input type="number" id="eo-qty-'+i+'" value="'+item.qty+'" min="0" step="0.5" oninput="recalcEditOrder('+i+')"></div>'
+        +'<div class="field" style="margin-bottom:0;"><label>Rate (₹)</label>'
+          +'<input type="number" id="eo-rate-'+i+'" value="'+item.rate+'" min="0" step="1" oninput="recalcEditOrder('+i+')"></div>'
+      +'</div>'
+      +'<div style="text-align:right;font-size:13px;font-weight:700;margin-top:6px;color:var(--amber);" id="eo-amt-'+i+'">₹'+(item.amount||0).toLocaleString('en-IN')+'</div>'
+      +'</div></div>';
+  });
+  document.getElementById('edit-order-items').innerHTML = html;
+  showToast('Item removed');
 }
 
 function recalcEditOrder(i) {
@@ -3017,6 +3120,12 @@ function saveNewCustomer() {
   renderCustomerList();
   // Sync new customer to Google Sheet so all devices can see it
   if(STATE.sheetUrl) syncCustomerToSheet(customer);
+  // If New Order screen is active, auto-search the new customer name
+  const custSearch = document.getElementById('cust-search');
+  if(custSearch && document.getElementById('screen-new-order')?.classList.contains('active')) {
+    custSearch.value = name;
+    searchCustomers(name);
+  }
 }
 
 // ── DUES ─────────────────────────────────────────────────────────────
