@@ -952,6 +952,7 @@ const PRODUCTS = [
   {id:'paneer', name:'Paneer',        unit:'kg',   stdRate:260, emoji:'🧀'},
   {id:'pl',     name:'Paneer Laadi',  unit:'ladi', stdRate:260, emoji:'🧱', isLaadi:true, rateFromPaneer:true},
   {id:'mp',     name:'Malai Paneer',  unit:'kg',   stdRate:280, emoji:'🧀', altUnit:'pack', altRate:70},
+  {id:'lp',     name:'Lite Paneer',   unit:'kg',   stdRate:240, emoji:'🥗'},
   {id:'lc',     name:'Lite Curd',     unit:'jar',  stdRate:270, emoji:'🥛'},
   {id:'ghee',   name:'Ghee',          unit:'unit', stdRate:650, emoji:'🫙'},
   {id:'cream',  name:'Cream',         unit:'unit', stdRate:300, emoji:'🍦'},
@@ -2235,8 +2236,11 @@ function initNewOrder() {
   if(STATE.sheetUrl && STATE.customers.length < 10) syncCustomersFromSheet();
   document.getElementById('step-customer').style.display = 'block';
   document.getElementById('step-products').style.display = 'none';
-  document.getElementById('cust-search').value = '';
+  // Pre-fill search with last-added customer name if coming from Add Customer
+  const prefill = STATE._lastAddedCustomer || '';
+  document.getElementById('cust-search').value = prefill;
   document.getElementById('cust-results').innerHTML = '';
+  if(prefill) { searchCustomers(prefill); STATE._lastAddedCustomer = null; }
   // Set date picker to today
   const dp = document.getElementById('order-date-picker');
   if(dp) {
@@ -2267,7 +2271,30 @@ function onOrderDateChange(val) {
 
 function searchCustomers(q) {
   const el = document.getElementById('cust-results');
-  if(!q.trim()) { el.innerHTML=''; return; }
+  if(!q.trim()) {
+    // Show recently added customers (extras first) when search is blank
+    const extras = JSON.parse(localStorage.getItem(LS_CUSTS)||'[]');
+    const extraIds = new Set(extras.map(e=>e.id));
+    const recent = [
+      ...STATE.customers.filter(c=>extraIds.has(c.id)).slice(-10).reverse(),
+      ...STATE.customers.filter(c=>!extraIds.has(c.id)).slice(0,5)
+    ].slice(0,15);
+    if(!recent.length) { el.innerHTML=''; return; }
+    el.innerHTML = '<div style="padding:6px 12px 4px;font-size:10px;color:var(--muted);font-weight:700;letter-spacing:1px;">RECENTLY ADDED & FREQUENT</div>'
+      + recent.map(c => `
+      <div class="customer-row" onclick="selectCustomer('${c.id}')">
+        <div style="flex:1;min-width:0;">
+          <div class="cust-name">${c.name}</div>
+          ${c.phone?`<div style="font-size:12px;font-weight:600;color:var(--blue);margin-top:2px;">📞 ${c.phone}</div>`:''}
+          <div style="display:flex;align-items:center;gap:6px;margin-top:3px;flex-wrap:wrap;">
+            <span style="font-size:10px;font-weight:700;padding:1px 7px;border-radius:20px;background:${(CAT_BG[c.category]||'#eee')};color:${(CAT_COLOR[c.category]||'#888')};">${c.category||'—'}</span>
+            ${c.area?`<span style="font-size:11px;color:var(--muted);">📍 ${c.area}</span>`:''}
+          </div>
+        </div>
+        <span style="font-size:18px;flex-shrink:0;">→</span>
+      </div>`).join('');
+    return;
+  }
   const ql = q.toLowerCase();
   const matches = STATE.customers.filter(c =>
     c.name.toLowerCase().includes(ql) ||
@@ -3119,11 +3146,13 @@ function saveNewCustomer() {
   extras.push(customer);
   localStorage.setItem(LS_CUSTS,JSON.stringify(extras));
   closeModal('modal-add-customer');
-  showToast('✓ Customer added: '+name);
+  showToast('✓ Customer added: '+name+' — tap "New Order" to select them');
   renderCustomerList();
   // Sync new customer to Google Sheet so all devices can see it
   if(STATE.sheetUrl) syncCustomerToSheet(customer);
-  // If New Order screen is active, auto-search the new customer name
+  // Store last-added customer name so New Order screen can pre-fill on open
+  STATE._lastAddedCustomer = name;
+  // If New Order screen is already open, auto-search immediately
   const custSearch = document.getElementById('cust-search');
   if(custSearch && document.getElementById('screen-new-order')?.classList.contains('active')) {
     custSearch.value = name;
