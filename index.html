@@ -1702,6 +1702,18 @@ function showScreen(id) {
 
 // ── INIT ─────────────────────────────────────────────────────────────
 function initApp() {
+  // ── Load Sheet URL FIRST — everything else depends on it ──────────
+  // Check URL params first (allows pre-configuration via shared link)
+  const _urlParams = new URLSearchParams(window.location.search);
+  const _paramUrl  = _urlParams.get('sheetUrl') || _urlParams.get('sheet');
+  if(_paramUrl && _paramUrl.startsWith('https://script.google.com')) {
+    localStorage.setItem(LS_URL, _paramUrl);
+    STATE.sheetUrl = _paramUrl;
+  } else {
+    STATE.sheetUrl = localStorage.getItem(LS_URL) || '';
+  }
+  updateSheetDot();
+
   // Load customers: master + any extras stored locally
   STATE.customers = CUSTOMERS_MASTER.map(c => ({...c}));
   const extras = JSON.parse(localStorage.getItem(LS_CUSTS)||'[]');
@@ -1727,18 +1739,7 @@ function initApp() {
   if(STATE.orders.length === 0 && STATE.sheetUrl) {
     setTimeout(syncOrdersFromSheet, 1000);
   }
-  // Load saved sheet URL — check URL params first (allows pre-configuration via link)
-  const urlParams = new URLSearchParams(window.location.search);
-  const paramUrl  = urlParams.get('sheetUrl') || urlParams.get('sheet');
-  if(paramUrl && paramUrl.startsWith('https://script.google.com')) {
-    // Save to localStorage so future sessions remember it
-    localStorage.setItem(LS_URL, paramUrl);
-    STATE.sheetUrl = paramUrl;
-    console.log('Sheet URL loaded from URL param and saved');
-  } else {
-    STATE.sheetUrl = localStorage.getItem(LS_URL)||'';
-  }
-  updateSheetDot();
+  // Sheet URL already loaded at top of initApp — no duplicate needed here
   showScreen('home');
   // Add delivery-specific setup section
   setTimeout(renderSetupExtra, 200);
@@ -4812,8 +4813,16 @@ async function fetchHistoryDate() {
   statusEl.style.color = 'var(--muted)';
 
   try {
-    const res = await fetch(url + '?action=getOrders&date=' + date, {cache:'no-store'});
-    const data = await res.json();
+    let res, data;
+    try {
+      res = await fetch(url + '?action=getOrders&date=' + date, {cache:'no-store'});
+      data = await res.json();
+    } catch(corsErr) {
+      // CORS or network error — show specific message
+      statusEl.textContent = '✗ Connection failed — ensure the Apps Script is deployed as "Anyone" can access';
+      statusEl.style.color = 'var(--red,#C62828)';
+      return;
+    }
     const rawOrders = data.orders || [];
 
     if(!rawOrders.length) {
@@ -4999,7 +5008,9 @@ function resetSequence() {
 async function submitAllDayOrders() {
   // Bulk re-sync ALL of today's orders to the sheet (overwrites existing rows)
   // This is the reliable way to ensure sheet is up to date
-  if(!STATE.sheetUrl) { showToast('No Sheet URL — go to Setup'); return; }
+  const _url = getSheetUrl();
+  if(!_url) { showToast('No Sheet URL — go to Setup'); showScreen('setup'); return; }
+  if(!STATE.sheetUrl) STATE.sheetUrl = _url; // ensure STATE is in sync
 
   const btn = document.getElementById('btn-submit-all');
   if(btn) { btn.textContent = '⏳ Submitting...'; btn.disabled = true; }
