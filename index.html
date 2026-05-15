@@ -465,6 +465,19 @@ h1,h2,h3,.serif{font-family:'DM Serif Display',serif;}
       </div>
     </div>
 
+    <div class="setup-card" style="border-color:var(--amber);">
+      <div class="section-label" style="margin-top:0;">☁ Push Master Customer List to Sheet</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:10px;line-height:1.5;">
+        Your app has <strong id="master-cust-count"></strong> customers in the master list. 
+        Pushing them to the sheet enables rate saving, customer app login, and multi-device sync.<br>
+        <span style="color:var(--amber);font-weight:600;">Do this once after setup.</span>
+      </div>
+      <div id="push-custs-status" style="font-size:12px;margin-bottom:8px;min-height:16px;"></div>
+      <button class="btn btn-primary" id="btn-push-custs" onclick="pushAllCustomersToSheet()" style="width:100%;">
+        ☁ Push All Customers to Sheet
+      </button>
+    </div>
+
     <div class="setup-card">
       <div class="section-label" style="margin-top:0;">Data Management</div>
       <div class="btn-row">
@@ -2643,6 +2656,9 @@ function submitOrder() {
       setTimeout(() => banner.remove(), 8000);
     }, 500);
   }
+  // ── Auto-save any rates changed during this order back to customer profile ──
+  saveCustomerRates(STATE.selectedCustomer, STATE.cart);
+
   STATE.cart={}; STATE.selectedCustomer=null;
   renderDashboard();
   if(isBackdated) {
@@ -2651,6 +2667,72 @@ function submitOrder() {
     showToast('✓ Back-dated order saved — view it in History');
   } else {
     showScreen('orders');
+  }
+}
+
+// ── SAVE CUSTOMER RATES ───────────────────────────────────────────────
+// Called after every order — saves any rates the salesperson changed back
+// to the customer's profile so they auto-fill next time.
+function saveCustomerRates(customer, cart) {
+  if(!customer || !cart) return;
+  let changed = false;
+  if(!customer.pricing) customer.pricing = {};
+
+  Object.entries(cart).forEach(([pid, v]) => {
+    if(!v || v.qty <= 0) return;
+    const usedRate = parseFloat(v.rate);
+    if(!usedRate || usedRate <= 0) return;
+    // Compare with what was stored — save if different
+    const storedRate = customer.pricing[pid];
+    if(storedRate !== usedRate) {
+      customer.pricing[pid] = usedRate;
+      changed = true;
+    }
+    // Paneer Laadi uses paneer rate — sync that too
+    if(pid === 'pl') {
+      const paneerRate = parseFloat(v.rate);
+      if(paneerRate > 0 && customer.pricing['paneer'] !== paneerRate) {
+        customer.pricing['paneer'] = paneerRate;
+        changed = true;
+      }
+    }
+  });
+
+  if(!changed) return;
+
+  // Update in STATE.customers
+  const idx = STATE.customers.findIndex(c => c.id === customer.id);
+  if(idx >= 0) STATE.customers[idx].pricing = {...customer.pricing};
+
+  // Update in localStorage extras
+  const extras = JSON.parse(localStorage.getItem(LS_CUSTS)||'[]');
+  const extIdx = extras.findIndex(c => c.id === customer.id);
+  if(extIdx >= 0) {
+    extras[extIdx].pricing = {...customer.pricing};
+  } else {
+    extras.push({...customer});
+  }
+  localStorage.setItem(LS_CUSTS, JSON.stringify(extras));
+
+  // Sync updated pricing to Google Sheet Customers tab
+  syncCustomerPricingToSheet(customer);
+}
+
+async function syncCustomerPricingToSheet(customer) {
+  const url = getSheetUrl();
+  if(!url) return;
+  try {
+    const params = new URLSearchParams({
+      action:    'updateCustomerPricing',
+      id:        customer.id,
+      name:      customer.name,
+      phone:     customer.phone||'',
+      pricing:   JSON.stringify(customer.pricing||{}),
+      updatedBy: STATE.role||'sales',
+    });
+    await fireAndForget(url + '?' + params.toString());
+  } catch(e) {
+    console.warn('Pricing sync failed:', e);
   }
 }
 
@@ -3444,6 +3526,59 @@ async function syncCustomerToSheet(customer) {
   }
 }
 
+async function pushAllCustomersToSheet() {
+  const url = getSheetUrl();
+  if(!url) { showToast('⚠ Set Sheet URL in Setup first'); return; }
+
+  const btn    = document.getElementById('btn-push-custs');
+  const status = document.getElementById('push-custs-status');
+  if(btn) { btn.disabled = true; btn.textContent = '⏳ Pushing...'; }
+
+  const customers = STATE.customers;
+  let done = 0, failed = 0;
+
+  for(const c of customers) {
+    try {
+      // Use upsertCustomer action — creates or updates including Pricing column
+      const params = new URLSearchParams({
+        action:   'upsertCustomer',
+        id:       c.id,
+        name:     c.name,
+        category: c.category||'',
+        phone:    c.phone||'',
+        area:     c.area||'',
+        address:  c.address||'',
+        balance:  c.balance||0,
+        pricing:  JSON.stringify(c.pricing||{}),
+        createdBy:'master-push',
+      });
+      await fireAndForget(url + '?' + params.toString());
+      done++;
+      // Update status every 25 customers
+      if(done % 25 === 0 && status) {
+        status.textContent = '⏳ ' + done + ' of ' + customers.length + ' pushed...';
+        status.style.color = 'var(--muted)';
+      }
+      // Small delay to avoid overwhelming Apps Script
+      if(done % 10 === 0) await new Promise(r => setTimeout(r, 300));
+    } catch(e) {
+      failed++;
+    }
+  }
+
+  if(btn) { btn.disabled = false; btn.textContent = '☁ Push All Customers to Sheet'; }
+  if(status) {
+    if(failed === 0) {
+      status.textContent = '✓ All ' + done + ' customers pushed successfully!';
+      status.style.color = 'var(--green,#2E7D32)';
+    } else {
+      status.textContent = '⚠ ' + done + ' pushed, ' + failed + ' failed — retry if needed';
+      status.style.color = 'var(--amber)';
+    }
+  }
+  showToast('✓ ' + done + ' customers synced to Sheet');
+}
+
 async function syncOneOrder(orderId, orderObj) {
   const url=getSheetUrl(); if(!url) return;
   const order=orderObj||STATE.orders.find(o=>o.id===orderId); if(!order) return;
@@ -3570,6 +3705,9 @@ function renderSetup() {
     if(pd) pd.value = pins.delivery||'';
   }
   document.getElementById('script-code').textContent=getAppsScriptCode();
+  // Show master customer count
+  const countEl = document.getElementById('master-cust-count');
+  if(countEl) countEl.textContent = STATE.customers.length + ' customers';
   // Show share link section if URL is configured
   const shareLinkDiv = document.getElementById('share-link-section');
   if(shareLinkDiv) {
@@ -3690,6 +3828,11 @@ function getAppsScriptCode() {
     '    if (a === "getOrders")    return getOrders(e.parameter);',
     '    if (a === "logCustomer")  return logCustomer(e.parameter);',
     '    if (a === "getCustomers") return getCustomers(e.parameter);',
+    '    if (a === "getCustomerByPhone")    return getCustomerByPhone(e.parameter);',
+    '    if (a === "customerOrder")         return customerOrder(e.parameter);',
+    '    if (a === "getCustomerOrders")     return getCustomerOrders(e.parameter);',
+    '    if (a === "updateCustomerPricing") return updateCustomerPricing(e.parameter);',
+    '    if (a === "upsertCustomer")        return upsertCustomer(e.parameter);',
     '    return jsonOut({error: "Unknown action: " + a});',
     '  } catch(err) { return jsonOut({error: err.message}); }',
     '}',
@@ -4018,6 +4161,152 @@ function getAppsScriptCode() {
     '    return obj;',
     '  });',
     '  return jsonOut({orders:orders,date:p.date,count:orders.length});',
+    '}',
+    '',
+    '// ── CUSTOMER APP FUNCTIONS ───────────────────────────────────────────',
+    'function getCustomerByPhone(p) {',
+    '  var ss = SpreadsheetApp.openById(SS_ID);',
+    '  var sh = ss.getSheetByName("Customers");',
+    '  if (!sh || sh.getLastRow() <= 1) return jsonOut({error:"No customers"});',
+    '  var data = sh.getDataRange().getValues();',
+    '  var headers = data[0];',
+    '  var phoneCol=headers.indexOf("Phone"), pinCol=headers.indexOf("PIN");',
+    '  var idCol=headers.indexOf("ID"), nameCol=headers.indexOf("Name");',
+    '  var catCol=headers.indexOf("Category"), areaCol=headers.indexOf("Area");',
+    '  var balCol=headers.indexOf("Balance"), pricingCol=headers.indexOf("Pricing");',
+    '  var phone = String(p.phone||"").replace(/\\D/g,"").slice(-10);',
+    '  for (var r = 1; r < data.length; r++) {',
+    '    var rowPhone = String(data[r][phoneCol]||"").replace(/\\D/g,"").slice(-10);',
+    '    if (rowPhone === phone) {',
+    '      var pricingRaw = pricingCol>=0 ? String(data[r][pricingCol]||"") : "";',
+    '      var pricing = {};',
+    '      try { pricing = pricingRaw ? JSON.parse(pricingRaw) : {}; } catch(ex) {}',
+    '      return jsonOut({customer:{',
+    '        id:String(data[r][idCol]||""), name:String(data[r][nameCol]||""),',
+    '        category:catCol>=0?String(data[r][catCol]||""):"",',
+    '        area:areaCol>=0?String(data[r][areaCol]||""):"",',
+    '        phone:rowPhone,',
+    '        balance:balCol>=0?(parseFloat(data[r][balCol])||0):0,',
+    '        pin:pinCol>=0?String(data[r][pinCol]||"").trim():"",',
+    '        pricing:pricing',
+    '      }});',
+    '    }',
+    '  }',
+    '  return jsonOut({error:"Phone not found"});',
+    '}',
+    '',
+    'function customerOrder(p) { return logOrder(p); }',
+    '',
+    'function getCustomerOrders(p) {',
+    '  var ss=SpreadsheetApp.openById(SS_ID);',
+    '  var custPhone=String(p.phone||"").replace(/\\D/g,"").slice(-10);',
+    '  var allOrders=[], allSheets=ss.getSheets();',
+    '  allSheets.forEach(function(sh) {',
+    '    if(sh.getName().indexOf("Orders_")!==0) return;',
+    '    var data=sh.getDataRange().getValues(); if(data.length<2) return;',
+    '    var headers=data[0], matchIds={};',
+    '    data.slice(1).forEach(function(row) {',
+    '      var id=String(row[0]||"").trim();',
+    '      var phone=String(row[4]||"").replace(/\\D/g,"").slice(-10);',
+    '      if(!id||id.indexOf("TOTAL:")===0) return;',
+    '      if(phone===custPhone) matchIds[id]=true;',
+    '    });',
+    '    data.slice(1).forEach(function(row) {',
+    '      var id=String(row[0]||"").trim();',
+    '      if(matchIds[id]) { var obj={}; headers.forEach(function(h,i){obj[h]=row[i]!==undefined?row[i]:""}); allOrders.push(obj); }',
+    '    });',
+    '  });',
+    '  var balance=0, csh=ss.getSheetByName("Customers");',
+    '  if(csh){',
+    '    var cd=csh.getDataRange().getValues(), ch=cd[0];',
+    '    var balIdx=ch.indexOf("Balance"), phIdx=ch.indexOf("Phone");',
+    '    for(var r=1;r<cd.length;r++){',
+    '      if(String(cd[r][phIdx]||"").replace(/\\D/g,"").slice(-10)===custPhone){balance=parseFloat(cd[r][balIdx])||0;break;}',
+    '    }',
+    '  }',
+    '  return jsonOut({orders:allOrders,balance:balance,count:allOrders.length});',
+    '}',
+    '',
+    'function updateCustomerPricing(p) {',
+    '  var ss=SpreadsheetApp.openById(SS_ID);',
+    '  var sh=ss.getSheetByName("Customers");',
+    '  if(!sh||sh.getLastRow()<=1) return jsonOut({error:"No customers sheet"});',
+    '  var data=sh.getDataRange().getValues();',
+    '  var headers=data[0];',
+    '  var idCol=headers.indexOf("ID");',
+    '  var phoneCol=headers.indexOf("Phone");',
+    '  var pricingCol=headers.indexOf("Pricing");',
+    '  // Add Pricing column if it doesnt exist',
+    '  if(pricingCol<0) {',
+    '    sh.getRange(1,headers.length+1).setValue("Pricing");',
+    '    pricingCol=headers.length;',
+    '    headers.push("Pricing");',
+    '  }',
+    '  var custId=String(p.id||"").trim();',
+    '  var custPhone=String(p.phone||"").replace(/\\D/g,"").slice(-10);',
+    '  var newPricing={};',
+    '  try{newPricing=JSON.parse(p.pricing||"{}");}catch(ex){}',
+    '  for(var r=1;r<data.length;r++){',
+    '    var rowId=String(data[r][idCol]||"").trim();',
+    '    var rowPhone=String(data[r][phoneCol]||"").replace(/\\D/g,"").slice(-10);',
+    '    if(rowId===custId || (custPhone && rowPhone===custPhone)){',
+    '      // Merge new pricing with existing (dont overwrite unrelated products)',
+    '      var existing={};',
+    '      try{existing=JSON.parse(String(data[r][pricingCol]||"{}"));}catch(ex){}',
+    '      var merged=Object.assign({},existing,newPricing);',
+    '      sh.getRange(r+1,pricingCol+1).setValue(JSON.stringify(merged));',
+    '      return jsonOut({status:"ok",updated:r+1});',
+    '    }',
+    '  }',
+    '  return jsonOut({error:"Customer not found"});',
+    '}',
+    '',
+    'function upsertCustomer(p) {',
+    '  // Create or update a customer row including Pricing column',
+    '  var ss=SpreadsheetApp.openById(SS_ID);',
+    '  var sh=getOrCreateSheet(ss,"Customers");',
+    '  var headers=sh.getLastRow()>0 ? sh.getRange(1,1,1,sh.getLastColumn()).getValues()[0] : [];',
+    '  // Ensure all required columns exist',
+    '  var required=["ID","Name","Category","Phone","Area","Address","Balance","Pricing","Created By","Created At"];',
+    '  if(headers.length===0) {',
+    '    sh.appendRow(required);',
+    '    sh.getRange(1,1,1,required.length).setFontWeight("bold").setBackground("#1A3A1F").setFontColor("#fff");',
+    '    sh.setFrozenRows(1);',
+    '    headers=required;',
+    '  }',
+    '  // Add any missing columns',
+    '  required.forEach(function(col) {',
+    '    if(headers.indexOf(col)<0) { sh.getRange(1,headers.length+1).setValue(col); headers.push(col); }',
+    '  });',
+    '  var col={}; headers.forEach(function(h,i){col[h]=i+1;});',
+    '  var data=sh.getLastRow()>1?sh.getRange(2,1,sh.getLastRow()-1,headers.length).getValues():[];',
+    '  var newPricing={};',
+    '  try{newPricing=JSON.parse(p.pricing||"{}");}catch(ex){}',
+    '  // Find existing row by ID or name',
+    '  for(var r=0;r<data.length;r++){',
+    '    if(String(data[r][col["ID"]-1])===String(p.id)||String(data[r][col["Name"]-1]).toLowerCase()===String(p.name||"").toLowerCase()){',
+    '      var existingPricing={};',
+    '      try{existingPricing=JSON.parse(String(data[r][col["Pricing"]-1]||"{}"));}catch(ex){}',
+    '      var merged=Object.assign({},existingPricing,newPricing);',
+    '      sh.getRange(r+2,col["Category"]).setValue(p.category||data[r][col["Category"]-1]||"");',
+    '      sh.getRange(r+2,col["Phone"]).setValue(p.phone||data[r][col["Phone"]-1]||"");',
+    '      sh.getRange(r+2,col["Area"]).setValue(p.area||data[r][col["Area"]-1]||"");',
+    '      sh.getRange(r+2,col["Pricing"]).setValue(JSON.stringify(merged));',
+    '      if(parseFloat(p.balance)) sh.getRange(r+2,col["Balance"]).setValue(parseFloat(p.balance)||0);',
+    '      return jsonOut({status:"updated",row:r+2});',
+    '    }',
+    '  }',
+    '  // Not found — insert new row',
+    '  var now=Utilities.formatDate(new Date(),Session.getScriptTimeZone(),"dd/MM/yyyy HH:mm");',
+    '  var row=new Array(headers.length).fill("");',
+    '  row[col["ID"]-1]=p.id; row[col["Name"]-1]=p.name;',
+    '  row[col["Category"]-1]=p.category||""; row[col["Phone"]-1]=p.phone||"";',
+    '  row[col["Area"]-1]=p.area||""; row[col["Address"]-1]=p.address||"";',
+    '  row[col["Balance"]-1]=parseFloat(p.balance)||0;',
+    '  row[col["Pricing"]-1]=JSON.stringify(newPricing);',
+    '  row[col["Created By"]-1]=p.createdBy||""; row[col["Created At"]-1]=now;',
+    '  sh.appendRow(row);',
+    '  return jsonOut({status:"created",row:sh.getLastRow()});',
     '}',
   ];
   return lines.join('\n');
