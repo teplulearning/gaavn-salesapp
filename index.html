@@ -4320,6 +4320,106 @@ function getDeliverySequence() {
   catch(e) { return []; }
 }
 
+function copyWhatsAppForDate(dateKey) {
+  // Build WA message for any date (history or today)
+  const isToday = dateKey === TODAY_KEY;
+  const orders = isToday
+    ? JSON.parse(localStorage.getItem(LS_ORDERS)||'[]')
+    : getOrdersForDate(dateKey);
+
+  if (!orders.length) { showToast('No orders found for this date'); return; }
+
+  // Format date label
+  const d = new Date(dateKey + 'T00:00:00');
+  const dateStr = isToday
+    ? 'Today, ' + d.toLocaleDateString('en-IN', {weekday:'long', day:'numeric', month:'long', year:'numeric'})
+    : d.toLocaleDateString('en-IN', {weekday:'long', day:'numeric', month:'long', year:'numeric'});
+  const timeStr = new Date().toLocaleTimeString('en-IN', {hour:'2-digit', minute:'2-digit'});
+
+  let lines = [];
+  lines.push('🐄 *GAAVN FRESH — Daily Order Sheet*');
+  lines.push('📅 ' + dateStr);
+  lines.push('🕐 Prepared at ' + timeStr);
+  lines.push('─'.repeat(30));
+
+  const prodTotals = {};
+  orders.forEach((o, idx) => {
+    const statusIcon = {confirmed:'✅',modified:'⚠️',delivered:'✅',paid:'💰',due:'🔴',partial:'🟡',draft:'📝'}[o.status] || '📦';
+    const catEmoji = {'Distributor -Retail':'🏭','Distributor -HORECA':'🏭','HORECA':'🏨','Retail':'🛒'}[o.customerCategory] || '📦';
+    lines.push('');
+    lines.push((idx+1) + '. ' + statusIcon + ' *' + o.customerName + '* ' + catEmoji);
+    if (o.customerArea) lines.push('   📍 ' + o.customerArea);
+    (o.items || []).forEach(item => {
+      if(item.weightPending || item.product==='pl') {
+        const confirmedWt = item.confirmedWeightKg||0;
+        const estWt = item.estKg||0;
+        const wtStr = confirmedWt>0
+          ? confirmedWt.toFixed(2)+'kg (confirmed) @ ₹'+item.rate+'/kg = ₹'+item.amount.toLocaleString('en-IN')
+          : estWt>0 ? '~'+estWt+'kg (est.) @ ₹'+item.rate+'/kg ≈ ₹'+item.amount.toLocaleString('en-IN')+' · ⚖️ weight at delivery'
+          : '⚖️ weight to be confirmed at delivery';
+        lines.push('   • ' + item.name + ': ' + item.qty + ' ladi' + (item.qty>1?'s':'') + ' · ' + wtStr);
+      } else {
+        lines.push('   • ' + item.name + ': ' + item.qty + ' ' + item.unit + ' @ ₹' + item.rate + ' = ₹' + item.amount.toLocaleString('en-IN'));
+      }
+      if (!prodTotals[item.name]) prodTotals[item.name] = {qty:0, unit:item.unit, amt:0, isLaadi:false, ladis:0, weightKg:0};
+      if(item.weightPending!==undefined || item.product==='pl') {
+        prodTotals[item.name].isLaadi = true;
+        prodTotals[item.name].ladis  += (item.qty||0);
+        prodTotals[item.name].weightKg += (item.confirmedWeightKg||item.estKg||0);
+        prodTotals[item.name].amt    += (item.amount||0);
+      } else {
+        prodTotals[item.name].qty  += item.qty;
+        prodTotals[item.name].amt  += item.amount;
+      }
+    });
+    lines.push('   💵 *Total: ₹' + (o.total||0).toLocaleString('en-IN') + '*');
+    if (o.notes) lines.push('   📝 ' + o.notes);
+    if (o.payment?.mode && o.payment.mode !== 'due')
+      lines.push('   💳 Payment: ' + o.payment.mode + (o.payment.amount ? ' ₹'+o.payment.amount : ''));
+  });
+
+  // Day summary
+  const grandTotal = orders.reduce((s,o) => s + (o.total||0), 0);
+  const paidTotal  = orders.filter(o => o.status==='paid'||o.payment?.received).reduce((s,o) => s+(o.payment?.amount||o.total||0), 0);
+  const dueTotal   = orders.filter(o => o.status==='due'||o.status==='partial').reduce((s,o) => s+(o.total-(o.payment?.amount||0)), 0);
+
+  lines.push('');
+  lines.push('─'.repeat(30));
+  lines.push('📊 *DAY SUMMARY*');
+  lines.push('Total Orders: ' + orders.length);
+  lines.push('Gross Revenue: *₹' + grandTotal.toLocaleString('en-IN') + '*');
+  if (paidTotal > 0) lines.push('Collected: ₹' + paidTotal.toLocaleString('en-IN'));
+  if (dueTotal  > 0) lines.push('Due/Pending: ₹' + dueTotal.toLocaleString('en-IN'));
+
+  // Product-wise totals
+  if (Object.keys(prodTotals).length) {
+    lines.push('');
+    lines.push('📦 *PRODUCT-WISE DISPATCH*');
+    Object.entries(prodTotals).forEach(([name, v]) => {
+      if(v.isLaadi) {
+        const wt = v.weightKg>0 ? v.weightKg.toFixed(2)+'kg' : '⚖️ wt pending';
+        const ladisLabel = v.ladis + ' ladi' + (v.ladis!==1?'s':'');
+        lines.push('• ' + name + ': ' + ladisLabel + ' · ' + wt + (v.amt>0?' = ₹'+v.amt.toLocaleString('en-IN'):''));
+      } else {
+        let displayUnit = v.unit;
+        if(name==='Chaas 1 Litre') displayUnit = '1L btl';
+        if(name==='Chaas 500ml')   displayUnit = '500ml btl';
+        const qtyDisplay = v.qty%1===0 ? v.qty : v.qty.toFixed(1);
+        lines.push('• ' + name + ': ' + qtyDisplay + ' ' + displayUnit);
+      }
+    });
+  }
+
+  lines.push('');
+  lines.push('_Sent from Gaavn Fresh Sales App_');
+
+  const msg = lines.join('\n');
+  document.getElementById('wa-text').value = msg;
+  document.getElementById('wa-copy-confirm').style.display = 'none';
+  document.getElementById('wa-copy-btn').textContent = '📋 Copy Message';
+  document.getElementById('modal-whatsapp').classList.add('open');
+}
+
 function copyWhatsApp() {
   // Only include TODAY's orders in the WhatsApp summary
   const orders = STATE.orders.filter(o => (o.date || TODAY_KEY) === TODAY_KEY);
@@ -4939,6 +5039,9 @@ function renderHistory() {
         </div>
         <!-- Orders for this date (collapsed by default unless today) -->
         <div id="hday-${date}" style="display:${isToday?'block':'none'};border-top:1px solid var(--border);padding:10px 12px;">
+          <div style="margin-bottom:10px;">
+            <button onclick="copyWhatsAppForDate('${date}')" style="background:#25D366;color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif;">💬 Share on WhatsApp</button>
+          </div>
           ${renderHistoryOrders(orders, date)}
         </div>
       </div>`;
