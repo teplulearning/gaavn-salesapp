@@ -966,7 +966,7 @@ const PRODUCTS = [
   {id:'pl',     name:'Paneer Laadi',  unit:'ladi', stdRate:260, emoji:'🧱', isLaadi:true, rateFromPaneer:true},
   {id:'mp',     name:'Malai Paneer',  unit:'kg',   stdRate:280, emoji:'🧀', altUnit:'pack', altRate:70},
   {id:'lp',     name:'Lite Paneer',   unit:'kg',   stdRate:240, emoji:'🥗'},
-  {id:'lc',     name:'Lite Curd',     unit:'jar',  stdRate:270, emoji:'🥛', altUnit:'kg', altRate:270, jarToKg:1},
+  {id:'lc',     name:'Lite Curd',     unit:'jar',  stdRate:270, emoji:'🥛', altUnit:'kg', altRate:60, jarToKg:1},
   {id:'ghee',   name:'Ghee',          unit:'unit', stdRate:650, emoji:'🫙'},
   {id:'cream',  name:'Cream',         unit:'unit', stdRate:300, emoji:'🍦'},
   {id:'cmk',    name:'CM Khoya',      unit:'kg',   stdRate:234, emoji:'🍫'},
@@ -2491,8 +2491,8 @@ function setMPUnit(pid, unit) {
   // Switch rate based on unit
   const cust = STATE.selectedCustomer;
   if(unit===p.altUnit) {
-    // kg unit for Lite Curd: use lc_kg custom rate if set, else same as jar rate
-    STATE.cart[pid].rate = cust?.pricing?.[pid+'_kg'] || cust?.pricing?.[pid+'_pack'] || p.altRate || getRate(pid);
+    // Switching to alt unit (e.g. kg for Lite Curd) — use alt rate, not jar rate
+    STATE.cart[pid].rate = cust?.pricing?.[pid+'_kg'] || p.altRate || 60;
   } else {
     STATE.cart[pid].rate = getRate(pid);
   }
