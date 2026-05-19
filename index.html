@@ -2358,6 +2358,23 @@ function getRate(pid) {
     if(c?.pricing?.paneer) return c.pricing.paneer;
     return PRODUCTS.find(p=>p.id==='paneer')?.stdRate || 260;
   }
+  // Lite Curd: pricing.lc = jar rate, pricing.lc_kg = kg rate
+  // Legacy data: lc <= 150 was stored as a kg rate, lc > 150 is a jar rate
+  if(pid === 'lc') {
+    const p = PRODUCTS.find(p=>p.id==='lc');
+    const curUnit = STATE.cart['lc']?.unit || p?.unit || 'jar';
+    const cPricing = c?.pricing || {};
+    if(curUnit === 'kg') {
+      // Use lc_kg if set, else fall back to lc if it looks like a kg rate
+      if(cPricing.lc_kg) return cPricing.lc_kg;
+      if(cPricing.lc && cPricing.lc <= 150) return cPricing.lc;
+      return p?.altRate || 60;
+    } else {
+      // jar unit — use lc if it looks like a jar rate, else stdRate
+      if(cPricing.lc && cPricing.lc > 150) return cPricing.lc;
+      return p?.stdRate || 270;
+    }
+  }
   if(c?.pricing?.[pid]) return c.pricing[pid];
   return PRODUCTS.find(p=>p.id===pid)?.stdRate || 0;
 }
@@ -2367,7 +2384,9 @@ function renderProductList() {
     const rate    = getRate(p.id);
     const qty     = STATE.cart[p.id]?.qty||0;
     const curRate = STATE.cart[p.id]?.rate!=null ? STATE.cart[p.id].rate : rate;
-    const isCustom = STATE.selectedCustomer?.pricing?.[p.id];
+    const isCustom = p.id === 'lc'
+      ? (STATE.selectedCustomer?.pricing?.lc != null)
+      : STATE.selectedCustomer?.pricing?.[p.id];
     const curUnit = STATE.cart[p.id]?.unit||p.unit;
 
     // ── Paneer Laadi: ladis + est. weight + editable rate ──────────────
@@ -2487,17 +2506,12 @@ function setMPUnit(pid, unit) {
   const p = PRODUCTS.find(x=>x.id===pid);
   if(!p) return;
   if(!STATE.cart[pid]) STATE.cart[pid]={qty:0,rate:getRate(pid),unit:p.unit};
+  // Set unit first so getRate() picks the correct rate for the new unit
   STATE.cart[pid].unit = unit;
-  // Switch rate based on unit
-  const cust = STATE.selectedCustomer;
-  if(unit===p.altUnit) {
-    // Switching to alt unit (e.g. kg for Lite Curd) — use alt rate, not jar rate
-    STATE.cart[pid].rate = cust?.pricing?.[pid+'_kg'] || p.altRate || 60;
-  } else {
-    STATE.cart[pid].rate = getRate(pid);
-  }
+  STATE.cart[pid].rate = getRate(pid);
   renderProductList();
 }
+
 
 function setCartQty(pid, val) {
   // Allow empty string while typing — don't treat '' as 0 and wipe the cart entry
