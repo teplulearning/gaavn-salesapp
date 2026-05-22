@@ -4337,11 +4337,17 @@ function getDeliverySequence() {
 function copyWhatsAppForDate(dateKey) {
   // Build WA message for any date (history or today)
   const isToday = dateKey === TODAY_KEY;
-  const orders = isToday
+  let orders = isToday
     ? JSON.parse(localStorage.getItem(LS_ORDERS)||'[]')
     : getOrdersForDate(dateKey);
 
-  if (!orders.length) { showToast('No orders found for this date'); return; }
+  // Fallback: check STATE.orders in case this date was loaded from sheet into STATE
+  // but not yet cached to localStorage under LS_PREFIX+date
+  if (!orders.length && !isToday) {
+    orders = STATE.orders.filter(o => (o.date || TODAY_KEY) === dateKey);
+  }
+
+  if (!orders.length) { showToast('No orders found for ' + dateKey + ' — try tapping Sync first'); return; }
 
   // Format date label
   const d = new Date(dateKey + 'T00:00:00');
@@ -4434,7 +4440,31 @@ function copyWhatsAppForDate(dateKey) {
   document.getElementById('modal-whatsapp').classList.add('open');
 }
 
+function getVisibleOrdersDate() {
+  // Returns the date key of whichever date group is currently expanded in My Orders.
+  // Looks for expanded hday-YYYY-MM-DD divs. If multiple open, returns the most recent.
+  // Returns null if on today's view or nothing found.
+  const expanded = document.querySelectorAll('[id^="hday-"]');
+  let latestDate = null;
+  expanded.forEach(el => {
+    if (el.id.includes('-chevron')) return; // skip chevron elements
+    if (el.style.display !== 'none' && el.style.display !== '') {
+      const date = el.id.replace('hday-', '');
+      if (/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+        if (!latestDate || date > latestDate) latestDate = date;
+      }
+    }
+  });
+  return latestDate;
+}
+
 function copyWhatsApp() {
+  // If user is viewing a past date in My Orders, share that date instead of today
+  const visibleDate = getVisibleOrdersDate();
+  if (visibleDate && visibleDate !== TODAY_KEY) {
+    copyWhatsAppForDate(visibleDate);
+    return;
+  }
   // Only include TODAY's orders in the WhatsApp summary
   const orders = STATE.orders.filter(o => (o.date || TODAY_KEY) === TODAY_KEY);
   if (!orders.length) { showToast('No orders for today to share'); return; }
