@@ -1713,6 +1713,22 @@ function showScreen(id) {
 
 // ── INIT ─────────────────────────────────────────────────────────────
 function initApp() {
+  // ── Load sheet URL FIRST so all subsequent checks (syncCustomersFromSheet,
+  //    syncOrdersFromSheet, applyRoleUI) can see it correctly.
+  //    Previously this block was at the bottom of initApp(), meaning
+  //    STATE.sheetUrl was '' for every early check — causing new customers
+  //    added on one device to never appear on other devices. ──────────────
+  const urlParams = new URLSearchParams(window.location.search);
+  const paramUrl  = urlParams.get('sheetUrl') || urlParams.get('sheet');
+  if(paramUrl && paramUrl.startsWith('https://script.google.com')) {
+    // Save to localStorage so future sessions remember it
+    localStorage.setItem(LS_URL, paramUrl);
+    STATE.sheetUrl = paramUrl;
+    console.log('Sheet URL loaded from URL param and saved');
+  } else {
+    STATE.sheetUrl = localStorage.getItem(LS_URL)||'';
+  }
+  updateSheetDot();
   // Load customers: master + any extras stored locally
   STATE.customers = CUSTOMERS_MASTER.map(c => ({...c}));
   const extras = JSON.parse(localStorage.getItem(LS_CUSTS)||'[]');
@@ -1738,18 +1754,6 @@ function initApp() {
   if(STATE.orders.length === 0 && STATE.sheetUrl) {
     setTimeout(syncOrdersFromSheet, 1000);
   }
-  // Load saved sheet URL — check URL params first (allows pre-configuration via link)
-  const urlParams = new URLSearchParams(window.location.search);
-  const paramUrl  = urlParams.get('sheetUrl') || urlParams.get('sheet');
-  if(paramUrl && paramUrl.startsWith('https://script.google.com')) {
-    // Save to localStorage so future sessions remember it
-    localStorage.setItem(LS_URL, paramUrl);
-    STATE.sheetUrl = paramUrl;
-    console.log('Sheet URL loaded from URL param and saved');
-  } else {
-    STATE.sheetUrl = localStorage.getItem(LS_URL)||'';
-  }
-  updateSheetDot();
   showScreen('home');
   // Add delivery-specific setup section
   setTimeout(renderSetupExtra, 200);
@@ -3523,18 +3527,22 @@ async function syncCustomersFromSheet() {
 }
 
 async function syncCustomerToSheet(customer) {
-  // Sync a newly created customer to the Customers sheet
+  // Sync a newly created customer to the Customers sheet.
+  // FIX: Changed action from logCustomer -> upsertCustomer (same as pushAllCustomersToSheet)
+  // so the customer lands in the Customers tab and is returned by getCustomers on other devices.
+  // Also added pricing field so rates are preserved cross-device.
   if(!STATE.sheetUrl) return;
   try {
     const params = new URLSearchParams({
-      action: 'logCustomer',
-      id: customer.id,
-      name: customer.name,
+      action:   'upsertCustomer',
+      id:       customer.id,
+      name:     customer.name,
       category: customer.category||'',
-      phone: customer.phone||'',
-      area: customer.area||'',
-      address: customer.address||'',
-      balance: customer.balance||0,
+      phone:    customer.phone||'',
+      area:     customer.area||'',
+      address:  customer.address||'',
+      balance:  customer.balance||0,
+      pricing:  JSON.stringify(customer.pricing||{}),
       createdBy: STATE.role||'',
     });
     await fetch(STATE.sheetUrl + '?' + params.toString());
