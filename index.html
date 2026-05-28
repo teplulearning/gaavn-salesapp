@@ -2252,8 +2252,9 @@ function renderApprovals() {
 function initNewOrder() {
   STATE.selectedCustomer = null; STATE.cart = {};
   STATE.orderDate = TODAY_KEY; // default to today
-  // Pull any new customers from sheet in background so they appear in search
-  if(STATE.sheetUrl && STATE.customers.length < 10) syncCustomersFromSheet();
+  // Pull any new customers from sheet in background so they appear in search.
+  // Always sync (not just <10) so newly added customers on other devices show up here.
+  if(STATE.sheetUrl) syncCustomersFromSheet();
   document.getElementById('step-customer').style.display = 'block';
   document.getElementById('step-products').style.display = 'none';
   document.getElementById('cust-search').value = '';
@@ -3195,6 +3196,13 @@ function openCustomerDetail(id) {
 
 // ── ADD CUSTOMER ─────────────────────────────────────────────────────
 function showAddCustomer() {
+  // Clear form fields so previous entries don't linger
+  document.getElementById('nc-name').value = '';
+  document.getElementById('nc-phone').value = '';
+  document.getElementById('nc-address').value = '';
+  document.getElementById('nc-area').value = '';
+  const openBal = document.getElementById('nc-opening-bal');
+  if(openBal) openBal.value = '';
   document.getElementById('nc-pricing-fields').innerHTML = PRODUCTS.map(p=>`
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
       <span style="font-size:13px;width:120px;flex-shrink:0;">${p.emoji} ${p.name}</span>
@@ -3230,7 +3238,13 @@ function saveNewCustomer() {
   showToast('✓ Customer added: '+name);
   renderCustomerList();
   // Sync new customer to Google Sheet so all devices can see it
-  if(STATE.sheetUrl) syncCustomerToSheet(customer);
+  if(STATE.sheetUrl) {
+    syncCustomerToSheet(customer).catch(()=>{
+      showToast('⚠ Saved locally — sheet sync failed. Other devices may not see this customer until synced.');
+    });
+  } else {
+    showToast('⚠ No sheet connected — customer saved only on this device');
+  }
   // If New Order screen is active, auto-search the new customer name
   const custSearch = document.getElementById('cust-search');
   if(custSearch && document.getElementById('screen-new-order')?.classList.contains('active')) {
