@@ -595,7 +595,10 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
   <div class="modal-overlay" id="modal-resubmit-day">
     <div class="modal-sheet">
       <div class="modal-handle"></div>
-      <div class="modal-title">🔄 Resubmit Day to Sheet</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+        <div class="modal-title" style="margin-bottom:0;">🔄 Resubmit Day to Sheet</div>
+        <button onclick="closeModal('modal-resubmit-day')" style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--muted);line-height:1;">✕</button>
+      </div>
       <div id="resubmit-day-info" style="font-size:13px;color:var(--muted);margin-bottom:14px;line-height:1.5;"></div>
       <div id="resubmit-day-progress" style="display:none;margin-bottom:14px;">
         <div style="background:var(--border);border-radius:4px;height:6px;overflow:hidden;margin-bottom:8px;">
@@ -607,6 +610,11 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
       <div class="btn-row" id="resubmit-day-btns">
         <button class="btn btn-secondary" onclick="closeModal('modal-resubmit-day')">Cancel</button>
         <button class="btn btn-success" id="btn-do-resubmit" onclick="doResubmitDay()">📤 Resubmit</button>
+      </div>
+      <!-- Shown only after completion -->
+      <div id="resubmit-done-btns" style="display:none;margin-top:8px;">
+        <button class="btn btn-primary" onclick="closeModal('modal-resubmit-day');showScreen('home');">🏠 Go to Home</button>
+        <button class="btn btn-secondary" style="margin-top:8px;" onclick="closeModal('modal-resubmit-day');">✕ Close</button>
       </div>
     </div>
   </div>
@@ -4047,20 +4055,19 @@ function getAppsScriptCode() {
     '  var lastDateRow = 1;',
     '  for(var i = 1; i < data.length; i++) {',
     '    if(String(data[i][0]).indexOf("TOTAL:") === 0) continue;',
-    '    // Use normDateCell to handle both Date objects and string values robustly',
+    '    if(String(data[i][0]).indexOf("RESUBMIT:") === 0) continue;',
     '    var cellDate = normDateCell(data[i][1], tz);',
     '    if(cellDate === dateStr) {',
     '      lastDateRow = i + 1;',
-    '      var oid = String(data[i][0]);',
+    '      var oid = String(data[i][0]).trim();',
     '      if(oid && !seenOrders[oid]) {',
-    '        // Only count order total from the FIRST item row (idx===0 had the total)',
-    '        var orderTotalCell = parseFloat(data[i][6]);',
-    '        if(!isNaN(orderTotalCell) && orderTotalCell > 0) {',
-    '          totSales += orderTotalCell;',
-    '          totPaid  += parseFloat(data[i][8]) || 0;',
-    '          count++;',
-    '        }',
     '        seenOrders[oid] = true;',
+    '        count++;',
+    '        // Only the first item row (idx===0) has the order total in col G',
+    '        var orderTotalCell = parseFloat(data[i][6]);',
+    '        if(!isNaN(orderTotalCell)) totSales += orderTotalCell;',
+    '        var payAmt = parseFloat(data[i][8]);',
+    '        if(!isNaN(payAmt)) totPaid += payAmt;',
     '      }',
     '    }',
     '  }',
@@ -4098,6 +4105,8 @@ function getAppsScriptCode() {
     '    data = sh.getDataRange().getValues();',
     '    var dates = {};',
     '    for(var i = 1; i < data.length; i++) {',
+    '      var rid = String(data[i][0]||"");',
+    '      if(rid.indexOf("TOTAL:")===0||rid.indexOf("RESUBMIT:")===0) continue;',
     '      var d = normDateCell(data[i][1], tz);',
     '      if(d && d.length === 10) dates[d] = true;',
     '    }',
@@ -5614,6 +5623,7 @@ function openResubmitDay(date) {
   document.getElementById('resubmit-day-progress').style.display = 'none';
   document.getElementById('resubmit-day-result').style.display = 'none';
   document.getElementById('resubmit-day-btns').style.display = 'flex';
+  document.getElementById('resubmit-done-btns').style.display = 'none';
   document.getElementById('btn-do-resubmit').disabled = false;
   document.getElementById('btn-do-resubmit').textContent = '📤 Resubmit';
   document.getElementById('modal-resubmit-day').classList.add('open');
@@ -5703,7 +5713,8 @@ async function doResubmitDay() {
   }
   resultEl.style.display = 'block';
   document.getElementById('resubmit-day-progress').style.display = 'none';
-  btn.textContent = '\u2713 Done';
+  document.getElementById('resubmit-day-btns').style.display = 'none';
+  document.getElementById('resubmit-done-btns').style.display = 'block';
   showToast(failed===0 ? '\u2713 ' + done + ' orders resubmitted cleanly' : '\u26a0 ' + done + ' ok, ' + failed + ' failed');
 }
 
