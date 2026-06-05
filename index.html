@@ -591,6 +591,26 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
     </div>
   </div>
 
+  <!-- RESUBMIT DAY MODAL -->
+  <div class="modal-overlay" id="modal-resubmit-day">
+    <div class="modal-sheet">
+      <div class="modal-handle"></div>
+      <div class="modal-title">🔄 Resubmit Day to Sheet</div>
+      <div id="resubmit-day-info" style="font-size:13px;color:var(--muted);margin-bottom:14px;line-height:1.5;"></div>
+      <div id="resubmit-day-progress" style="display:none;margin-bottom:14px;">
+        <div style="background:var(--border);border-radius:4px;height:6px;overflow:hidden;margin-bottom:8px;">
+          <div id="resubmit-progress-bar" style="height:6px;background:var(--green);border-radius:4px;width:0%;transition:width 0.3s;"></div>
+        </div>
+        <div id="resubmit-progress-text" style="font-size:12px;color:var(--muted);text-align:center;"></div>
+      </div>
+      <div id="resubmit-day-result" style="display:none;font-size:13px;font-weight:600;padding:10px 14px;border-radius:8px;margin-bottom:14px;"></div>
+      <div class="btn-row" id="resubmit-day-btns">
+        <button class="btn btn-secondary" onclick="closeModal('modal-resubmit-day')">Cancel</button>
+        <button class="btn btn-success" id="btn-do-resubmit" onclick="doResubmitDay()">📤 Resubmit</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ── SCREEN: PAYMENT IN ── -->
   <div class="screen" id="screen-payment-in">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
@@ -3871,6 +3891,7 @@ function getAppsScriptCode() {
     '    if (a === "getCustomerOrders")     return getCustomerOrders(e.parameter);',
     '    if (a === "updateCustomerPricing") return updateCustomerPricing(e.parameter);',
     '    if (a === "upsertCustomer")        return upsertCustomer(e.parameter);',
+    '    if (a === "resubmitComment")       return addResubmitComment(e.parameter);',
     '    return jsonOut({error: "Unknown action: " + a});',
     '  } catch(err) { return jsonOut({error: err.message}); }',
     '}',
@@ -4084,6 +4105,27 @@ function getAppsScriptCode() {
     '    });',
     '    Logger.log("Rebuilt totals for sheet: " + sh.getName() + " — dates: " + Object.keys(dates).join(", "));',
     '  });',
+    '}',
+    '',
+    '// ── RESUBMIT COMMENT — adds audit trail row after a day resubmission ──',
+    'function addResubmitComment(p) {',
+    '  var ss = SpreadsheetApp.openById(SS_ID);',
+    '  var rawDate = String(p.date||"").trim();',
+    '  if(!rawDate||rawDate==="undefined") rawDate = Utilities.formatDate(new Date(),Session.getScriptTimeZone(),"yyyy-MM-dd");',
+    '  var shName = "Orders_" + getMonthTag(rawDate);',
+    '  var sh = getOrCreateSheet(ss, shName);',
+    '  var now = Utilities.formatDate(new Date(),Session.getScriptTimeZone(),"dd/MM/yyyy HH:mm");',
+    '  var d = new Date(rawDate+"T00:00:00");',
+    '  var dlabel = Utilities.formatDate(d,Session.getScriptTimeZone(),"dd/MM/yyyy");',
+    '  var commentRow = [',
+    '    "RESUBMIT:"+rawDate, rawDate,',
+    '    "⟳ RESUBMITTED — "+dlabel+" ("+p.orderCount+" orders) by "+p.submittedBy+" at "+(p.submittedAt||now),',
+    '    "","","RESUBMIT","","","","","","","","","","",now',
+    '  ];',
+    '  sh.appendRow(commentRow);',
+    '  sh.getRange(sh.getLastRow(),1,1,commentRow.length)',
+    '    .setBackground("#E3F2FD").setFontColor("#0D47A1").setFontStyle("italic").setFontWeight("bold");',
+    '  return jsonOut({status:"ok"});',
     '}',
     '',
     'function applyRowColor(sh,row,status) {',
@@ -5124,8 +5166,9 @@ function renderHistory() {
         </div>
         <!-- Orders for this date (collapsed by default unless today) -->
         <div id="hday-${date}" style="display:${isToday?'block':'none'};border-top:1px solid var(--border);padding:10px 12px;">
-          <div style="margin-bottom:10px;">
-            <button onclick="copyWhatsAppForDate('${date}')" style="background:#25D366;color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif;">💬 Share on WhatsApp</button>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;align-items:center;">
+            <button onclick="copyWhatsAppForDate('${date}')" style="background:#25D366;color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;">💬 WhatsApp</button>
+            <button onclick="openResubmitDay('${date}')" style="background:var(--blue);color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;">🔄 Resubmit to Sheet</button>
           </div>
           ${renderHistoryOrders(orders, date)}
         </div>
@@ -5513,100 +5556,90 @@ async function submitAllDayOrders() {
   }
 }
 
-async function syncOrdersFromSheet() {
-  // Fetch today's AND recent orders from Google Sheet into STATE.orders + localStorage
-  if(!STATE.sheetUrl) {
-    showToast('No Sheet URL configured — go to Setup'); return;
-  }
-  const btn = document.getElementById('btn-sync-orders');
-  if(btn) { btn.textContent = '⏳ Syncing...'; btn.disabled = true; }
+// ── RESUBMIT AN ENTIRE DAY TO SHEET ──────────────────────────────────
+// Called from History screen "Resubmit to Sheet" button per date card
+let _resubmitDate = null;
 
+function openResubmitDay(date) {
+  if(!getSheetUrl()) { showToast('⚙ Set Sheet URL in Setup first'); showScreen('setup'); return; }
+  _resubmitDate = date;
+  const orders = date === TODAY_KEY
+    ? JSON.parse(localStorage.getItem(LS_ORDERS)||'[]')
+    : getOrdersForDate(date);
+  const d = new Date(date + 'T00:00:00');
+  const label = d.toLocaleDateString('en-IN', {weekday:'long', day:'numeric', month:'long', year:'numeric'});
+  const total = orders.reduce((s,o) => s+(o.total||0), 0);
+  document.getElementById('resubmit-day-info').innerHTML =
+    `<b>${label}</b><br>${orders.length} orders · ₹${total.toLocaleString('en-IN')} total<br><br>`+
+    `<span style="color:var(--red);">⚠ This will overwrite all rows for this date in the Google Sheet</span> — existing data for ${label} will be replaced with the local app data, and a resubmission comment will be added at the end.`;
+  document.getElementById('resubmit-day-progress').style.display = 'none';
+  document.getElementById('resubmit-day-result').style.display = 'none';
+  document.getElementById('resubmit-day-btns').style.display = 'flex';
+  document.getElementById('btn-do-resubmit').disabled = false;
+  document.getElementById('btn-do-resubmit').textContent = '📤 Resubmit';
+  document.getElementById('modal-resubmit-day').classList.add('open');
+}
+
+async function doResubmitDay() {
+  const date = _resubmitDate;
+  if(!date) return;
+  const url = getSheetUrl();
+  if(!url) { showToast('No Sheet URL'); return; }
+
+  const orders = date === TODAY_KEY
+    ? JSON.parse(localStorage.getItem(LS_ORDERS)||'[]')
+    : getOrdersForDate(date);
+
+  if(!orders.length) { showToast('No local orders found for this date'); return; }
+
+  // Disable button, show progress
+  const btn = document.getElementById('btn-do-resubmit');
+  btn.disabled = true; btn.textContent = '⏳ Resubmitting...';
+  document.getElementById('resubmit-day-progress').style.display = 'block';
+  document.getElementById('resubmit-day-result').style.display = 'none';
+  document.getElementById('resubmit-day-btns').style.display = 'flex';
+
+  const bar  = document.getElementById('resubmit-progress-bar');
+  const text = document.getElementById('resubmit-progress-text');
+
+  let done = 0, failed = 0;
+  for(const o of orders) {
+    try {
+      await syncOneOrder(o.id, o);
+      done++;
+    } catch(e) { failed++; }
+    const pct = Math.round((done + failed) / orders.length * 100);
+    bar.style.width  = pct + '%';
+    text.textContent = `${done + failed} of ${orders.length} orders...`;
+    await new Promise(r => setTimeout(r, 80)); // small delay to not overwhelm Apps Script
+  }
+
+  // Post a resubmission comment row to the sheet
   try {
-    // Fetch last 30 days
-    const today = new Date();
-    const dates = [];
-    for(let i=0; i<30; i++) {
-      const d = new Date(today);
-      d.setDate(today.getDate() - i);
-      const y = d.getFullYear();
-      const m = String(d.getMonth()+1).padStart(2,'0');
-      const day = String(d.getDate()).padStart(2,'0');
-      dates.push(y+'-'+m+'-'+day);
-    }
+    const now = new Date().toLocaleString('en-IN', {day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'});
+    const params = new URLSearchParams({
+      action: 'resubmitComment',
+      date: date,
+      orderCount: orders.length,
+      submittedBy: STATE.role || 'owner',
+      submittedAt: now,
+    });
+    await fireAndForget(url + '?' + params.toString());
+  } catch(e) {}
 
-    let totalAdded = 0;
-    const existingIds = new Set(STATE.orders.map(o=>o.id));
-
-    for(const date of dates) {
-      try {
-        const url = STATE.sheetUrl + '?action=getOrders&date=' + date;
-        const res = await fetch(url);
-        const json = await res.json();
-        if(json.orders && json.orders.length) {
-          // Group rows by Order ID (new format has one row per item)
-          const orderMap = {};
-          json.orders.forEach(row => {
-            const orderId = String(row['Order ID']||'').trim();
-            if(!orderId) return;
-            if(!orderMap[orderId]) {
-              // First row for this order — has order-level fields
-              orderMap[orderId] = {
-                id: orderId,
-                date: date,
-                customerName: row['Customer']||'',
-                customerCategory: row['Category']||'',
-                customerArea: row['Area']||'',
-                status: row['Status']||'confirmed',
-                total: parseFloat(row['Order Total (Rs)']||row['Total (Rs)'])||0,
-                items: [],
-                notes: row['Notes']||'',
-                synced: true,
-                loadedFromSheet: true,
-                payment: {
-                  mode: row['Payment Mode']||'',
-                  amount: parseFloat(row['Payment Amt'])||0,
-                  received: (parseFloat(row['Payment Amt'])||0) > 0,
-                },
-              };
-            }
-            // Add item from this row (new per-item format)
-            const product = String(row['Product']||row['Items']||'').trim();
-            if(product && product !== '(no items)') {
-              orderMap[orderId].items.push({
-                name: product,
-                qty: parseFloat(row['Qty'])||0,
-                unit: row['Unit']||'',
-                rate: parseFloat(row['Rate (Rs)'])||0,
-                amount: parseFloat(row['Amount (Rs)'])||0,
-              });
-            }
-          });
-          // Add orders to STATE
-          const dateOrders = Object.values(orderMap);
-          dateOrders.forEach(o => {
-            if(!existingIds.has(o.id)) {
-              STATE.orders.push(o);
-              existingIds.add(o.id);
-              totalAdded++;
-            }
-          });
-          if(dateOrders.length) {
-            localStorage.setItem(LS_PREFIX + date, JSON.stringify(dateOrders));
-          }
-        }
-      } catch(e) {
-        // Skip dates that fail (no sheet for that month etc.)
-      }
-    }
-
-    renderOrdersList();
-    renderDashboard();
-    showToast('✓ Synced ' + totalAdded + ' orders from Sheet');
-  } catch(err) {
-    showToast('Sync failed — check connection');
-  } finally {
-    if(btn) { btn.textContent = '☁ Sync'; btn.disabled = false; }
+  // Show result
+  const resultEl = document.getElementById('resubmit-day-result');
+  if(failed === 0) {
+    resultEl.style.background = '#E8F5E9'; resultEl.style.color = '#2A7A45';
+    resultEl.textContent = `✓ All ${done} orders resubmitted successfully — sheet updated.`;
+  } else {
+    resultEl.style.background = '#FFF8E1'; resultEl.style.color = '#E65100';
+    resultEl.textContent = `⚠ ${done} resubmitted, ${failed} failed — check connection and retry.`;
   }
+  resultEl.style.display = 'block';
+  document.getElementById('resubmit-day-progress').style.display = 'none';
+  btn.textContent = '✓ Done';
+  showToast(failed===0 ? `✓ ${done} orders resubmitted` : `⚠ ${done} ok, ${failed} failed`);
 }
 
 function loadAllPastOrders() {
