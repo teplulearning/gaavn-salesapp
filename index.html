@@ -2686,7 +2686,6 @@ function submitOrder() {
   };
 
   if(isBackdated) {
-    // Save ONLY to the correct past date's localStorage key
     // Save backdated order to its date key in localStorage
     const bdKey = LS_PREFIX + orderDate;
     const existing = JSON.parse(localStorage.getItem(bdKey)||'[]');
@@ -2694,6 +2693,7 @@ function submitOrder() {
     localStorage.setItem(bdKey, JSON.stringify(existing));
     // Also add to STATE.orders so it shows in My Orders (grouped by date)
     STATE.orders.unshift(order);
+    saveOrders(); // ensure all date keys are in sync
   } else {
     STATE.orders.unshift(order);
     saveOrders();
@@ -3964,11 +3964,12 @@ function getAppsScriptCode() {
     '  if(items.length===0) items=[{name:"(no items)",qty:0,unit:"",rate:0,amount:0}];',
     '  var now=Utilities.formatDate(new Date(),Session.getScriptTimeZone(),"dd/MM/yyyy HH:mm");',
     '  // Recalculate order total from items — this ensures Paneer Laadi confirmed',
-    '  // weight is included even if p.total was saved before weight was confirmed',
+    '  // weight is included even if p.total was saved before weight was confirmed.',
+    '  // Use MAX of itemsTotal and sentTotal: itemsTotal wins when weights are confirmed,',
+    '  // sentTotal wins when items still have 0 amount (weight not yet confirmed).',
     '  var itemsTotal = items.reduce(function(s,i){ return s + (parseFloat(i.amount)||0); }, 0);',
     '  var sentTotal = parseFloat(p.total)||0;',
-    '  // Use the higher of the two — items total is authoritative once weights confirmed',
-    '  var orderTotal = itemsTotal > 0 ? itemsTotal : sentTotal;',
+    '  var orderTotal = Math.max(itemsTotal, sentTotal);',
     '  var payMode=p.paymentMode||"";',
     '  var payAmt=parseFloat(p.paymentAmount)||0;',
     '  // Delete existing rows for this orderId first (handles edits)',
@@ -5200,7 +5201,8 @@ function renderHistory() {
   dates.forEach(d => {
     const orders = d === TODAY_KEY ? JSON.parse(localStorage.getItem(LS_ORDERS)||'[]') : getOrdersForDate(d);
     orders.forEach(o => {
-      totalRev += o.total || 0;
+      const itemsSum = (o.items||[]).reduce((s,i) => s+(parseFloat(i.amount)||0), 0);
+      totalRev += itemsSum > 0 ? itemsSum : (o.total||0);
       totalOrders++;
       totalCustomers.add(o.customerName);
     });
@@ -5230,7 +5232,11 @@ function renderHistory() {
 
     if(!orders.length) return '';
 
-    const dayRev    = orders.reduce((s,o) => s+(o.total||0), 0);
+    const dayRev    = orders.reduce((s,o) => {
+      // Recalculate from items if available — catches stale totals from pre-delivery estimates
+      const itemsSum = (o.items||[]).reduce((si,i) => si + (parseFloat(i.amount)||0), 0);
+      return s + (itemsSum > 0 ? itemsSum : (o.total||0));
+    }, 0);
     const dayCount  = orders.length;
     const paid      = orders.filter(o=>o.status==='paid').length;
     const due       = orders.filter(o=>o.status==='due'||o.status==='partial').length;
