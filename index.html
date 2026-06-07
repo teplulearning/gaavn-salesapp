@@ -3506,14 +3506,47 @@ function sendCreditWA(custId, type) {
 function getSheetUrl() { return STATE.sheetUrl||localStorage.getItem(LS_URL)||''; }
 
 // Send a GET request that works from file:// (no-cors + img fallback)
+// ── RELIABLE SYNC: waits for Apps Script to confirm, retries on failure ──
+// Uses no-cors as last resort only — tries proper fetch first so we know if it worked
+async function fireAndWait(fullUrl, retries=3) {
+  for(let attempt=1; attempt<=retries; attempt++) {
+    try {
+      const res = await fetch(fullUrl, {
+        method: 'GET',
+        cache: 'no-store',
+        // no mode:'no-cors' — we need to READ the response to confirm success
+      });
+      if(res.ok) {
+        const json = await res.json().catch(()=>({status:'ok'}));
+        if(json.error) throw new Error(json.error);
+        return true; // confirmed success
+      }
+      throw new Error('HTTP ' + res.status);
+    } catch(e) {
+      if(attempt === retries) {
+        // Last resort: fire-and-forget with no-cors (old behaviour)
+        try {
+          await fetch(fullUrl, { method:'GET', mode:'no-cors', cache:'no-store' });
+        } catch(e2) {
+          const img = new Image();
+          img.src = fullUrl;
+          await new Promise(r => setTimeout(r, 500));
+        }
+        return false; // could not confirm
+      }
+      // Wait before retry: 1s, 2s, 3s
+      await new Promise(r => setTimeout(r, attempt * 1000));
+    }
+  }
+  return false;
+}
+
 function fireAndForget(fullUrl) {
   return new Promise((resolve) => {
-    // Try fetch with no-cors first (works in most Chrome versions from file://)
     if (typeof fetch !== 'undefined') {
       fetch(fullUrl, { method:'GET', mode:'no-cors', cache:'no-store' })
         .then(() => resolve(true))
         .catch(() => {
-          // Fallback: img trick — always works from file://
           const img = new Image();
           img.onload = img.onerror = () => resolve(true);
           img.src = fullUrl;
@@ -3694,9 +3727,8 @@ async function pushAllCustomersToSheet() {
 }
 
 async function syncOneOrder(orderId, orderObj) {
-  const url=getSheetUrl(); if(!url) return;
-  const order=orderObj||STATE.orders.find(o=>o.id===orderId); if(!order) return;
-  // BUG3 FIX: always ensure date is a valid string, never undefined
+  const url=getSheetUrl(); if(!url) return false;
+  const order=orderObj||STATE.orders.find(o=>o.id===orderId); if(!order) return false;
   const orderDate = (order.date && order.date !== 'undefined') ? order.date : TODAY_KEY;
   if(!order.date || order.date === 'undefined') { order.date = orderDate; saveOrders(); }
   const params=new URLSearchParams({
@@ -3715,9 +3747,9 @@ async function syncOneOrder(orderId, orderObj) {
     createdBy:order.createdBy||'',
     modNotes:order.modNotes||'',
   });
-  await fireAndForget(url+'?'+params.toString());
-  order.synced=true; saveOrders();
-  renderOrdersList(); renderDashboard();
+  const ok = await fireAndWait(url+'?'+params.toString());
+  if(ok) { order.synced=true; saveOrders(); renderOrdersList(); renderDashboard(); }
+  return ok;
 }
 
 async function manualSyncOrder(orderId) {
@@ -5708,12 +5740,13 @@ async function submitAllDayOrders() {
   let synced = 0, failed = 0;
   for(const o of todayOrders) {
     try {
-      await syncOneOrder(o.id, o); // pass order directly to avoid lookup issues
-      o.synced = true;
-      synced++;
+      const ok = await syncOneOrder(o.id, o);
+      if(ok) { o.synced = true; synced++; }
+      else failed++;
     } catch(e) {
       failed++;
     }
+    await new Promise(r => setTimeout(r, 600));
   }
 
   // Update localStorage with synced status
@@ -5788,17 +5821,18 @@ async function doResubmitDay() {
   bar.style.width = '15%';
   await new Promise(r => setTimeout(r, 600));
 
-  // STEP 2: Resubmit each order sequentially
+  // STEP 2: Resubmit each order sequentially with confirmed waits
   let done = 0, failed = 0;
   for(const o of orders) {
+    text.textContent = 'Step 2/3 — ' + (done + failed + 1) + ' of ' + orders.length + ': ' + (o.customerName||'').slice(0,20) + '...';
     try {
-      await syncOneOrder(o.id, o);
-      done++;
+      const ok = await syncOneOrder(o.id, o);
+      if(ok) done++; else failed++;
     } catch(e) { failed++; }
     const pct = 15 + Math.round((done + failed) / orders.length * 70);
     bar.style.width = pct + '%';
-    text.textContent = 'Step 2/3 — ' + (done + failed) + ' of ' + orders.length + ' orders submitted...';
-    await new Promise(r => setTimeout(r, 150));
+    // 600ms gap between orders — gives Apps Script time to finish and prevents queue overflow
+    await new Promise(r => setTimeout(r, 600));
   }
   bar.style.width = '88%';
   await new Promise(r => setTimeout(r, 500));
