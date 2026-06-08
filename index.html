@@ -602,6 +602,18 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
           <input type="date" id="gst-to" onchange="previewGSTReport()" style="width:100%;background:var(--cream);border:1.5px solid var(--border);border-radius:8px;padding:8px 10px;font-size:13px;color:var(--ink);">
         </div>
       </div>
+      <!-- Load from Sheet button -->
+      <div style="background:var(--surface);border:1.5px solid var(--border);border-radius:10px;padding:10px 14px;margin-bottom:14px;">
+        <div style="font-size:12px;font-weight:600;color:var(--ink);margin-bottom:4px;">📥 Missing dates? Load from Sheet first</div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">If the report is missing days, tap below to pull all dates in the selected range from your Google Sheet into this device. This may take 1-2 minutes for a full month.</div>
+        <div id="gst-load-progress" style="display:none;margin-bottom:8px;">
+          <div style="background:var(--border);border-radius:4px;height:5px;overflow:hidden;margin-bottom:6px;">
+            <div id="gst-load-bar" style="height:5px;background:var(--green);border-radius:4px;width:0%;transition:width 0.3s;"></div>
+          </div>
+          <div id="gst-load-text" style="font-size:11px;color:var(--muted);text-align:center;"></div>
+        </div>
+        <button class="btn btn-secondary" id="btn-gst-load-sheet" onclick="loadRangeFromSheet()" style="width:100%;">☁ Load Missing Dates from Sheet</button>
+      </div>
       <div id="gst-preview" style="margin-bottom:14px;"></div>
       <div style="display:flex;flex-direction:column;gap:8px;">
         <button class="btn btn-success" onclick="generateGSTReport('csv')">⬇ Download CSV (for CA)</button>
@@ -5245,6 +5257,105 @@ function cacheOrdersForDate(date, orders) {
     else merged.push(o);
   });
   localStorage.setItem(key, JSON.stringify(merged));
+}
+
+// ── LOAD ALL DATES IN GST RANGE FROM SHEET ───────────────────────────
+async function loadRangeFromSheet() {
+  const from = document.getElementById('gst-from').value;
+  const to   = document.getElementById('gst-to').value;
+  if(!from || !to) { showToast('Select date range first'); return; }
+  const url = getSheetUrl();
+  if(!url) { showToast('No Sheet URL — go to Setup first'); return; }
+
+  // Build list of all dates in range
+  const dates = [];
+  let cur = new Date(from + 'T00:00:00');
+  const end = new Date(to + 'T00:00:00');
+  while(cur <= end) {
+    dates.push(cur.toISOString().slice(0,10));
+    cur.setDate(cur.getDate()+1);
+  }
+
+  const btn  = document.getElementById('btn-gst-load-sheet');
+  const prog = document.getElementById('gst-load-progress');
+  const bar  = document.getElementById('gst-load-bar');
+  const txt  = document.getElementById('gst-load-text');
+  btn.disabled = true;
+  prog.style.display = 'block';
+
+  let loaded = 0, found = 0, skipped = 0;
+  const existingIds = new Set();
+  STATE.orders.forEach(o => existingIds.add(o.id));
+  // Also scan localStorage
+  for(let i=0;i<localStorage.length;i++){
+    const k=localStorage.key(i);
+    if(k&&k.startsWith(LS_PREFIX)){
+      try{JSON.parse(localStorage.getItem(k)||'[]').forEach(o=>existingIds.add(o.id));}catch(e){}
+    }
+  }
+
+  for(const date of dates) {
+    txt.textContent = 'Loading ' + date + '... (' + (loaded+1) + ' of ' + dates.length + ')';
+    bar.style.width  = Math.round((loaded / dates.length) * 100) + '%';
+    try {
+      const res  = await fetch(url + '?action=getOrders&date=' + date, {cache:'no-store'});
+      const json = await res.json();
+      if(json.orders && json.orders.length) {
+        // Parse into order objects grouped by Order ID
+        const orderMap = {};
+        json.orders.forEach(row => {
+          const oid = String(row['Order ID']||'').trim();
+          if(!oid||oid.indexOf('TOTAL:')===0||oid.indexOf('RESUBMIT:')===0) return;
+          if(!orderMap[oid]) {
+            orderMap[oid] = {
+              id: oid, date: date,
+              customerName: row['Customer']||'',
+              customerCategory: row['Category']||'',
+              customerArea: row['Area']||'',
+              status: row['Status']||'confirmed',
+              total: parseFloat(row['Order Total (Rs)']||0),
+              items: [],
+              payment: {
+                mode: row['Payment Mode']||'',
+                amount: parseFloat(row['Payment Amt']||0),
+              },
+              synced: true,
+            };
+          }
+          const product = String(row['Product']||'').trim();
+          if(product && product !== '(no items)') {
+            orderMap[oid].items.push({
+              name: product,
+              qty: parseFloat(row['Qty'])||0,
+              unit: row['Unit']||'',
+              rate: parseFloat(row['Rate (Rs)'])||0,
+              amount: parseFloat(row['Amount (Rs)'])||0,
+            });
+          }
+        });
+        const dayOrders = Object.values(orderMap);
+        // Save to localStorage for this date
+        localStorage.setItem(LS_PREFIX + date, JSON.stringify(dayOrders));
+        // Add to STATE.orders if not already there
+        dayOrders.forEach(o => {
+          if(!existingIds.has(o.id)) {
+            STATE.orders.push(o);
+            existingIds.add(o.id);
+            found++;
+          }
+        });
+      }
+    } catch(e) { /* skip failed dates */ }
+    loaded++;
+    await new Promise(r => setTimeout(r, 200)); // small gap between requests
+  }
+
+  bar.style.width = '100%';
+  txt.textContent = '✓ Done — ' + found + ' orders loaded from ' + loaded + ' dates';
+  btn.disabled = false;
+  // Refresh preview
+  previewGSTReport();
+  showToast('✓ ' + found + ' orders loaded from Sheet');
 }
 
 // ── GST REPORT EXPORT ────────────────────────────────────────────────
