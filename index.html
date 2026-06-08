@@ -500,6 +500,13 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
     </div>
 
     <div class="setup-card">
+      <div class="section-label" style="margin-top:0;">🧾 Product GST Master</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">Set HSN code and GST rate for each product. Used in GST Report for your CA. Fresh dairy is generally exempt (0%). Flavoured drinks attract 12%.</div>
+      <div id="gst-master-list"></div>
+      <button class="btn btn-success" style="margin-top:10px;" onclick="saveGSTMaster()">💾 Save GST Master</button>
+    </div>
+
+    <div class="setup-card">
       <div class="section-label" style="margin-top:0;">Data Management</div>
       <div class="btn-row">
         <button class="btn btn-secondary" onclick="exportLocalData()">📤 Export All Data</button>
@@ -1044,20 +1051,20 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
 <script>
 // ── PRODUCT CATALOGUE ───────────────────────────────────────────────
 const PRODUCTS = [
-  {id:'paneer', name:'Paneer',        unit:'kg',   stdRate:260, emoji:'🧀'},
-  {id:'pl',     name:'Paneer Laadi',  unit:'ladi', stdRate:260, emoji:'🧱', isLaadi:true, rateFromPaneer:true},
-  {id:'mp',     name:'Malai Paneer',  unit:'kg',   stdRate:280, emoji:'🧀', altUnit:'pack', altRate:70},
-  {id:'lp',     name:'Lite Paneer',   unit:'kg',   stdRate:240, emoji:'🥗'},
-  {id:'lc',     name:'Lite Curd',     unit:'jar',  stdRate:270, emoji:'🥛', altUnit:'kg', altRate:60, jarToKg:1},
-  {id:'ghee',   name:'Ghee',          unit:'unit', stdRate:650, emoji:'🫙'},
-  {id:'cream',  name:'Cream',         unit:'unit', stdRate:300, emoji:'🍦'},
-  {id:'cmk',    name:'CM Khoya',      unit:'kg',   stdRate:234, emoji:'🍫'},
-  {id:'stk',    name:'Std Khoya',     unit:'kg',   stdRate:234, emoji:'🍫'},
-  {id:'ch',     name:'Chaas 1 Litre',  unit:'btl',  stdRate:28,  emoji:'🧉'},
-  {id:'ch500',  name:'Chaas 500ml',   unit:'btl',  stdRate:30,  emoji:'🍶'},
-  {id:'sl',     name:'Sweet Lassi',   unit:'cup',  stdRate:23,  emoji:'🥤'},
-  {id:'ml',     name:'Mango Lassi',   unit:'cup',  stdRate:23,  emoji:'🥭'},
-  {id:'mixl',   name:'Mixed Lassi',   unit:'cup',  stdRate:23,  emoji:'🍹'},
+  {id:'paneer', name:'Paneer',        unit:'kg',   stdRate:260, emoji:'🧀', hsn:'0406', gstRate:0},
+  {id:'pl',     name:'Paneer Laadi',  unit:'ladi', stdRate:260, emoji:'🧱', isLaadi:true, rateFromPaneer:true, hsn:'0406', gstRate:0},
+  {id:'mp',     name:'Malai Paneer',  unit:'kg',   stdRate:280, emoji:'🧀', altUnit:'pack', altRate:70, hsn:'0406', gstRate:0},
+  {id:'lp',     name:'Lite Paneer',   unit:'kg',   stdRate:240, emoji:'🥗', hsn:'0406', gstRate:0},
+  {id:'lc',     name:'Lite Curd',     unit:'jar',  stdRate:270, emoji:'🥛', altUnit:'kg', altRate:60, jarToKg:1, hsn:'0406', gstRate:0},
+  {id:'ghee',   name:'Ghee',          unit:'unit', stdRate:650, emoji:'🫙', hsn:'0405', gstRate:12},
+  {id:'cream',  name:'Cream',         unit:'unit', stdRate:300, emoji:'🍦', hsn:'0401', gstRate:0},
+  {id:'cmk',    name:'CM Khoya',      unit:'kg',   stdRate:234, emoji:'🍫', hsn:'0406', gstRate:0},
+  {id:'stk',    name:'Std Khoya',     unit:'kg',   stdRate:234, emoji:'🍫', hsn:'0406', gstRate:0},
+  {id:'ch',     name:'Chaas 1 Litre', unit:'btl',  stdRate:28,  emoji:'🧉', hsn:'2202', gstRate:5},
+  {id:'ch500',  name:'Chaas 500ml',   unit:'btl',  stdRate:30,  emoji:'🍶', hsn:'2202', gstRate:5},
+  {id:'sl',     name:'Sweet Lassi',   unit:'cup',  stdRate:23,  emoji:'🥤', hsn:'2202', gstRate:5},
+  {id:'ml',     name:'Mango Lassi',   unit:'cup',  stdRate:23,  emoji:'🥭', hsn:'2202', gstRate:5},
+  {id:'mixl',   name:'Mixed Lassi',   unit:'cup',  stdRate:23,  emoji:'🍹', hsn:'2202', gstRate:5},
 ];
 
 // ── CUSTOMERS MASTER LIST ───────────────────────────────────────────
@@ -1574,6 +1581,26 @@ const CAT_BG = {
 // ── ROLE SELECTION ──────────────────────────────────────────────────
 // ── PIN AUTHENTICATION ────────────────────────────────────────────────
 const LS_PINS = 'gf_pins';
+const LS_PRODUCT_GST = 'gf_product_gst'; // HSN + GST rate overrides per product
+
+// Load saved HSN/GST overrides into PRODUCTS array
+function loadProductGSTData() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(LS_PRODUCT_GST)||'{}');
+    PRODUCTS.forEach(p => {
+      if(saved[p.id]) {
+        if(saved[p.id].hsn !== undefined)     p.hsn     = saved[p.id].hsn;
+        if(saved[p.id].gstRate !== undefined) p.gstRate = saved[p.id].gstRate;
+      }
+    });
+  } catch(e) {}
+}
+
+function saveProductGSTData() {
+  const data = {};
+  PRODUCTS.forEach(p => { data[p.id] = {hsn: p.hsn, gstRate: p.gstRate}; });
+  localStorage.setItem(LS_PRODUCT_GST, JSON.stringify(data));
+}
 let _pinRole = null;
 let _pinEntry = '';
 
@@ -1786,7 +1813,7 @@ function showScreen(id) {
     if(id==='dues')       renderDues();
     if(id==='approvals')  renderApprovals();
     if(id==='new-order')  initNewOrder();
-    if(id==='setup')      renderSetup();
+    if(id==='setup')      { renderSetup(); renderGSTMaster(); }
     if(id==='manage')     renderManageCustomers();
     if(id==='history')    renderHistory();
     if(id==='payment-in') renderPaymentIn();
@@ -1795,6 +1822,7 @@ function showScreen(id) {
 
 // ── INIT ─────────────────────────────────────────────────────────────
 function initApp() {
+  loadProductGSTData(); // Load HSN/GST overrides first
   // Load customers: master + any extras stored locally
   STATE.customers = CUSTOMERS_MASTER.map(c => ({...c}));
   const extras = JSON.parse(localStorage.getItem(LS_CUSTS)||'[]');
@@ -3989,6 +4017,38 @@ function clearLocalOrders() {
   showToast('✓ Today\'s orders cleared');
 }
 
+function renderGSTMaster() {
+  const el = document.getElementById('gst-master-list');
+  if(!el) return;
+  el.innerHTML = `
+    <div style="display:grid;grid-template-columns:2fr 1fr 1fr;gap:6px;margin-bottom:6px;">
+      <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;">Product</div>
+      <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;">HSN Code</div>
+      <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;">GST %</div>
+    </div>` +
+    PRODUCTS.map(p => `
+    <div style="display:grid;grid-template-columns:2fr 1fr 1fr;gap:6px;align-items:center;margin-bottom:6px;">
+      <div style="font-size:13px;font-weight:500;">${p.emoji} ${p.name}</div>
+      <input id="gst-hsn-${p.id}" value="${p.hsn||''}"
+        style="background:var(--cream);border:1.5px solid var(--border);border-radius:6px;padding:5px 8px;font-size:13px;width:100%;"
+        placeholder="e.g. 0406">
+      <input id="gst-rate-${p.id}" type="number" min="0" max="28" step="0.1" value="${p.gstRate??0}"
+        style="background:var(--cream);border:1.5px solid var(--border);border-radius:6px;padding:5px 8px;font-size:13px;width:100%;"
+        placeholder="0">
+    </div>`).join('');
+}
+
+function saveGSTMaster() {
+  PRODUCTS.forEach(p => {
+    const hsnEl  = document.getElementById('gst-hsn-'+p.id);
+    const rateEl = document.getElementById('gst-rate-'+p.id);
+    if(hsnEl)  p.hsn     = hsnEl.value.trim();
+    if(rateEl) p.gstRate = parseFloat(rateEl.value)||0;
+  });
+  saveProductGSTData();
+  showToast('✓ GST Master saved');
+}
+
 // ── APPS SCRIPT CODE ─────────────────────────────────────────────────
 function getAppsScriptCode() {
   var lines = [
@@ -4632,216 +4692,129 @@ function getDeliverySequence() {
   catch(e) { return []; }
 }
 
-function copyWhatsAppForDate(dateKey) {
-  // Build WA message for any date (history or today)
-  const isToday = dateKey === TODAY_KEY;
+// ── SHARED WA MESSAGE BUILDER ──────────────────────────────────────
+function buildWAMessage(orders, dateStr) {
+  const timeStr = new Date().toLocaleTimeString('en-IN', {hour:'2-digit', minute:'2-digit'});
+  let lines = [];
+  const prodTotals = {};
 
+  lines.push('🐄 *GAAVN FRESH — DELIVERY LIST*');
+  lines.push('📅 *' + dateStr + '*  🕐 ' + timeStr);
+  lines.push('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
+  orders.forEach((o, idx) => {
+    const num = String(idx + 1).padStart(2, ' ');
+    const catEmoji = {
+      'Distributor -Retail':'🏭', 'Distributor -HORECA':'🏭',
+      'HORECA':'🏨', 'Retail':'🛒'
+    }[o.customerCategory] || '📦';
+
+    lines.push('');
+    lines.push('*━━━ ' + num + '. ' + o.customerName.toUpperCase() + ' ' + catEmoji + ' ━━━*');
+    if (o.customerArea) lines.push('     📍 ' + o.customerArea);
+    lines.push('');
+
+    (o.items || []).forEach(item => {
+      const qty = parseFloat(item.qty)||0;
+      const rate = parseFloat(item.rate)||0;
+      const amt = parseFloat(item.amount)||(qty*rate);
+      if(item.weightPending || item.product==='pl') {
+        const confirmedWt = item.confirmedWeightKg||0;
+        const estWt = item.estKg||0;
+        const ladis = item.qty||0;
+        lines.push('   📦 *' + item.name + '*');
+        lines.push('       ' + ladis + ' ladi' + (ladis>1?'s':'') + (confirmedWt>0
+          ? ' · ' + confirmedWt.toFixed(2) + ' kg · ₹' + amt.toLocaleString('en-IN')
+          : estWt>0 ? ' · ~' + estWt + ' kg est. · ⚖️ weigh at delivery'
+          : ' · ⚖️ weigh at delivery'));
+        if(!prodTotals[item.name]) prodTotals[item.name]={qty:0,unit:item.unit||'',amt:0,isLaadi:true,ladis:0,weightKg:0};
+        prodTotals[item.name].ladis   += (item.qty||0);
+        prodTotals[item.name].weightKg+= (item.confirmedWeightKg||item.estKg||0);
+        prodTotals[item.name].amt     += amt;
+      } else {
+        const qtyDisplay = qty%1===0 ? qty : qty.toFixed(2);
+        let unitLabel = item.unit||'';
+        if(item.name==='Chaas 1 Litre') unitLabel='1L btl';
+        if(item.name==='Chaas 500ml')   unitLabel='500ml btl';
+        lines.push('   📦 *' + item.name + '*  →  ' + qtyDisplay + ' ' + unitLabel + '  =  *₹' + amt.toLocaleString('en-IN') + '*');
+        if(!prodTotals[item.name]) prodTotals[item.name]={qty:0,unit:unitLabel,amt:0,isLaadi:false,ladis:0,weightKg:0};
+        prodTotals[item.name].qty += qty;
+        prodTotals[item.name].amt += amt;
+      }
+    });
+
+    const orderAmt = (o.items||[]).reduce((s,i)=>s+(parseFloat(i.amount)||0),0);
+    const tot = Math.max(orderAmt, o.total||0);
+    lines.push('');
+    lines.push('   💰 *TOTAL  ➜  ₹' + tot.toLocaleString('en-IN') + '*');
+    if(o.payment?.mode && o.payment.mode !== 'due') {
+      lines.push('   💳 Payment: ' + o.payment.mode + (o.payment.amount?' ₹'+o.payment.amount.toLocaleString('en-IN'):''));
+    } else {
+      lines.push('   🔴 COLLECT CASH/UPI');
+    }
+    if(o.notes) lines.push('   📝 Note: ' + o.notes);
+  });
+
+  const grandTotal = orders.reduce((s,o)=>{
+    const a=(o.items||[]).reduce((si,i)=>si+(parseFloat(i.amount)||0),0);
+    return s+Math.max(a,o.total||0);
+  },0);
+  const collected = orders.reduce((s,o)=>s+(o.payment?.amount||0),0);
+  const due = grandTotal - collected;
+
+  lines.push('');
+  lines.push('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  lines.push('📊 *DAY TOTAL*');
+  lines.push('Orders: *' + orders.length + '*   |   Sales: *₹' + grandTotal.toLocaleString('en-IN') + '*');
+  if(collected>0) lines.push('Collected: ₹' + collected.toLocaleString('en-IN') + '   Due: ₹' + due.toLocaleString('en-IN'));
+
+  if(Object.keys(prodTotals).length) {
+    lines.push('');
+    lines.push('📦 *LOAD SUMMARY (check before leaving)*');
+    lines.push('─────────────────────────────');
+    Object.entries(prodTotals).forEach(([name,v])=>{
+      if(v.isLaadi) {
+        const wt = v.weightKg>0 ? v.weightKg.toFixed(2)+'kg' : '⚖️ wt pending';
+        lines.push('▪ *' + name + '*: ' + v.ladis + ' ladi' + (v.ladis!==1?'s':'') + ' / ' + wt);
+      } else {
+        const qtyDisplay = v.qty%1===0 ? v.qty : v.qty.toFixed(1);
+        lines.push('▪ *' + name + '*: ' + qtyDisplay + ' ' + v.unit);
+      }
+    });
+  }
+
+  lines.push('');
+  lines.push('_Gaavn Fresh Sales App_');
+  return lines.join('\n');
+}
+
+function copyWhatsAppForDate(dateKey) {
+  const isToday = dateKey === TODAY_KEY;
   let orders = [];
   if (isToday) {
     orders = STATE.orders.filter(o => (o.date || TODAY_KEY) === TODAY_KEY);
     if (!orders.length) orders = JSON.parse(localStorage.getItem(LS_ORDERS)||'[]');
   } else {
-    // Past date: check STATE.orders first (loaded from sheet into memory when user synced)
     orders = STATE.orders.filter(o => (o.date || TODAY_KEY) === dateKey);
-    // Fallback: per-date localStorage cache
     if (!orders.length) orders = getOrdersForDate(dateKey);
   }
+  if (!orders.length) { showToast('No orders found — tap Sync to load past orders first'); return; }
 
-  if (!orders.length) {
-    showToast('No orders found — tap Sync to load past orders first');
-    return;
-  }
-
-  // Format date label
   const d = new Date(dateKey + 'T00:00:00');
-  const dateStr = isToday
-    ? 'Today, ' + d.toLocaleDateString('en-IN', {weekday:'long', day:'numeric', month:'long', year:'numeric'})
-    : d.toLocaleDateString('en-IN', {weekday:'long', day:'numeric', month:'long', year:'numeric'});
-  const timeStr = new Date().toLocaleTimeString('en-IN', {hour:'2-digit', minute:'2-digit'});
+  const dateStr = d.toLocaleDateString('en-IN', {weekday:'long', day:'numeric', month:'long', year:'numeric'});
 
-  let lines = [];
-  lines.push('🐄 *GAAVN FRESH — Daily Order Sheet*');
-  lines.push('📅 ' + dateStr);
-  lines.push('🕐 Prepared at ' + timeStr);
-  lines.push('─'.repeat(30));
-
-  const prodTotals = {};
-  orders.forEach((o, idx) => {
-    const statusIcon = {confirmed:'✅',modified:'⚠️',delivered:'✅',paid:'💰',due:'🔴',partial:'🟡',draft:'📝'}[o.status] || '📦';
-    const catEmoji = {'Distributor -Retail':'🏭','Distributor -HORECA':'🏭','HORECA':'🏨','Retail':'🛒'}[o.customerCategory] || '📦';
-    lines.push('');
-    lines.push((idx+1) + '. ' + statusIcon + ' *' + o.customerName + '* ' + catEmoji);
-    if (o.customerArea) lines.push('   📍 ' + o.customerArea);
-    (o.items || []).forEach(item => {
-      if(item.weightPending || item.product==='pl') {
-        const confirmedWt = item.confirmedWeightKg||0;
-        const estWt = item.estKg||0;
-        const wtStr = confirmedWt>0
-          ? confirmedWt.toFixed(2)+'kg (confirmed) @ ₹'+item.rate+'/kg = ₹'+item.amount.toLocaleString('en-IN')
-          : estWt>0 ? '~'+estWt+'kg (est.) @ ₹'+item.rate+'/kg ≈ ₹'+item.amount.toLocaleString('en-IN')+' · ⚖️ weight at delivery'
-          : '⚖️ weight to be confirmed at delivery';
-        lines.push('   • ' + item.name + ': ' + item.qty + ' ladi' + (item.qty>1?'s':'') + ' · ' + wtStr);
-      } else {
-        lines.push('   • ' + item.name + ': ' + item.qty + ' ' + item.unit + ' @ ₹' + item.rate + ' = ₹' + item.amount.toLocaleString('en-IN'));
-      }
-      if (!prodTotals[item.name]) prodTotals[item.name] = {qty:0, unit:item.unit, amt:0, isLaadi:false, ladis:0, weightKg:0};
-      if(item.weightPending!==undefined || item.product==='pl') {
-        prodTotals[item.name].isLaadi = true;
-        prodTotals[item.name].ladis  += (item.qty||0);
-        prodTotals[item.name].weightKg += (item.confirmedWeightKg||item.estKg||0);
-        prodTotals[item.name].amt    += (item.amount||0);
-      } else {
-        prodTotals[item.name].qty  += item.qty;
-        prodTotals[item.name].amt  += item.amount;
-      }
-    });
-    lines.push('   💵 *Total: ₹' + (o.total||0).toLocaleString('en-IN') + '*');
-    if (o.notes) lines.push('   📝 ' + o.notes);
-    if (o.payment?.mode && o.payment.mode !== 'due')
-      lines.push('   💳 Payment: ' + o.payment.mode + (o.payment.amount ? ' ₹'+o.payment.amount : ''));
-  });
-
-  // Day summary
-  const grandTotal = orders.reduce((s,o) => s + (o.total||0), 0);
-  const paidTotal  = orders.filter(o => o.status==='paid'||o.payment?.received).reduce((s,o) => s+(o.payment?.amount||o.total||0), 0);
-  const dueTotal   = orders.filter(o => o.status==='due'||o.status==='partial').reduce((s,o) => s+(o.total-(o.payment?.amount||0)), 0);
-
-  lines.push('');
-  lines.push('─'.repeat(30));
-  lines.push('📊 *DAY SUMMARY*');
-  lines.push('Total Orders: ' + orders.length);
-  lines.push('Gross Revenue: *₹' + grandTotal.toLocaleString('en-IN') + '*');
-  if (paidTotal > 0) lines.push('Collected: ₹' + paidTotal.toLocaleString('en-IN'));
-  if (dueTotal  > 0) lines.push('Due/Pending: ₹' + dueTotal.toLocaleString('en-IN'));
-
-  // Product-wise totals
-  if (Object.keys(prodTotals).length) {
-    lines.push('');
-    lines.push('📦 *PRODUCT-WISE DISPATCH*');
-    Object.entries(prodTotals).forEach(([name, v]) => {
-      if(v.isLaadi) {
-        const wt = v.weightKg>0 ? v.weightKg.toFixed(2)+'kg' : '⚖️ wt pending';
-        const ladisLabel = v.ladis + ' ladi' + (v.ladis!==1?'s':'');
-        lines.push('• ' + name + ': ' + ladisLabel + ' · ' + wt + (v.amt>0?' = ₹'+v.amt.toLocaleString('en-IN'):''));
-      } else {
-        let displayUnit = v.unit;
-        if(name==='Chaas 1 Litre') displayUnit = '1L btl';
-        if(name==='Chaas 500ml')   displayUnit = '500ml btl';
-        const qtyDisplay = v.qty%1===0 ? v.qty : v.qty.toFixed(1);
-        lines.push('• ' + name + ': ' + qtyDisplay + ' ' + displayUnit);
-      }
-    });
-  }
-
-  lines.push('');
-  lines.push('_Sent from Gaavn Fresh Sales App_');
-
-  const msg = lines.join('\n');
-  document.getElementById('wa-text').value = msg;
+  document.getElementById('wa-text').value = buildWAMessage(orders, dateStr);
   document.getElementById('wa-copy-confirm').style.display = 'none';
   document.getElementById('wa-copy-btn').textContent = '📋 Copy Message';
   document.getElementById('modal-whatsapp').classList.add('open');
 }
 
 function copyWhatsApp() {
-  // Only include TODAY's orders in the WhatsApp summary
   const orders = STATE.orders.filter(o => (o.date || TODAY_KEY) === TODAY_KEY);
   if (!orders.length) { showToast('No orders for today to share'); return; }
-
   const d = new Date();
   const dateStr = d.toLocaleDateString('en-IN', {weekday:'long', day:'numeric', month:'long', year:'numeric'});
-  const timeStr = d.toLocaleTimeString('en-IN', {hour:'2-digit', minute:'2-digit'});
-
-  let lines = [];
-  lines.push('🐄 *GAAVN FRESH — Daily Order Sheet*');
-  lines.push('📅 ' + dateStr);
-  lines.push('🕐 Prepared at ' + timeStr);
-  lines.push('─'.repeat(30));
-
-  // Use STATE.orders directly — already in delivery sequence order
-  // (sequence set via the 🔢 Sequence button)
-  const prodTotals = {};
-  const seqSet = getDeliverySequence();
-  const hasSeq = seqSet.length > 0;
-  if (hasSeq) {
-    lines.push('📍 *Delivery sequence order*');
-  }
-
-  orders.forEach((o, idx) => {
-    const statusIcon = {confirmed:'✅',modified:'⚠️',delivered:'✅',paid:'💰',due:'🔴',partial:'🟡',draft:'📝'}[o.status] || '📦';
-    const catEmoji = {'Distributor -Retail':'🏭','Distributor -HORECA':'🏭','HORECA':'🏨','Retail':'🛒'}[o.customerCategory] || '📦';
-    lines.push('');
-    lines.push((idx+1) + '. ' + statusIcon + ' *' + o.customerName + '* ' + catEmoji);
-    if (o.customerArea) lines.push('   📍 ' + o.customerArea);
-    (o.items || []).forEach(item => {
-      if(item.weightPending || item.product==='pl') {
-        const confirmedWt = item.confirmedWeightKg||0;
-        const estWt = item.estKg||0;
-        const wtStr = confirmedWt>0
-          ? confirmedWt.toFixed(2)+'kg (confirmed) @ ₹'+item.rate+'/kg = ₹'+item.amount.toLocaleString('en-IN')
-          : estWt>0 ? '~'+estWt+'kg (est.) @ ₹'+item.rate+'/kg ≈ ₹'+item.amount.toLocaleString('en-IN')+' · ⚖️ weight at delivery'
-          : '⚖️ weight to be confirmed at delivery';
-        lines.push('   • ' + item.name + ': ' + item.qty + ' ladi' + (item.qty>1?'s':'') + ' · ' + wtStr);
-      } else {
-        lines.push('   • ' + item.name + ': ' + item.qty + ' ' + item.unit + ' @ ₹' + item.rate + ' = ₹' + item.amount.toLocaleString('en-IN'));
-      }
-      if (!prodTotals[item.name]) prodTotals[item.name] = {qty:0, unit:item.unit, amt:0, isLaadi:false, ladis:0, weightKg:0};
-      if(item.weightPending!==undefined || item.product==='pl') {
-        // Laadi: accumulate both ladi count AND confirmed/estimated weight
-        prodTotals[item.name].isLaadi = true;
-        prodTotals[item.name].ladis  += (item.qty||0);
-        prodTotals[item.name].weightKg += (item.confirmedWeightKg||item.estKg||0);
-        prodTotals[item.name].amt    += (item.amount||0);
-      } else {
-        prodTotals[item.name].qty  += item.qty;
-        prodTotals[item.name].amt  += item.amount;
-      }
-    });
-    lines.push('   💵 *Total: ₹' + (o.total||0).toLocaleString('en-IN') + '*');
-    if (o.notes) lines.push('   📝 ' + o.notes);
-    if (o.payment?.mode && o.payment.mode !== 'due')
-      lines.push('   💳 Payment: ' + o.payment.mode + (o.payment.amount ? ' ₹'+o.payment.amount : ''));
-  });
-
-  // Day summary
-  const grandTotal = orders.reduce((s,o) => s + (o.total||0), 0);
-  const paidTotal  = orders.filter(o => o.status==='paid'||o.payment?.received).reduce((s,o) => s+(o.payment?.amount||o.total||0), 0);
-  const dueTotal   = orders.filter(o => o.status==='due'||o.status==='partial').reduce((s,o) => s+(o.total-(o.payment?.amount||0)), 0);
-
-  lines.push('');
-  lines.push('─'.repeat(30));
-  lines.push('📊 *DAY SUMMARY*');
-  lines.push('Total Orders: ' + orders.length);
-  lines.push('Gross Revenue: *₹' + grandTotal.toLocaleString('en-IN') + '*');
-  if (paidTotal > 0) lines.push('Collected: ₹' + paidTotal.toLocaleString('en-IN'));
-  if (dueTotal  > 0) lines.push('Due/Pending: ₹' + dueTotal.toLocaleString('en-IN'));
-
-  // Product-wise totals
-  if (Object.keys(prodTotals).length) {
-    lines.push('');
-    lines.push('📦 *PRODUCT-WISE DISPATCH*');
-    Object.entries(prodTotals).forEach(([name, v]) => {
-      if(v.isLaadi) {
-        // Show: ladi count + total weight (confirmed or estimated)
-        const wt = v.weightKg>0 ? v.weightKg.toFixed(2)+'kg' : '⚖️ wt pending';
-        const ladisLabel = v.ladis + ' ladi' + (v.ladis!==1?'s':'');
-        lines.push('• ' + name + ': ' + ladisLabel + ' · ' + wt + (v.amt>0?' = ₹'+v.amt.toLocaleString('en-IN'):''));
-      } else {
-        // For Chaas: show unit clearly as '1L btl' or '500ml btl'
-        let displayUnit = v.unit;
-        if(name==='Chaas 1 Litre') displayUnit = '1L btl';
-        if(name==='Chaas 500ml')   displayUnit = '500ml btl';
-        const qtyDisplay = v.qty%1===0 ? v.qty : v.qty.toFixed(1);
-        lines.push('• ' + name + ': ' + qtyDisplay + ' ' + displayUnit);
-      }
-    });
-  }
-
-  lines.push('');
-  lines.push('_Sent from Gaavn Fresh Sales App_');
-
-  const msg = lines.join('\n');
-  document.getElementById('wa-text').value = msg;
+  document.getElementById('wa-text').value = buildWAMessage(orders, dateStr);
   document.getElementById('wa-copy-confirm').style.display = 'none';
   document.getElementById('wa-copy-btn').textContent = '📋 Copy Message';
   document.getElementById('modal-whatsapp').classList.add('open');
@@ -5351,15 +5324,16 @@ function generateGSTReport(format) {
   const orders = getAllOrdersInRange(from, to).filter(o => o.status !== 'cancelled');
   if(!orders.length) { showToast('No orders in this range'); return; }
 
-  const biz = STATE.bizName || 'Gaavn Fresh';
-  const GSTIN = STATE.gstin || '';
-  // HSN for dairy products — 0401 (fresh milk/cream), 0406 (cheese/paneer), 2202 (flavoured drinks)
-  const hsnMap = {
-    'Paneer':'0406', 'Malai Paneer':'0406', 'Lite Paneer':'0406',
-    'Lite Curd':'0406', 'Std Khoya':'0406', 'CM Khoya':'0406',
-    'Sweet Lassi':'2202', 'Mango Lassi':'2202', 'Mixed Lassi':'2202',
-    'Chaas 500ml':'2202', 'Chaas 1 Litre':'2202',
-  };
+  // Build HSN + GST rate lookup from PRODUCTS master (editable in Setup)
+  const productGSTMap = {};
+  PRODUCTS.forEach(p => { productGSTMap[p.name] = {hsn: p.hsn||'0406', gstRate: p.gstRate||0}; });
+  // Helper to get product GST info by name
+  function getProductGST(name) {
+    return productGSTMap[name] || {hsn:'0406', gstRate:0};
+  }
+
+  const biz   = STATE.bizName || 'Gaavn Fresh';
+  const GSTIN = STATE.gstin   || '';
 
   // ── Build date-wise summary ──────────────────────────────────────────
   const byDate = {};
@@ -5378,7 +5352,10 @@ function generateGSTReport(format) {
       byDate[d].total += amt;
       byParty[party].total += amt;
       const pname = item.name||'Unknown';
-      if(!byProduct[pname]) byProduct[pname] = {qty:0, amt:0, unit: item.unit||'', hsn: hsnMap[pname]||'0406'};
+      if(!byProduct[pname]) {
+        const gst = getProductGST(pname);
+        byProduct[pname] = {qty:0, amt:0, unit: item.unit||'', hsn: gst.hsn, gstRate: gst.gstRate};
+      }
       byProduct[pname].qty += parseFloat(item.qty)||0;
       byProduct[pname].amt += amt;
     });
@@ -5410,12 +5387,16 @@ function generateGSTReport(format) {
   rows.push([q('=== PRODUCT-WISE TOTALS (HSN CODE-WISE) ===')]);
   rows.push(['HSN Code','Product','Total Qty','Unit','Total Amount (Rs)','GST Rate','Taxable Amt','GST Amt'].map(q));
   Object.entries(byProduct).sort((a,b)=>b[1].amt-a[1].amt).forEach(([name,p])=>{
-    // All fresh dairy is exempt (0%) under GST in India
+    const gstAmt  = p.amt * (p.gstRate/100) / (1 + p.gstRate/100); // GST included in price
+    const taxable = p.amt - gstAmt;
+    const gstLabel = p.gstRate > 0 ? p.gstRate + '%' : 'Exempt (0%)';
     rows.push([
       q(p.hsn), q(name),
       q(p.qty % 1 === 0 ? p.qty : p.qty.toFixed(3)),
       q(p.unit), q(p.amt.toFixed(2)),
-      q('Exempt (0%)'), q(p.amt.toFixed(2)), q('0.00')
+      q(gstLabel),
+      q(p.gstRate > 0 ? taxable.toFixed(2) : p.amt.toFixed(2)),
+      q(p.gstRate > 0 ? gstAmt.toFixed(2) : '0.00')
     ]);
   });
   rows.push(['','','','',q('GRAND TOTAL'),'','',q(grandTotal.toFixed(2))].map((v,i)=>i<4?q(''):v));
@@ -5431,7 +5412,7 @@ function generateGSTReport(format) {
 
   // Section 4: Transaction detail (every order, every item)
   rows.push([q('=== DETAILED TRANSACTIONS ===')]);
-  rows.push(['Date','Order ID','Customer','Category','Area','Status','Product','HSN','Qty','Unit','Rate (Rs)','Amount (Rs)','Order Total (Rs)','Payment Mode'].map(q));
+  rows.push(['Date','Order ID','Customer','Category','Area','Status','Product','HSN','GST %','Qty','Unit','Rate (Rs)','Amount (Rs)','Order Total (Rs)','Payment Mode'].map(q));
   orders.forEach(o => {
     const itemsSum = (o.items||[]).reduce((s,i)=>s+(parseFloat(i.amount)||0),0);
     const orderTot = Math.max(itemsSum, o.total||0);
@@ -5439,7 +5420,7 @@ function generateGSTReport(format) {
       rows.push([
         q(o.date||TODAY_KEY), q(o.id), q(o.customerName), q(o.customerCategory||''),
         q(o.customerArea||''), q(o.status),
-        q(item.name||''), q(hsnMap[item.name]||'0406'),
+        q(item.name||''), q(getProductGST(item.name||'').hsn), q(getProductGST(item.name||'').gstRate+'%'),
         q(parseFloat(item.qty)||0), q(item.unit||''),
         q(parseFloat(item.rate)||0), q(parseFloat(item.amount)||0),
         idx===0 ? q(orderTot.toFixed(2)) : q(''),
