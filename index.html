@@ -615,6 +615,15 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
         <button class="btn btn-secondary" id="btn-gst-load-sheet" onclick="loadRangeFromSheet()" style="width:100%;">☁ Load Missing Dates from Sheet</button>
       </div>
       <div id="gst-preview" style="margin-bottom:14px;"></div>
+
+      <!-- Manual line items -->
+      <div style="background:var(--surface);border:1.5px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:14px;">
+        <div style="font-size:12px;font-weight:600;color:var(--ink);margin-bottom:4px;">➕ Add Manual Line Items</div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">For sales entered directly in the sheet (e.g. Plant Sales, bulk offline orders) not in the app. These will appear as a separate section in the CSV.</div>
+        <div id="gst-manual-items"></div>
+        <button onclick="addGSTManualItem()" style="background:none;border:1.5px dashed var(--border);border-radius:8px;width:100%;padding:8px;font-size:12px;color:var(--muted);cursor:pointer;margin-top:6px;">+ Add Item</button>
+      </div>
+
       <div style="display:flex;flex-direction:column;gap:8px;">
         <button class="btn btn-success" onclick="generateGSTReport('csv')">⬇ Download CSV (for CA)</button>
         <button class="btn btn-secondary" onclick="closeModal('modal-gst-export')">Cancel</button>
@@ -5259,6 +5268,66 @@ function cacheOrdersForDate(date, orders) {
   localStorage.setItem(key, JSON.stringify(merged));
 }
 
+// ── MANUAL LINE ITEMS FOR GST REPORT ─────────────────────────────────
+let _gstManualItems = [];
+
+function addGSTManualItem() {
+  _gstManualItems.push({description:'', category:'Plant Sales', hsn:'0406', gstRate:0, amount:0});
+  renderGSTManualItems();
+}
+
+function removeGSTManualItem(idx) {
+  _gstManualItems.splice(idx, 1);
+  renderGSTManualItems();
+  previewGSTReport();
+}
+
+function renderGSTManualItems() {
+  const el = document.getElementById('gst-manual-items');
+  if(!el) return;
+  if(!_gstManualItems.length) { el.innerHTML = ''; return; }
+  el.innerHTML = _gstManualItems.map((item, i) => `
+    <div style="background:var(--cream);border:1.5px solid var(--border);border-radius:8px;padding:10px;margin-bottom:8px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+        <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;">Manual Item ${i+1}</div>
+        <button onclick="removeGSTManualItem(${i})" style="background:none;border:none;color:var(--red);font-size:16px;cursor:pointer;line-height:1;">✕</button>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:6px;">
+        <div>
+          <div style="font-size:10px;font-weight:600;color:var(--muted);margin-bottom:3px;">DESCRIPTION</div>
+          <input value="${item.description}" onchange="_gstManualItems[${i}].description=this.value;previewGSTReport();"
+            placeholder="e.g. Plant Sales — Paneer"
+            style="width:100%;background:var(--surface);border:1.5px solid var(--border);border-radius:6px;padding:6px 8px;font-size:12px;">
+        </div>
+        <div>
+          <div style="font-size:10px;font-weight:600;color:var(--muted);margin-bottom:3px;">CATEGORY</div>
+          <input value="${item.category}" onchange="_gstManualItems[${i}].category=this.value;"
+            placeholder="e.g. Plant Sales"
+            style="width:100%;background:var(--surface);border:1.5px solid var(--border);border-radius:6px;padding:6px 8px;font-size:12px;">
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;">
+        <div>
+          <div style="font-size:10px;font-weight:600;color:var(--muted);margin-bottom:3px;">HSN CODE</div>
+          <input value="${item.hsn}" onchange="_gstManualItems[${i}].hsn=this.value;"
+            placeholder="0406"
+            style="width:100%;background:var(--surface);border:1.5px solid var(--border);border-radius:6px;padding:6px 8px;font-size:12px;">
+        </div>
+        <div>
+          <div style="font-size:10px;font-weight:600;color:var(--muted);margin-bottom:3px;">GST %</div>
+          <input type="number" min="0" max="28" value="${item.gstRate}" onchange="_gstManualItems[${i}].gstRate=parseFloat(this.value)||0;"
+            style="width:100%;background:var(--surface);border:1.5px solid var(--border);border-radius:6px;padding:6px 8px;font-size:12px;">
+        </div>
+        <div>
+          <div style="font-size:10px;font-weight:600;color:var(--muted);margin-bottom:3px;">AMOUNT (₹)</div>
+          <input type="number" min="0" value="${item.amount}" onchange="_gstManualItems[${i}].amount=parseFloat(this.value)||0;previewGSTReport();"
+            placeholder="0"
+            style="width:100%;background:var(--surface);border:1.5px solid var(--border);border-radius:6px;padding:6px 8px;font-size:12px;">
+        </div>
+      </div>
+    </div>`).join('');
+}
+
 // ── LOAD ALL DATES IN GST RANGE FROM SHEET ───────────────────────────
 async function loadRangeFromSheet() {
   const from = document.getElementById('gst-from').value;
@@ -5360,13 +5429,17 @@ async function loadRangeFromSheet() {
 
 // ── GST REPORT EXPORT ────────────────────────────────────────────────
 function openGSTExport() {
-  // Default: first and last day of current month
   const now = new Date();
   const y = now.getFullYear(), m = String(now.getMonth()+1).padStart(2,'0');
   const firstDay = y+'-'+m+'-01';
   const lastDay  = y+'-'+m+'-'+new Date(y, now.getMonth()+1, 0).getDate();
   document.getElementById('gst-from').value = firstDay;
   document.getElementById('gst-to').value   = lastDay;
+  // Reset manual items
+  _gstManualItems = [];
+  renderGSTManualItems();
+  document.getElementById('gst-load-progress').style.display = 'none';
+  document.getElementById('btn-gst-load-sheet').disabled = false;
   previewGSTReport();
   document.getElementById('modal-gst-export').classList.add('open');
 }
@@ -5400,10 +5473,12 @@ function previewGSTReport() {
   const to   = document.getElementById('gst-to').value;
   if(!from || !to) return;
   const orders = getAllOrdersInRange(from, to).filter(o => o.status !== 'cancelled');
-  const total  = orders.reduce((s,o) => {
+  const appTotal = orders.reduce((s,o) => {
     const itemsSum = (o.items||[]).reduce((si,i)=>si+(parseFloat(i.amount)||0),0);
     return s + (itemsSum > 0 ? itemsSum : (o.total||0));
   }, 0);
+  const manualTotal = _gstManualItems.reduce((s,m)=>s+(parseFloat(m.amount)||0),0);
+  const total = appTotal + manualTotal;
   // Product totals
   const byProduct = {};
   orders.forEach(o => {
@@ -5417,10 +5492,18 @@ function previewGSTReport() {
   const topProducts = Object.entries(byProduct).sort((a,b)=>b[1].amt-a[1].amt).slice(0,6);
   document.getElementById('gst-preview').innerHTML =
     `<div style="background:var(--surface);border:1.5px solid var(--border);border-radius:10px;padding:12px 14px;font-size:13px;">
-      <div style="display:flex;justify-content:space-between;margin-bottom:8px;">
+      <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
         <span style="color:var(--muted);">${orders.length} orders · ${Object.keys(byProduct).length} products</span>
-        <span style="font-weight:700;color:var(--amber);">₹${total.toLocaleString('en-IN',{maximumFractionDigits:2})}</span>
+        <span style="font-weight:700;color:var(--amber);">₹${appTotal.toLocaleString('en-IN',{maximumFractionDigits:2})}</span>
       </div>
+      ${manualTotal > 0 ? `<div style="display:flex;justify-content:space-between;padding:4px 0;border-top:1px solid var(--border);font-size:12px;color:var(--muted);">
+        <span>Manual items (${_gstManualItems.length})</span>
+        <span style="color:var(--ink);font-weight:600;">+₹${manualTotal.toLocaleString('en-IN',{maximumFractionDigits:2})}</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;padding:4px 0;border-top:1.5px solid var(--border);font-size:13px;font-weight:700;">
+        <span>Grand Total</span>
+        <span style="color:var(--amber);">₹${total.toLocaleString('en-IN',{maximumFractionDigits:2})}</span>
+      </div>` : ''}
       ${topProducts.map(([name,d])=>`<div style="display:flex;justify-content:space-between;padding:3px 0;border-top:1px solid var(--border);font-size:12px;">
         <span>${name}</span><span style="color:var(--muted);">${d.qty % 1 === 0 ? d.qty : d.qty.toFixed(2)} · ₹${d.amt.toLocaleString('en-IN',{maximumFractionDigits:2})}</span>
       </div>`).join('')}
@@ -5474,6 +5557,8 @@ function generateGSTReport(format) {
   });
 
   const grandTotal = Object.values(byProduct).reduce((s,p)=>s+p.amt,0);
+  const manualTotal = _gstManualItems.reduce((s,m)=>s+(parseFloat(m.amount)||0),0);
+  const overallTotal = grandTotal + manualTotal;
 
   // ── Build CSV ────────────────────────────────────────────────────────
   const rows = [];
@@ -5519,6 +5604,34 @@ function generateGSTReport(format) {
   Object.entries(byParty).sort((a,b)=>b[1].total-a[1].total).forEach(([name,p])=>{
     rows.push([q(name), q(p.category), q(p.orders), q(p.total.toFixed(2))]);
   });
+  rows.push([]);
+
+  // Section 3b: Manual / offline line items
+  if(_gstManualItems.length > 0) {
+    rows.push([q('=== MANUAL / OFFLINE SALES (not in app) ===')]);
+    rows.push(['Description','Category','HSN Code','GST %','Amount (Rs)','Taxable Amt','GST Amt'].map(q));
+    _gstManualItems.forEach(item => {
+      const amt = parseFloat(item.amount)||0;
+      const gstRate = parseFloat(item.gstRate)||0;
+      const gstAmt = amt * (gstRate/100) / (1 + gstRate/100);
+      const taxable = amt - gstAmt;
+      rows.push([
+        q(item.description||'Manual entry'), q(item.category||''),
+        q(item.hsn||'0406'), q(gstRate>0 ? gstRate+'%' : 'Exempt (0%)'),
+        q(amt.toFixed(2)),
+        q(gstAmt>0 ? taxable.toFixed(2) : amt.toFixed(2)),
+        q(gstAmt>0 ? gstAmt.toFixed(2) : '0.00'),
+      ]);
+    });
+    rows.push(['','','','',q('Manual Subtotal'),'',q(manualTotal.toFixed(2))]);
+    rows.push([]);
+  }
+
+  // Overall grand total box
+  rows.push([q('=== OVERALL GRAND TOTAL ===')]);
+  rows.push([q('App Sales (from orders)'), '', '', '', q(grandTotal.toFixed(2))]);
+  if(manualTotal > 0) rows.push([q('Manual / Offline Sales'), '', '', '', q(manualTotal.toFixed(2))]);
+  rows.push([q('★ TOTAL SALES FOR PERIOD'), '', '', '', q(overallTotal.toFixed(2))]);
   rows.push([]);
 
   // Section 4: Transaction detail (every order, every item)
