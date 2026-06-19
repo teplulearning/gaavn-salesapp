@@ -2008,7 +2008,7 @@ function initApp() {
 function updateSheetDot() {
   const dot = document.getElementById('sheet-status-dot');
   if(!dot) return;
-  dot.title = STATE.sheetUrl ? 'Sheet connected — tap Setup to change' : 'Sheet not connected — tap Setup';
+  dot.title = 'URL:' + (STATE.sheetUrl||'EMPTY') + ' DEF:' + (typeof DEFAULT_SHEET_URL!=='undefined'?DEFAULT_SHEET_URL.slice(0,20):'UNDEF');
   dot.textContent = STATE.sheetUrl ? '🟢' : '🔴';
 }
 
@@ -3634,7 +3634,7 @@ function saveNewCustomer() {
     syncCustomerToSheet(customer);
   } else {
     // No sheet connected — warn that customer is local-only
-    showToast('⚠ Customer saved locally only. Connect Sheet in Setup to make it permanent.', 5000);
+    showToast('⚠ No sheet URL. DEFAULT=' + (typeof DEFAULT_SHEET_URL !== 'undefined' ? DEFAULT_SHEET_URL.slice(0,30) : 'UNDEFINED') + ' STATE=' + JSON.stringify(STATE.sheetUrl), 8000);
   }
   // Update search box with new customer name so user can tap to select
   const custSearch = document.getElementById('cust-search');
