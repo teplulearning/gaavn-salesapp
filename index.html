@@ -2006,9 +2006,14 @@ function initApp() {
 
 // ── SHEET STATUS DOT ────────────────────────────────────────────────
 function updateSheetDot() {
+  // If STATE.sheetUrl is empty but DEFAULT_SHEET_URL is set, restore it
+  if(!STATE.sheetUrl && typeof DEFAULT_SHEET_URL !== 'undefined' && DEFAULT_SHEET_URL) {
+    STATE.sheetUrl = DEFAULT_SHEET_URL;
+    localStorage.setItem(LS_URL, DEFAULT_SHEET_URL);
+  }
   const dot = document.getElementById('sheet-status-dot');
   if(!dot) return;
-  dot.title = 'URL:' + (STATE.sheetUrl||'EMPTY') + ' DEF:' + (typeof DEFAULT_SHEET_URL!=='undefined'?DEFAULT_SHEET_URL.slice(0,20):'UNDEF');
+  dot.title = STATE.sheetUrl ? 'Sheet connected — tap Setup to change' : 'Sheet not connected — tap Setup';
   dot.textContent = STATE.sheetUrl ? '🟢' : '🔴';
 }
 
@@ -3630,11 +3635,18 @@ function saveNewCustomer() {
   );
   renderCustomerList();
   // Sync new customer to Google Sheet so all devices can see it
-  if(STATE.sheetUrl) {
+  // Use STATE.sheetUrl, or fall back to DEFAULT_SHEET_URL if STATE wasn't set
+  const _syncUrl = STATE.sheetUrl || (typeof DEFAULT_SHEET_URL !== 'undefined' ? DEFAULT_SHEET_URL : '');
+  if(_syncUrl) {
+    // Ensure STATE is updated too
+    if(!STATE.sheetUrl) {
+      STATE.sheetUrl = _syncUrl;
+      localStorage.setItem(LS_URL, _syncUrl);
+      updateSheetDot();
+    }
     syncCustomerToSheet(customer);
   } else {
-    // No sheet connected — warn that customer is local-only
-    showToast('⚠ No sheet URL. DEFAULT=' + (typeof DEFAULT_SHEET_URL !== 'undefined' ? DEFAULT_SHEET_URL.slice(0,30) : 'UNDEFINED') + ' STATE=' + JSON.stringify(STATE.sheetUrl), 8000);
+    showToast('⚠ Customer saved locally — no sheet URL configured', 5000);
   }
   // Update search box with new customer name so user can tap to select
   const custSearch = document.getElementById('cust-search');
