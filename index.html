@@ -1648,7 +1648,7 @@ const LS_NEW_CUSTS = 'gf_new_customers';   // backup key for newly added custome
 
 // ── OWNER: paste your Apps Script Web App URL here before deploying ──────────
 // Salesperson's app will automatically connect to the sheet — no manual setup needed.
-const DEFAULT_SHEET_URL = 'https://script.google.com/macros/s/AKfycbzG4dWqlpBVMc62UHkFHA-dvELmsnV7vt1I4XTEYvI7CEPHzcEcTGb05PizeyNg7sW4fQ/exec';
+const DEFAULT_SHEET_URL = 'https://script.google.com/macros/s/AKfycbzG4dWqlpBVMc62UHkFHA-dvELmsnV7vt1i4XTEYvI7CEPHzcEcTGb05PizeyNg7sW4fQ/exec';
 const LS_PAYMENTS = 'gf_payments';           // payment-in ledger
 
 // ── CAT COLOURS ─────────────────────────────────────────────────────
@@ -1988,8 +1988,10 @@ function initApp() {
     STATE.sheetUrl = paramUrl;
     console.log('Sheet URL loaded from URL param and saved');
   } else {
-    STATE.sheetUrl = localStorage.getItem(LS_URL) || DEFAULT_SHEET_URL;
-    if(!localStorage.getItem(LS_URL) && DEFAULT_SHEET_URL) {
+    const _lsUrl = localStorage.getItem(LS_URL);
+    STATE.sheetUrl = _lsUrl || DEFAULT_SHEET_URL;
+    console.log('[GF] URL load: LS_URL='+JSON.stringify(_lsUrl)+' DEFAULT='+DEFAULT_SHEET_URL.slice(0,40)+' FINAL='+STATE.sheetUrl.slice(0,40));
+    if(!_lsUrl && DEFAULT_SHEET_URL) {
       localStorage.setItem(LS_URL, DEFAULT_SHEET_URL);
     }
   }
@@ -3927,7 +3929,7 @@ async function syncCustomersFromSheet() {
   if(!STATE.sheetUrl) return;
   try {
     const url = STATE.sheetUrl + '?action=getCustomers';
-    const res = await fetch(url);
+    const res = await fetch(url, {redirect:'follow'});
     const json = await res.json();
     if(!json.customers || !json.customers.length) return;
     const extras = JSON.parse(localStorage.getItem(LS_CUSTS)||'[]');
@@ -3983,7 +3985,8 @@ async function syncCustomerToSheet(customer, retryCount) {
       createdBy: STATE.role||'',
       pricing: JSON.stringify(customer.pricing||{}),
     });
-    const res = await fetch(STATE.sheetUrl + '?' + params.toString());
+    const res = await fetch(STATE.sheetUrl + '?' + params.toString(), {redirect:'follow'});
+    if(!res.ok) throw new Error('HTTP '+res.status);
     const json = await res.json().catch(()=>({}));
     if(json.status === 'ok' || json.status === 'created' || json.status === 'updated') {
       // Mark as synced in localStorage so we know it's safe on sheet
@@ -4358,7 +4361,12 @@ function saveUrl() {
 
 async function testUpsertCustomer() {
   const url = (STATE.sheetUrl || '').trim();
-  if(!url) { alert('No Sheet URL — dot is grey'); return; }
+  const lsUrl = localStorage.getItem('gf_sheet_url') || '';
+  const defUrl = (typeof DEFAULT_SHEET_URL !== 'undefined') ? DEFAULT_SHEET_URL : 'NOT DEFINED';
+  if(!url) {
+    alert('STATE.sheetUrl is empty!\n\nlocalStorage URL: ' + (lsUrl||'(empty)') + '\n\nDEFAULT_SHEET_URL: ' + defUrl.slice(0,60) + '\n\nRefresh the page and try again.');
+    return;
+  }
   showToast('Testing upsertCustomer...');
   try {
     const params = new URLSearchParams({
@@ -4369,7 +4377,7 @@ async function testUpsertCustomer() {
       area: 'Test', address: '', balance: 0,
       createdBy: 'diagnostic', pricing: '{}',
     });
-    const res = await fetch(url + '?' + params.toString());
+    const res = await fetch(url + '?' + params.toString(), {redirect:'follow'});
     const text = await res.text();
     let json = {};
     try { json = JSON.parse(text); } catch(e) {}
