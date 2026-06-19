@@ -463,6 +463,7 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
       <div class="btn-row" style="margin-top:10px;">
         <button class="btn btn-secondary" onclick="saveUrl()">💾 Save URL</button>
         <button class="btn btn-success" onclick="testConnection()">🔌 Test Connection</button>
+        <button class="btn btn-secondary" onclick="testUpsertCustomer()" style="margin-top:8px;width:100%;">🧪 Test Customer Sync</button>
       </div>
     </div>
 
@@ -4353,6 +4354,29 @@ function saveUrl() {
   if(url && STATE.role==='delivery') { stopDeliveryPoll(); startDeliveryPoll(); }
   // Re-render setup so share link section appears immediately
   renderSetup();
+}
+
+async function testUpsertCustomer() {
+  const url = (STATE.sheetUrl || '').trim();
+  if(!url) { alert('No Sheet URL — dot is grey'); return; }
+  showToast('Testing upsertCustomer...');
+  try {
+    const params = new URLSearchParams({
+      action: 'upsertCustomer',
+      id: 'TEST_' + Date.now(),
+      name: 'DIAGNOSTIC TEST (delete me)',
+      category: 'Retail', phone: '0000000000',
+      area: 'Test', address: '', balance: 0,
+      createdBy: 'diagnostic', pricing: '{}',
+    });
+    const res = await fetch(url + '?' + params.toString());
+    const text = await res.text();
+    let json = {};
+    try { json = JSON.parse(text); } catch(e) {}
+    alert('RESULT: ' + JSON.stringify(json) + '\n\nExpected: {status:"created"} or {status:"updated"}\n\nRaw response: ' + text.slice(0,300));
+  } catch(e) {
+    alert('FETCH ERROR: ' + e.message + '\n\nThis means the URL is unreachable.');
+  }
 }
 
 async function testConnection() {
