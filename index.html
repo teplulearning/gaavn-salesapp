@@ -255,7 +255,7 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
     <div class="top-bar-left">
       <span class="logo">🐄 GF</span>
       <span class="role-badge" id="role-badge">SALES</span>
-      <span style="font-size:9px;color:var(--muted);margin-left:4px;" id="build-stamp">v84</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:4px;" id="build-stamp">v85</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <span class="date-chip" id="today-chip"></span>
@@ -1647,7 +1647,7 @@ const LS_NEW_CUSTS = 'gf_new_customers';   // backup key for newly added custome
 
 // ── OWNER: paste your Apps Script Web App URL here before deploying ──────────
 // Salesperson's app will automatically connect to the sheet — no manual setup needed.
-const DEFAULT_SHEET_URL = '';  // paste URL here: 'https://script.google.com/macros/s/.../exec'
+const DEFAULT_SHEET_URL = 'https://script.google.com/macros/s/AKfycbzG4dWqlpBVMc62UHkFHA-dvELmsnV7vt1I4XTEYvI7CEPHzcEcTGb05PizeyNg7sW4fQ/exec';
 const LS_PAYMENTS = 'gf_payments';           // payment-in ledger
 
 // ── CAT COLOURS ─────────────────────────────────────────────────────
@@ -1988,9 +1988,6 @@ function initApp() {
     console.log('Sheet URL loaded from URL param and saved');
   } else {
     STATE.sheetUrl = localStorage.getItem(LS_URL) || DEFAULT_SHEET_URL;
-    if(!localStorage.getItem(LS_URL) && DEFAULT_SHEET_URL) {
-      localStorage.setItem(LS_URL, DEFAULT_SHEET_URL);
-    }
     if(!localStorage.getItem(LS_URL) && DEFAULT_SHEET_URL) {
       localStorage.setItem(LS_URL, DEFAULT_SHEET_URL);
     }
