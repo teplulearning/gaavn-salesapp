@@ -1643,6 +1643,7 @@ function getCustomerCreditAlerts(custId) {
 const LS_ORDERS = 'gf_orders_' + TODAY_KEY;
 const LS_URL    = 'gf_sheet_url';
 const LS_CUSTS    = 'gf_customers_extra';  // manually added customers
+const LS_NEW_CUSTS = 'gf_new_customers';   // backup key for newly added customers
 const LS_PAYMENTS = 'gf_payments';           // payment-in ledger
 
 // ── CAT COLOURS ─────────────────────────────────────────────────────
@@ -1931,12 +1932,21 @@ function initApp() {
   loadProductGSTData(); // Load HSN/GST overrides first
   // Load customers: master + any extras stored locally
   STATE.customers = CUSTOMERS_MASTER.map(c => ({...c}));
+  // Load extras from primary key
   const extras = JSON.parse(localStorage.getItem(LS_CUSTS)||'[]');
+  // Also load from backup key and merge (guards against localStorage key loss)
+  const newCustsBackup = JSON.parse(localStorage.getItem(LS_NEW_CUSTS)||'[]');
+  newCustsBackup.forEach(nc => {
+    if(!extras.find(e => e.id===nc.id)) extras.push(nc);
+  });
+  console.log('[GF-DIAG] initApp: CUSTOMERS_MASTER='+CUSTOMERS_MASTER.length+' extras='+extras.length+' names='+extras.map(c=>c.name));
   extras.forEach(ex => {
     const idx = STATE.customers.findIndex(c => c.id===ex.id || c.name.toLowerCase()===ex.name.toLowerCase());
     if(idx >= 0) STATE.customers[idx] = {...STATE.customers[idx], ...ex};
     else STATE.customers.push(ex);
   });
+  // Write merged extras back to primary key (repair if primary was lost)
+  localStorage.setItem(LS_CUSTS, JSON.stringify(extras));
   // Fetch customers from sheet in background so all devices share the same list
   if(STATE.sheetUrl) {
     setTimeout(syncCustomersFromSheet, 2000);
@@ -2589,6 +2599,9 @@ function searchCustomers(q) {
     (c.category||'').toLowerCase().includes(ql)
   ).slice(0, 30);
   if(!matches.length) {
+    // Diagnostic: log what's in STATE and localStorage
+    const _extras = JSON.parse(localStorage.getItem(LS_CUSTS)||'[]');
+    console.log('[GF-DIAG] No match for:', q, '| STATE.customers:', STATE.customers.length, '| LS_CUSTS entries:', _extras.length, '| LS_CUSTS names:', _extras.map(c=>c.name));
     el.innerHTML = '<div style="padding:16px;text-align:center;">' +
       '<div style="color:var(--muted);font-size:13px;margin-bottom:12px;">No match for <b>' + q + '</b></div>' +
       '<button onclick="showAddCustomer()" ontouchstart="" style="background:var(--amber);color:#fff;border:none;border-radius:10px;padding:11px 20px;font-size:14px;font-weight:700;cursor:pointer;width:100%;">+ Add as New Customer</button>' +
@@ -3577,10 +3590,14 @@ function saveNewCustomer() {
     openingBalanceDate:new Date().toLocaleDateString('en-IN'),createdAt:Date.now(),
   };
   STATE.customers.push(customer);
-  // Save to extras in localStorage
+  // Save to extras in localStorage (primary key)
   const extras=JSON.parse(localStorage.getItem(LS_CUSTS)||'[]');
   extras.push(customer);
   localStorage.setItem(LS_CUSTS,JSON.stringify(extras));
+  // Also save to backup key — Android Chrome can lose localStorage under memory pressure
+  const newCusts=JSON.parse(localStorage.getItem(LS_NEW_CUSTS)||'[]');
+  newCusts.push(customer);
+  localStorage.setItem(LS_NEW_CUSTS,JSON.stringify(newCusts));
   closeModal('modal-add-customer');
   showToast('✓ Customer added: '+name);
   // Reset category filter so new customer is always visible
@@ -3590,7 +3607,12 @@ function saveNewCustomer() {
   );
   renderCustomerList();
   // Sync new customer to Google Sheet so all devices can see it
-  if(STATE.sheetUrl) syncCustomerToSheet(customer);
+  if(STATE.sheetUrl) {
+    syncCustomerToSheet(customer);
+  } else {
+    // No sheet connected — warn that customer is local-only
+    showToast('⚠ Customer saved locally only. Connect Sheet in Setup to make it permanent.', 5000);
+  }
   // If New Order screen is active, auto-search the new customer name
   const custSearch = document.getElementById('cust-search');
   if(custSearch && document.getElementById('screen-new-order')?.classList.contains('active')) {
