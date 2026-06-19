@@ -1644,6 +1644,10 @@ const LS_ORDERS = 'gf_orders_' + TODAY_KEY;
 const LS_URL    = 'gf_sheet_url';
 const LS_CUSTS    = 'gf_customers_extra';  // manually added customers
 const LS_NEW_CUSTS = 'gf_new_customers';   // backup key for newly added customers
+
+// ── OWNER: paste your Apps Script Web App URL here before deploying ──────────
+// Salesperson's app will automatically connect to the sheet — no manual setup needed.
+const DEFAULT_SHEET_URL = '';  // paste URL here: 'https://script.google.com/macros/s/.../exec'
 const LS_PAYMENTS = 'gf_payments';           // payment-in ledger
 
 // ── CAT COLOURS ─────────────────────────────────────────────────────
@@ -1983,7 +1987,13 @@ function initApp() {
     STATE.sheetUrl = paramUrl;
     console.log('Sheet URL loaded from URL param and saved');
   } else {
-    STATE.sheetUrl = localStorage.getItem(LS_URL)||'';
+    STATE.sheetUrl = localStorage.getItem(LS_URL) || DEFAULT_SHEET_URL;
+    if(!localStorage.getItem(LS_URL) && DEFAULT_SHEET_URL) {
+      localStorage.setItem(LS_URL, DEFAULT_SHEET_URL);
+    }
+    if(!localStorage.getItem(LS_URL) && DEFAULT_SHEET_URL) {
+      localStorage.setItem(LS_URL, DEFAULT_SHEET_URL);
+    }
   }
   updateSheetDot();
   history.replaceState({screen: 'home'}, '', '#home');
@@ -2050,6 +2060,8 @@ function saveOrders() {
 
 // ── DASHBOARD ────────────────────────────────────────────────────────
 function renderDashboard() {
+  const warnBanner = document.getElementById('sheet-warn-banner');
+  if(warnBanner) warnBanner.style.display = STATE.sheetUrl ? 'none' : 'block';
   const todayOrders = STATE.orders;
   const totalRev = todayOrders.reduce((s,o)=>s+(o.total||0),0);
   const pending  = todayOrders.filter(o=>o.status==='confirmed'||o.status==='modified').length;
@@ -3594,6 +3606,7 @@ function saveNewCustomer() {
     area:document.getElementById('nc-area').value.trim(),
     pricing,balance:openingBal,openingBalance:openingBal,
     openingBalanceDate:new Date().toLocaleDateString('en-IN'),createdAt:Date.now(),
+    synced:false,
   };
   // Force-replace in STATE.customers (dedup by id, then add)
   STATE.customers = STATE.customers.filter(c => c.id !== customer.id);
@@ -3979,19 +3992,24 @@ async function syncCustomerToSheet(customer, retryCount) {
       const extras = JSON.parse(localStorage.getItem(LS_CUSTS)||'[]');
       const idx = extras.findIndex(x => x.id === customer.id);
       if(idx >= 0) { extras[idx].synced = true; localStorage.setItem(LS_CUSTS, JSON.stringify(extras)); }
+      const newCustsB = JSON.parse(localStorage.getItem(LS_NEW_CUSTS)||'[]');
+      const bidx = newCustsB.findIndex(x => x.id === customer.id);
+      if(bidx >= 0) { newCustsB[bidx].synced = true; localStorage.setItem(LS_NEW_CUSTS, JSON.stringify(newCustsB)); }
+      // Also mark synced in backup key
       const sc = STATE.customers.find(x => x.id === customer.id);
       if(sc) sc.synced = true;
     } else {
-      throw new Error('Sheet did not confirm');
+      console.error('[GF] upsertCustomer failed. Response:', JSON.stringify(json));
+      throw new Error(json.error || 'Sheet did not confirm: ' + JSON.stringify(json));
     }
   } catch(e) {
-    console.warn('Customer sync failed (attempt '+(retryCount+1)+'):', e);
+    console.warn('[GF] Customer sync failed (attempt '+(retryCount+1)+'):', e.message);
     if(retryCount < 3) {
       // Retry with exponential backoff: 5s, 15s, 45s
       setTimeout(() => syncCustomerToSheet(customer, retryCount+1), 5000 * Math.pow(3, retryCount));
     } else {
       // After 3 retries, show a persistent warning so salesperson knows
-      showToast('\u26a0 '+customer.name+' not saved to Sheet \u2014 check connection', 6000);
+      showToast('\u26a0 '+customer.name+' not saved to Sheet \u2014 ' + e.message.slice(0,40), 8000);
       // Mark as unsynced in localStorage for visibility
       const extras = JSON.parse(localStorage.getItem(LS_CUSTS)||'[]');
       const idx = extras.findIndex(x => x.id === customer.id);
