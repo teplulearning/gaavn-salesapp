@@ -1552,6 +1552,13 @@ let STATE = {
   sheetUrl: '',
   custFilter: 'all',
 };
+// Set sheet URL immediately at script load — runs before any function
+// Uses localStorage if available, otherwise falls back to hardcoded default
+STATE.sheetUrl = (function() {
+  try {
+    return localStorage.getItem('gf_sheet_url') || 'https://script.google.com/macros/s/AKfycbzG4dWqlpBVMc62UHkFHA-dvELmsnV7vt1i4XTEYvI7CEPHzcEcTGb05PizeyNg7sW4fQ/exec';
+  } catch(e) { return 'https://script.google.com/macros/s/AKfycbzG4dWqlpBVMc62UHkFHA-dvELmsnV7vt1i4XTEYvI7CEPHzcEcTGb05PizeyNg7sW4fQ/exec'; }
+})();
 
 const TODAY = new Date();
 const TODAY_STR = TODAY.toLocaleDateString('en-IN',{weekday:'short',day:'numeric',month:'short',year:'numeric'});
@@ -2536,7 +2543,7 @@ function goBackFromOrder() {
 
 function initNewOrder() {
   // Pull any new customers from sheet in background
-  if(STATE.sheetUrl && STATE.customers.length < 10) syncCustomersFromSheet();
+  if(STATE.sheetUrl) syncCustomersFromSheet(); // pull latest customers including newly added ones
 
   // Restore draft if exists
   const draftRaw = localStorage.getItem(LS_ORDER_DRAFT);
