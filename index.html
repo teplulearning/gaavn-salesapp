@@ -313,6 +313,9 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
       <div class="search-box">
         <span class="search-icon">🔍</span>
         <input type="text" id="cust-search" placeholder="Search by name, area or category..." oninput="searchCustomers(this.value)">
+        <button onclick="syncCustomersFromSheet().then(function(){var cs=document.getElementById('cust-search');if(cs&&cs.value)searchCustomers(cs.value);})" 
+          style="background:none;border:none;font-size:18px;cursor:pointer;color:var(--teal);padding:0 4px;flex-shrink:0;" 
+          title="Refresh customer list from sheet">&#8635;</button>
       </div>
       <div style="text-align:right;margin-top:6px;">
         <button onclick="showAddCustomer()" ontouchstart="" style="background:none;border:none;color:var(--teal,#028090);font-size:12px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif;padding:4px 0;">
@@ -4128,6 +4131,15 @@ async function syncCustomersFromSheet() {
     });
     localStorage.setItem(LS_CUSTS, JSON.stringify(extras));
     if(added > 0) showToast('✓ '+added+' new customer(s) synced from sheet');
+    // If salesperson is on New Order screen, refresh the search results
+    if(document.getElementById('screen-new-order')?.classList.contains('active')) {
+      const cs = document.getElementById('cust-search');
+      if(cs && cs.value.trim()) searchCustomers(cs.value);
+    }
+    // If on Customers screen, refresh the list
+    if(document.getElementById('screen-customers')?.classList.contains('active')) {
+      renderCustomerList(document.getElementById('cust-list-search')?.value || '');
+    }
   } catch(e) {
     console.warn('Customer sync from sheet failed:', e);
   }
