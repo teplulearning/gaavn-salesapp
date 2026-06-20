@@ -407,6 +407,14 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
       <button onclick="exportDuesToSheet()" style="background:var(--blue);color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:12px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif;">📤 Export Dues</button>
     </div>
     <div class="page-sub">FIFO credit tracking · alerts · stop orders</div>
+    <div style="margin:8px 0 4px;">
+      <div class="search-box" style="width:100%;box-sizing:border-box;">
+        <span class="search-icon">🔍</span>
+        <input type="text" id="dues-search" placeholder="Search customer..." 
+          oninput="renderDues(this.value)"
+          style="flex:1;background:transparent;border:none;outline:none;font-family:'DM Sans',sans-serif;font-size:14px;color:var(--ink);">
+      </div>
+    </div>
     <div class="stats-row">
       <div class="stat-box"><div class="stat-num" id="due-count">0</div><div class="stat-lbl">Invoices Due</div></div>
       <div class="stat-box"><div class="stat-num" id="due-amount" style="font-size:16px;">&#8377;0</div><div class="stat-lbl">Total Due</div></div>
@@ -3538,14 +3546,16 @@ function saveNewCustomer() {
 }
 
 // ── DUES ─────────────────────────────────────────────────────────────
-function renderDues() {
+function renderDues(searchQ) {
   // ── Compute credit status for all unpaid orders ──────────────────
   const unpaidOrders = STATE.orders.filter(o =>
     o.status==='due' || o.status==='partial' ||
     ((o.status==='confirmed'||o.status==='delivered') && (o.total||0)>(o.payment?.amount||0))
   );
 
-  const custsDue = STATE.customers.filter(c=>(c.balance||0)>0);
+  const _duesQ = (searchQ||document.getElementById('dues-search')?.value||'').toLowerCase().trim();
+  const custsDue = STATE.customers.filter(c=>(c.balance||0)>0 &&
+    (!_duesQ || c.name.toLowerCase().includes(_duesQ) || (c.area||'').toLowerCase().includes(_duesQ)));
   const totalDue = unpaidOrders.reduce((s,o)=>s+((o.total||0)-(o.payment?.amount||0)),0)
                  + custsDue.reduce((s,c)=>s+(c.balance||0),0);
 
@@ -3639,7 +3649,8 @@ function renderDues() {
       html += '<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">';
       html += '<button data-cid="'+_safeId+'" onclick="recordDuePayment(decodeURIComponent(this.dataset.cid))" style="flex:1;padding:8px;background:var(--green);color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">&#128176; Record Payment</button>';
       if(custPhone) {
-        html += '<button data-cid="'+_safeId+'" data-tp="client" onclick="sendCreditWA(decodeURIComponent(this.dataset.cid),this.dataset.tp)" style="padding:8px 12px;background:#25D366;color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">&#128242; Remind Client</button>';
+        html += '<button data-cid="'+_safeId+'" data-tp="client" onclick="sendCreditWA(decodeURIComponent(this.dataset.cid),this.dataset.tp)" style="padding:8px 12px;background:#25D366;color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">&#128242; Remind Client</button>'+
+        '<button data-cid="'+_safeId+'" onclick="sendStatement(decodeURIComponent(this.dataset.cid))" style="padding:8px 12px;background:#1565C0;color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">&#128196; Send Statement</button>';
       }
       html += '<button data-cid="'+_safeId+'" data-tp="internal" onclick="sendCreditWA(decodeURIComponent(this.dataset.cid),this.dataset.tp)" style="padding:8px 12px;background:var(--amber);color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">&#128203; Alert Sales</button>';
       html += '</div>';
@@ -3666,17 +3677,282 @@ function recordDuePayment(custId) {
   document.getElementById('modal-payment-in').classList.add('open');
 }
 
+async function sendStatement(custId) {
+  const cust = STATE.customers.find(function(c){return c.id===custId;});
+  if(!cust) return;
+  const url = STATE.sheetUrl || DEFAULT_SHEET_URL;
+  if(!url) { showToast('No sheet connected'); return; }
+  showToast('Fetching statement...', 4000);
+
+  var orders = [], openingBal = parseFloat(cust.balance||cust.openingBalance||0)||0;
+  try {
+    var p = new URLSearchParams({action:'getCustomerOrders', phone:cust.phone||'',
+      customerId:cust.id||'', customerName:cust.name||''});
+    var res = await fetch(url + '?' + p.toString());
+    var json = await res.json().catch(function(){return {};});
+    if(json.orders) { orders = json.orders; if(json.balance!==undefined) openingBal=parseFloat(json.balance)||0; }
+  } catch(e) {
+    orders = STATE.orders.filter(function(o){return o.customerId===custId;}).map(function(o){
+      return {'Order ID':o.id,'Date':o.date,'Status':o.status,
+        'Order Total (Rs)':o.total||0,'Payment Amt':o.payment?o.payment.amount||0:0,
+        'Payment Mode':o.payment?o.payment.mode||'':'','_items':o.items||[]};
+    });
+  }
+
+  // Group rows by Order ID
+  var orderMap = {};
+  orders.forEach(function(row){
+    var oid = String(row['Order ID']||'').trim();
+    if(!oid||oid.indexOf('TOTAL:')===0) return;
+    if(!orderMap[oid]) orderMap[oid]={id:oid,
+      date:String(row['Date']||'').substring(0,10), status:row['Status']||'',
+      total:parseFloat(row['Order Total (Rs)'])||0,
+      payAmt:parseFloat(row['Payment Amt'])||0, payMode:row['Payment Mode']||'',
+      items:row['_items']||[]};
+    if(!row['_items']&&row['Product']) orderMap[oid].items.push({
+      name:row['Product']||'', qty:parseFloat(row['Qty'])||0, unit:row['Unit']||'',
+      rate:parseFloat(row['Rate (Rs)'])||0, amount:parseFloat(row['Amount (Rs)'])||0});
+  });
+
+  function fmtD(d) {
+    if(!d) return '';
+    try { var dt=new Date(d); if(!isNaN(dt)){
+      var mn=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      return String(dt.getDate()).padStart(2,'0')+' '+mn[dt.getMonth()]+' '+dt.getFullYear();
+    }} catch(e){} return d;
+  }
+  function inr(n) { return 'Rs ' + (parseFloat(n)||0).toLocaleString('en-IN'); }
+
+  var ordList = Object.values(orderMap).filter(function(o){return o.status!=='cancelled';})
+    .sort(function(a,b){return a.date.localeCompare(b.date);});
+  var totalOrders=0, totalPaid=0;
+  ordList.forEach(function(o){totalOrders+=o.total; totalPaid+=o.payAmt;});
+  var totalDue = openingBal + totalOrders - totalPaid;
+
+  // Load jsPDF + autotable dynamically
+  showToast('Generating PDF...', 5000);
+  try {
+    if(!window.jspdf) {
+      await new Promise(function(resolve, reject){
+        var s1 = document.createElement('script');
+        s1.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
+        s1.onload = function(){
+          var s2 = document.createElement('script');
+          s2.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js';
+          s2.onload = resolve;
+          s2.onerror = reject;
+          document.head.appendChild(s2);
+        };
+        s1.onerror = reject;
+        document.head.appendChild(s1);
+      });
+    }
+  } catch(e) {
+    showToast('Could not load PDF library. Check connection.');
+    return;
+  }
+
+  var jsPDF = window.jspdf.jsPDF;
+  var doc = new jsPDF({orientation:'portrait', unit:'mm', format:'a4'});
+  var pageW = doc.internal.pageSize.getWidth();
+  var margin = 14;
+  var y = 0;
+
+  // ── HEADER BANNER ──
+  doc.setFillColor(30, 58, 138);  // navy blue
+  doc.rect(0, 0, pageW, 38, 'F');
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(18); doc.setFont('helvetica','bold');
+  doc.text('GAAVN FRESH', margin, 13);
+  doc.setFontSize(8); doc.setFont('helvetica','normal');
+  doc.text('Farm Fresh Dairy  |  Account Statement', margin, 19);
+  // Customer info
+  doc.setFontSize(10); doc.setFont('helvetica','bold');
+  doc.text(cust.name, margin, 28);
+  doc.setFontSize(8); doc.setFont('helvetica','normal');
+  var custSub = (cust.area||'') + (cust.phone ? '   Ph: '+cust.phone : '') + (cust.category ? '   '+cust.category : '');
+  if(custSub.trim()) doc.text(custSub.trim(), margin, 33);
+  // Date top right
+  doc.setFontSize(8);
+  doc.text('Date: '+fmtD(TODAY_KEY), pageW-margin, 28, {align:'right'});
+  y = 45;
+
+  // ── SUMMARY BOXES ──
+  var boxW = (pageW - margin*2 - 8) / 3;
+  var boxes = [
+    {label:'Opening Balance', val:inr(openingBal), color:[219,234,254]},
+    {label:'Total Orders',    val:inr(totalOrders), color:[219,234,254]},
+    {label:'AMOUNT DUE',     val:inr(totalDue),    color:[254,226,226]},
+  ];
+  boxes.forEach(function(b, i){
+    var bx = margin + i*(boxW+4);
+    doc.setFillColor(b.color[0],b.color[1],b.color[2]);
+    doc.roundedRect(bx, y, boxW, 14, 2, 2, 'F');
+    doc.setDrawColor(180,200,230);
+    doc.roundedRect(bx, y, boxW, 14, 2, 2, 'S');
+    doc.setTextColor(30,58,138);
+    doc.setFontSize(7); doc.setFont('helvetica','normal');
+    doc.text(b.label, bx+boxW/2, y+5, {align:'center'});
+    doc.setFontSize(i===2?9:8); doc.setFont('helvetica','bold');
+    doc.setTextColor(i===2?180:30, i===2?20:58, i===2?20:138);
+    doc.text(b.val, bx+boxW/2, y+11, {align:'center'});
+  });
+  y += 20;
+
+  // Opening balance line if set
+  if(openingBal > 0) {
+    doc.setFillColor(239,246,255);
+    doc.rect(margin, y, pageW-margin*2, 8, 'F');
+    doc.setDrawColor(147,197,253);
+    doc.rect(margin, y, pageW-margin*2, 8, 'S');
+    doc.setTextColor(30,64,175); doc.setFontSize(8); doc.setFont('helvetica','bold');
+    doc.text('Opening Balance (brought forward)', margin+3, y+5.5);
+    doc.text(inr(openingBal), pageW-margin-2, y+5.5, {align:'right'});
+    y += 12;
+  }
+
+  // ── ORDERS ──
+  ordList.forEach(function(o){
+    var outstanding = Math.max(0, o.total - o.payAmt);
+    // Check if need new page
+    var estimatedH = 10 + (o.items.length * 7) + 20;
+    if(y + estimatedH > 270) { doc.addPage(); y = 15; }
+
+    // Order header
+    doc.setFillColor(239,246,255);
+    doc.rect(margin, y, pageW-margin*2, 8, 'F');
+    doc.setDrawColor(147,197,253);
+    doc.rect(margin, y, pageW-margin*2, 8, 'S');
+    doc.setTextColor(30,58,138); doc.setFontSize(8); doc.setFont('helvetica','bold');
+    doc.text('Order #'+o.id, margin+3, y+5.5);
+    doc.setFont('helvetica','normal'); doc.setTextColor(100,116,139);
+    doc.text(fmtD(o.date), pageW-margin-2, y+5.5, {align:'right'});
+    y += 8;
+
+    // Items table
+    var tableRows = [];
+    o.items.filter(function(i){return i.name&&i.qty>0;}).forEach(function(item){
+      var amt = item.amount||(item.qty*item.rate);
+      tableRows.push([
+        item.name,
+        item.qty + (item.unit?' '+item.unit:''),
+        inr(item.rate),
+        inr(amt)
+      ]);
+    });
+    if(!tableRows.length) tableRows.push(['(no item details)','','','']);
+
+    doc.autoTable({
+      startY: y,
+      margin: {left: margin, right: margin},
+      head: [['Product','Qty','Rate','Amount']],
+      body: tableRows,
+      foot: [
+        ['Order Total','','',inr(o.total)],
+        ...(o.payAmt>0?[['Payment Received'+(o.payMode?' ('+o.payMode+')':""),'','','- '+inr(o.payAmt)]]:[]),
+        ...(outstanding>0?[['Outstanding','','',inr(outstanding)]]:[]),
+      ],
+      headStyles:{fillColor:[30,58,138], textColor:255, fontSize:8, fontStyle:'bold', halign:'left'},
+      bodyStyles:{fontSize:8, textColor:[30,41,59]},
+      columnStyles:{1:{halign:'right'},2:{halign:'right'},3:{halign:'right',fontStyle:'bold'}},
+      footStyles:{fillColor:[219,234,254], textColor:[30,64,175], fontStyle:'bold', fontSize:8},
+      alternateRowStyles:{fillColor:[248,250,255]},
+      tableLineColor:[191,219,254], tableLineWidth:0.3,
+      theme:'grid',
+      didParseCell: function(data){
+        if(data.section==='foot'){
+          var txt = String(data.cell.raw||'');
+          if(txt.indexOf('Outstanding')===0) {
+            data.cell.styles.fillColor=[254,243,199];
+            data.cell.styles.textColor=[146,64,14];
+          }
+          if(txt.indexOf('Payment')===0||txt.startsWith('- Rs')||txt.startsWith('-')) {
+            data.cell.styles.fillColor=[220,252,231];
+            data.cell.styles.textColor=[22,101,52];
+          }
+        }
+      }
+    });
+    y = doc.lastAutoTable.finalY + 5;
+  });
+
+  // ── FINAL SUMMARY ──
+  if(y > 250) { doc.addPage(); y = 15; }
+  doc.setFillColor(30,58,138);
+  doc.rect(margin, y, pageW-margin*2, openingBal>0?28:24, 'F');
+  var sy = y + 6;
+  doc.setTextColor(255,255,255); doc.setFontSize(8); doc.setFont('helvetica','normal');
+  if(openingBal>0) {
+    doc.text('Opening Balance', margin+3, sy); doc.text(inr(openingBal), pageW-margin-3, sy, {align:'right'}); sy+=5;
+  }
+  doc.text('Orders Total', margin+3, sy); doc.text(inr(totalOrders), pageW-margin-3, sy, {align:'right'}); sy+=5;
+  doc.text('Payments Received', margin+3, sy); doc.text('- '+inr(totalPaid), pageW-margin-3, sy, {align:'right'}); sy+=5;
+  doc.setDrawColor(255,255,255,0.3); doc.line(margin+3, sy, pageW-margin-3, sy); sy+=4;
+  doc.setFontSize(10); doc.setFont('helvetica','bold');
+  doc.setTextColor(252,211,77);  // gold
+  doc.text('AMOUNT DUE', margin+3, sy);
+  doc.text(inr(totalDue), pageW-margin-3, sy, {align:'right'});
+  y += (openingBal>0?28:24) + 6;
+
+  // ── FOOTER MESSAGE ──
+  doc.setFillColor(239,246,255);
+  doc.rect(margin, y, pageW-margin*2, 16, 'F');
+  doc.setDrawColor(147,197,253); doc.rect(margin, y, pageW-margin*2, 16, 'S');
+  doc.setTextColor(30,64,175); doc.setFontSize(8); doc.setFont('helvetica','normal');
+  doc.text('Dear '+cust.name+',', margin+3, y+5);
+  doc.text('Kindly make the payment at the earliest. For queries, please contact Gaavn Fresh.', margin+3, y+11);
+  y += 20;
+
+  // ── PAGE NUMBERS ──
+  var totalPages = doc.internal.getNumberOfPages();
+  for(var pg=1; pg<=totalPages; pg++){
+    doc.setPage(pg);
+    doc.setFontSize(7); doc.setTextColor(148,163,184); doc.setFont('helvetica','normal');
+    doc.text('Gaavn Fresh  |  Page '+pg+' of '+totalPages, pageW/2, 290, {align:'center'});
+  }
+
+  // ── SHARE / DOWNLOAD ──
+  var pdfBlob = doc.output('blob');
+  var fileName = 'Statement_'+cust.name.replace(/[^a-z0-9]/gi,'_')+'_'+TODAY_KEY+'.pdf';
+
+  if(navigator.share && navigator.canShare && navigator.canShare({files:[new File([pdfBlob],'test.pdf',{type:'application/pdf'})]})) {
+    // Web Share API - can share directly to WhatsApp
+    var file = new File([pdfBlob], fileName, {type:'application/pdf'});
+    navigator.share({title:'Statement - '+cust.name, files:[file]})
+      .catch(function(e){ if(e.name!=='AbortError') _downloadPdf(pdfBlob, fileName); });
+  } else {
+    // Fallback: download PDF
+    _downloadPdf(pdfBlob, fileName);
+    showToast('PDF downloaded. Open it and share via WhatsApp.', 5000);
+  }
+}
+
+function _downloadPdf(blob, fileName) {
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url; a.download = fileName;
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a);
+  setTimeout(function(){ URL.revokeObjectURL(url); }, 3000);
+}
+
+
 function sendCreditWA(custId, type) {
   const cust = STATE.customers.find(c=>c.id===custId);
   if(!cust) return;
   const alerts = getCustomerCreditAlerts(custId);
-  if(!alerts.length) { showToast('No overdue orders for this customer'); return; }
+  const openBal = cust.balance || cust.openingBalance || 0;
+  // Allow remind even if no overdue orders — customer may have an opening balance
+  if(!alerts.length && openBal <= 0) { showToast('No outstanding dues for this customer'); return; }
 
-  const totalOwed = alerts.reduce((s,x)=>s+((x.order.total||0)-(x.order.payment?.amount||0)),0);
-  const orderLines = alerts.map(x=>{
-    const outstanding = (x.order.total||0)-(x.order.payment?.amount||0);
-    return '\u2022 Order #'+x.order.id+' dated '+x.order.date+' \u2014 \u20b9'+outstanding.toLocaleString('en-IN')+' ('+x.cs.daysOverdue+'d overdue)';
-  }).join('\n');
+  const ordersOwed = alerts.reduce((s,x)=>s+((x.order.total||0)-(x.order.payment?.amount||0)),0);
+  const totalOwed = ordersOwed + openBal;
+  const orderLines = alerts.length
+    ? alerts.map(x=>{
+        const outstanding = (x.order.total||0)-(x.order.payment?.amount||0);
+        return '\u2022 Order #'+x.order.id+' dated '+x.order.date+' \u2014 \u20b9'+outstanding.toLocaleString('en-IN')+' ('+x.cs.daysOverdue+'d overdue)';
+      }).join('\n')
+    : '\u2022 Opening balance: \u20b9'+openBal.toLocaleString('en-IN');
 
   const cfg = getCreditConfig(cust.category);
   let msg = '';
