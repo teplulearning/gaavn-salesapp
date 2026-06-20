@@ -119,7 +119,7 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
 .section-label{font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin:16px 0 8px;}
 #toast{position:fixed;bottom:90px;left:50%;transform:translateX(-50%) translateY(20px);background:#1C1810;color:#fff;padding:10px 20px;border-radius:20px;font-size:13px;font-weight:500;opacity:0;transition:all 0.3s;z-index:999;white-space:nowrap;pointer-events:none;}
 #toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
-.modal-overlay{position:fixed;inset:0;background:rgba(28,24,16,0.5);z-index:500;display:none;align-items:flex-end;justify-content:center;padding-bottom:env(safe-area-inset-bottom,0px);}
+.modal-overlay{position:fixed;inset:0;background:rgba(28,24,16,0.5);z-index:200;display:none;align-items:flex-end;justify-content:center;}
 .modal-overlay.open{display:flex;}
 .modal-sheet{background:var(--surface);border-radius:20px 20px 0 0;padding:20px 20px 32px;width:100%;max-width:480px;max-height:90vh;overflow-y:auto;}
 .modal-handle{width:36px;height:4px;background:var(--border);border-radius:2px;margin:0 auto 16px;}
@@ -212,13 +212,9 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
     </div>
   </div>
 
-  <!-- Unlock button: tap to reveal Owner/Delivery cards -->
-  <div style="margin-top:16px;text-align:center;" id="unlock-wrap">
-    <button onclick="promptUnlockRoles()" style="background:none;border:none;color:var(--muted);font-size:12px;cursor:pointer;text-decoration:underline;padding:4px;">
-      Admin / Delivery access
-    </button>
+  <div style="text-align:center;margin-top:12px;" id="unlock-wrap">
+    <button onclick="promptUnlockRoles()" style="background:none;border:none;color:var(--muted);font-size:12px;cursor:pointer;text-decoration:underline;">Admin / Delivery access</button>
   </div>
-
   <!-- Step 2: PIN entry (slides in after role tap) -->
   <div id="pin-panel" style="display:none;width:100%;max-width:340px;margin:0 auto;text-align:center;">
     <div id="pin-role-label" style="font-size:14px;font-weight:700;color:var(--ink);margin-bottom:6px;"></div>
@@ -255,7 +251,7 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
     <div class="top-bar-left">
       <span class="logo">🐄 GF</span>
       <span class="role-badge" id="role-badge">SALES</span>
-      <span style="font-size:9px;color:var(--muted);margin-left:4px;" id="build-stamp">v85</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:4px;" id="build-stamp">v86</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <span class="date-chip" id="today-chip"></span>
@@ -463,7 +459,6 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
       <div class="btn-row" style="margin-top:10px;">
         <button class="btn btn-secondary" onclick="saveUrl()">💾 Save URL</button>
         <button class="btn btn-success" onclick="testConnection()">🔌 Test Connection</button>
-        <button class="btn btn-secondary" onclick="testUpsertCustomer()" style="margin-top:8px;width:100%;">🧪 Test Customer Sync</button>
       </div>
     </div>
 
@@ -546,33 +541,6 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
 
     <div style="text-align:center;margin-top:20px;">
       <button onclick="switchRole()" style="background:none;border:none;color:var(--muted);font-size:13px;cursor:pointer;">↩ Switch Role</button>
-    </div>
-
-    <!-- PIN & Security — owner only -->
-    <div class="setup-card" id="pin-mgmt-section" style="display:none;border-color:#C62828;">
-      <div class="section-label" style="margin-top:0;color:#C62828;">🔒 Security &amp; Access Control</div>
-      <p style="font-size:12px;color:var(--muted);margin-bottom:12px;">Set optional 4-digit PINs per role. Owner and Delivery cards are hidden on the login screen until the master code is entered.</p>
-      <div class="field"><label>👑 Owner PIN (4 digits)</label>
-        <input id="pin-owner" type="password" inputmode="numeric" maxlength="4" placeholder="Leave blank = no PIN" class="config-input" style="max-width:160px;">
-      </div>
-      <div class="field"><label>📋 Sales PIN (4 digits)</label>
-        <input id="pin-sales" type="password" inputmode="numeric" maxlength="4" placeholder="Leave blank = no PIN" class="config-input" style="max-width:160px;">
-      </div>
-      <div class="field"><label>🚚 Delivery PIN (4 digits)</label>
-        <input id="pin-delivery" type="password" inputmode="numeric" maxlength="4" placeholder="Leave blank = no PIN" class="config-input" style="max-width:160px;">
-      </div>
-      <div class="btn-row" style="margin-top:8px;">
-        <button class="btn btn-primary btn-sm" onclick="savePins()">💾 Save PINs</button>
-        <button class="btn btn-danger btn-sm" onclick="clearPins()">🗑 Clear PINs</button>
-      </div>
-      <div id="pin-save-status" style="display:none;color:var(--green);font-size:12px;font-weight:700;margin-top:6px;">✓ Saved</div>
-      <div style="border-top:1px solid var(--border);margin:14px 0;"></div>
-      <div style="font-size:13px;font-weight:700;margin-bottom:6px;">🔑 Master Unlock Code</div>
-      <p style="font-size:12px;color:var(--muted);margin-bottom:8px;">Current: <b id="master-code-display"></b></p>
-      <div style="display:flex;gap:8px;">
-        <input id="new-master-code" type="text" placeholder="New code (min 3 chars)" class="config-input" style="flex:1;">
-        <button class="btn btn-primary btn-sm" onclick="saveMasterCode()">Save</button>
-      </div>
     </div>
   </div>
 
@@ -1552,13 +1520,6 @@ let STATE = {
   sheetUrl: '',
   custFilter: 'all',
 };
-// Set sheet URL immediately at script load — runs before any function
-// Uses localStorage if available, otherwise falls back to hardcoded default
-STATE.sheetUrl = (function() {
-  try {
-    return localStorage.getItem('gf_sheet_url') || 'https://script.google.com/macros/s/AKfycbzG4dWqlpBVMc62UHkFHA-dvELmsnV7vt1i4XTEYvI7CEPHzcEcTGb05PizeyNg7sW4fQ/exec';
-  } catch(e) { return 'https://script.google.com/macros/s/AKfycbzG4dWqlpBVMc62UHkFHA-dvELmsnV7vt1i4XTEYvI7CEPHzcEcTGb05PizeyNg7sW4fQ/exec'; }
-})();
 
 const TODAY = new Date();
 const TODAY_STR = TODAY.toLocaleDateString('en-IN',{weekday:'short',day:'numeric',month:'short',year:'numeric'});
@@ -1651,11 +1612,6 @@ function getCustomerCreditAlerts(custId) {
 const LS_ORDERS = 'gf_orders_' + TODAY_KEY;
 const LS_URL    = 'gf_sheet_url';
 const LS_CUSTS    = 'gf_customers_extra';  // manually added customers
-const LS_NEW_CUSTS = 'gf_new_customers';   // backup key for newly added customers
-
-// ── OWNER: paste your Apps Script Web App URL here before deploying ──────────
-// Salesperson's app will automatically connect to the sheet — no manual setup needed.
-const DEFAULT_SHEET_URL = 'https://script.google.com/macros/s/AKfycbzG4dWqlpBVMc62UHkFHA-dvELmsnV7vt1i4XTEYvI7CEPHzcEcTGb05PizeyNg7sW4fQ/exec';
 const LS_PAYMENTS = 'gf_payments';           // payment-in ledger
 
 // ── CAT COLOURS ─────────────────────────────────────────────────────
@@ -1671,9 +1627,8 @@ const CAT_BG = {
 // ── ROLE SELECTION ──────────────────────────────────────────────────
 // ── PIN AUTHENTICATION ────────────────────────────────────────────────
 const LS_PINS = 'gf_pins';
-const LS_MASTER_CODE = 'gf_master_code';
-function getMasterCode() { return localStorage.getItem(LS_MASTER_CODE) || 'GF2024'; }
 const LS_ROLE = 'gf_last_role';
+const DEFAULT_SHEET_URL = 'https://script.google.com/macros/s/AKfycbzG4dWqlpBVMc62UHkFHA-dvELmsnV7vt1i4XTEYvI7CEPHzcEcTGb05PizeyNg7sW4fQ/exec';
 const LS_PRODUCT_GST = 'gf_product_gst'; // HSN + GST rate overrides per product
 
 // Load saved HSN/GST overrides into PRODUCTS array
@@ -1696,6 +1651,7 @@ function saveProductGSTData() {
 }
 let _pinRole = null;
 let _pinEntry = '';
+let _inPopstate = false;
 
 function getPins() {
   return JSON.parse(localStorage.getItem(LS_PINS)||'{}');
@@ -1734,39 +1690,26 @@ function clearPins() {
 }
 
 function promptUnlockRoles() {
-  const code = prompt('Enter master code for Admin / Delivery access:');
-  if (code === null) return;
-  if (code === getMasterCode()) {
-    sessionStorage.setItem('gf_unlocked', '1');
+  const code = prompt('Enter master code:');
+  if(code === null) return;
+  if(code === (localStorage.getItem('gf_master_code')||'GF2024')) {
+    sessionStorage.setItem('gf_unlocked','1');
     buildRoleScreen();
-  } else {
-    alert('Incorrect code.');
-  }
+  } else { alert('Incorrect code.'); }
 }
-
-function saveMasterCode() {
-  const v = (document.getElementById('new-master-code')?.value || '').trim();
-  if (!v || v.length < 3) { showToast('Enter at least 3 characters'); return; }
-  localStorage.setItem(LS_MASTER_CODE, v);
-  if (document.getElementById('master-code-display')) document.getElementById('master-code-display').textContent = v;
-  document.getElementById('new-master-code').value = '';
-  showToast('✓ Master code updated');
-}
-
-// Update role card visibility based on PIN config
 // Cards are static HTML — we just show/hide them
 function buildRoleScreen() {
   const pins = getPins();
-  const unlocked = sessionStorage.getItem('gf_unlocked') === '1';
+  const unlocked = sessionStorage.getItem('gf_unlocked')==='1';
   ['owner','sales','delivery'].forEach(role => {
     const card  = document.getElementById('card-'+role);
     const badge = document.getElementById('pin-badge-'+role);
     if(!card) return;
-    card.style.display = (role === 'sales' || unlocked) ? '' : 'none';
+    card.style.display = (role==='sales' || unlocked) ? '' : 'none';
     if(badge) badge.style.display = pins[role] ? 'inline' : 'none';
   });
   const uw = document.getElementById('unlock-wrap');
-  if (uw) uw.style.display = unlocked ? 'none' : 'block';
+  if(uw) uw.style.display = unlocked ? 'none' : 'block';
 }
 
 function roleCardTapped(role) {
@@ -1895,7 +1838,6 @@ function buildNav(role) {
     </button>`).join('');
 }
 
-let _inPopstate = false;
 function showScreen(id) {
   if (!_inPopstate && history.state?.screen !== id) {
     history.pushState({screen: id}, '', '#' + id);
@@ -1944,21 +1886,12 @@ function initApp() {
   loadProductGSTData(); // Load HSN/GST overrides first
   // Load customers: master + any extras stored locally
   STATE.customers = CUSTOMERS_MASTER.map(c => ({...c}));
-  // Load extras from primary key
   const extras = JSON.parse(localStorage.getItem(LS_CUSTS)||'[]');
-  // Also load from backup key and merge (guards against localStorage key loss)
-  const newCustsBackup = JSON.parse(localStorage.getItem(LS_NEW_CUSTS)||'[]');
-  newCustsBackup.forEach(nc => {
-    if(!extras.find(e => e.id===nc.id)) extras.push(nc);
-  });
-  console.log('[GF-DIAG] initApp: CUSTOMERS_MASTER='+CUSTOMERS_MASTER.length+' extras='+extras.length+' names='+extras.map(c=>c.name));
   extras.forEach(ex => {
     const idx = STATE.customers.findIndex(c => c.id===ex.id || c.name.toLowerCase()===ex.name.toLowerCase());
     if(idx >= 0) STATE.customers[idx] = {...STATE.customers[idx], ...ex};
     else STATE.customers.push(ex);
   });
-  // Write merged extras back to primary key (repair if primary was lost)
-  localStorage.setItem(LS_CUSTS, JSON.stringify(extras));
   // Fetch customers from sheet in background so all devices share the same list
   if(STATE.sheetUrl) {
     setTimeout(syncCustomersFromSheet, 2000);
@@ -1995,15 +1928,10 @@ function initApp() {
     STATE.sheetUrl = paramUrl;
     console.log('Sheet URL loaded from URL param and saved');
   } else {
-    const _lsUrl = localStorage.getItem(LS_URL);
-    STATE.sheetUrl = _lsUrl || DEFAULT_SHEET_URL;
-    console.log('[GF] URL load: LS_URL='+JSON.stringify(_lsUrl)+' DEFAULT='+DEFAULT_SHEET_URL.slice(0,40)+' FINAL='+STATE.sheetUrl.slice(0,40));
-    if(!_lsUrl && DEFAULT_SHEET_URL) {
-      localStorage.setItem(LS_URL, DEFAULT_SHEET_URL);
-    }
+    STATE.sheetUrl = localStorage.getItem(LS_URL) || DEFAULT_SHEET_URL;
   }
   updateSheetDot();
-  history.replaceState({screen: 'home'}, '', '#home');
+  history.replaceState({screen:'home'},'','#home');
   showScreen('home');
   // Add delivery-specific setup section
   setTimeout(renderSetupExtra, 200);
@@ -2013,11 +1941,6 @@ function initApp() {
 
 // ── SHEET STATUS DOT ────────────────────────────────────────────────
 function updateSheetDot() {
-  // If STATE.sheetUrl is empty but DEFAULT_SHEET_URL is set, restore it
-  if(!STATE.sheetUrl && typeof DEFAULT_SHEET_URL !== 'undefined' && DEFAULT_SHEET_URL) {
-    STATE.sheetUrl = DEFAULT_SHEET_URL;
-    localStorage.setItem(LS_URL, DEFAULT_SHEET_URL);
-  }
   const dot = document.getElementById('sheet-status-dot');
   if(!dot) return;
   dot.title = STATE.sheetUrl ? 'Sheet connected — tap Setup to change' : 'Sheet not connected — tap Setup';
@@ -2072,8 +1995,6 @@ function saveOrders() {
 
 // ── DASHBOARD ────────────────────────────────────────────────────────
 function renderDashboard() {
-  const warnBanner = document.getElementById('sheet-warn-banner');
-  if(warnBanner) warnBanner.style.display = STATE.sheetUrl ? 'none' : 'block';
   const todayOrders = STATE.orders;
   const totalRev = todayOrders.reduce((s,o)=>s+(o.total||0),0);
   const pending  = todayOrders.filter(o=>o.status==='confirmed'||o.status==='modified').length;
@@ -2543,7 +2464,7 @@ function goBackFromOrder() {
 
 function initNewOrder() {
   // Pull any new customers from sheet in background
-  if(STATE.sheetUrl) syncCustomersFromSheet(); // pull latest customers including newly added ones
+  if(STATE.sheetUrl) syncCustomersFromSheet();
 
   // Restore draft if exists
   const draftRaw = localStorage.getItem(LS_ORDER_DRAFT);
@@ -2586,14 +2507,8 @@ function initNewOrder() {
     STATE.orderDate = TODAY_KEY;
     document.getElementById('step-customer').style.display = 'block';
     document.getElementById('step-products').style.display = 'none';
-    // Only clear search if it's empty — preserve typed name after adding a customer
-    const _cs = document.getElementById('cust-search');
-    if(_cs && _cs.value) {
-      searchCustomers(_cs.value); // re-run search with existing value
-    } else {
-      if(_cs) _cs.value = '';
-      document.getElementById('cust-results').innerHTML = '';
-    }
+    document.getElementById('cust-search').value = '';
+    document.getElementById('cust-results').innerHTML = '';
     const dp = document.getElementById('order-date-picker');
     if(dp) { dp.value = TODAY_KEY; dp.max = TODAY_KEY; }
     document.getElementById('backdated-banner').style.display = 'none';
@@ -2628,16 +2543,7 @@ function searchCustomers(q) {
     (c.area||'').toLowerCase().includes(ql) ||
     (c.category||'').toLowerCase().includes(ql)
   ).slice(0, 30);
-  if(!matches.length) {
-    // Diagnostic: log what's in STATE and localStorage
-    const _extras = JSON.parse(localStorage.getItem(LS_CUSTS)||'[]');
-    console.log('[GF-DIAG] No match for:', q, '| STATE.customers:', STATE.customers.length, '| LS_CUSTS entries:', _extras.length, '| LS_CUSTS names:', _extras.map(c=>c.name));
-    el.innerHTML = '<div style="padding:16px;text-align:center;">' +
-      '<div style="color:var(--muted);font-size:13px;margin-bottom:12px;">No match for <b>' + q + '</b></div>' +
-      '<button onclick="showAddCustomer()" ontouchstart="" style="background:var(--amber);color:#fff;border:none;border-radius:10px;padding:11px 20px;font-size:14px;font-weight:700;cursor:pointer;width:100%;">+ Add as New Customer</button>' +
-      '</div>';
-    return;
-  }
+  if(!matches.length) { el.innerHTML='<div style="padding:12px;text-align:center;color:var(--muted);font-size:13px;">No customers found</div>'; return; }
   el.innerHTML = matches.map(c => `
     <div class="customer-row" onclick="selectCustomer('${c.id}')">
       <div style="flex:1;min-width:0;">
@@ -3585,9 +3491,6 @@ function openCustomerDetail(id) {
 
 // ── ADD CUSTOMER ─────────────────────────────────────────────────────
 function showAddCustomer() {
-  console.log("[GF] showAddCustomer called");
-  // Dismiss keyboard before showing modal (Android keyboard can hide the modal)
-  document.activeElement && document.activeElement.blur();
   document.getElementById('nc-pricing-fields').innerHTML = PRODUCTS.map(p=>`
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
       <span style="font-size:13px;width:120px;flex-shrink:0;">${p.emoji} ${p.name}</span>
@@ -3595,12 +3498,7 @@ function showAddCustomer() {
         style="flex:1;background:var(--cream);border:1.5px solid var(--border);border-radius:8px;padding:7px 10px;font-family:'DM Sans',sans-serif;font-size:13px;">
       <span style="font-size:11px;color:var(--muted);">std ₹${p.stdRate}</span>
     </div>`).join('');
-  // Pre-fill name from search box
-  const sq = (document.getElementById('cust-search')?.value || '').trim();
-  const nf = document.getElementById('nc-name');
-  if (sq && nf && !nf.value) nf.value = sq;
   document.getElementById('modal-add-customer').classList.add('open');
-  console.log('[GF] modal-add-customer opened, open class:', document.getElementById('modal-add-customer').classList.contains('open'));
 }
 
 function saveNewCustomer() {
@@ -3618,46 +3516,22 @@ function saveNewCustomer() {
     area:document.getElementById('nc-area').value.trim(),
     pricing,balance:openingBal,openingBalance:openingBal,
     openingBalanceDate:new Date().toLocaleDateString('en-IN'),createdAt:Date.now(),
-    synced:false,
   };
-  // Force-replace in STATE.customers (dedup by id, then add)
-  STATE.customers = STATE.customers.filter(c => c.id !== customer.id);
   STATE.customers.push(customer);
-  // Save to extras in localStorage (primary key)
+  // Save to extras in localStorage
   const extras=JSON.parse(localStorage.getItem(LS_CUSTS)||'[]');
-  const extI = extras.findIndex(e => e.id === customer.id);
-  if(extI >= 0) extras[extI] = customer; else extras.push(customer);
+  extras.push(customer);
   localStorage.setItem(LS_CUSTS,JSON.stringify(extras));
-  // Also save to backup key — Android Chrome can lose localStorage under memory pressure
-  const newCusts=JSON.parse(localStorage.getItem(LS_NEW_CUSTS)||'[]');
-  const ncI = newCusts.findIndex(e => e.id === customer.id);
-  if(ncI >= 0) newCusts[ncI] = customer; else newCusts.push(customer);
-  localStorage.setItem(LS_NEW_CUSTS,JSON.stringify(newCusts));
   closeModal('modal-add-customer');
   showToast('✓ Customer added: '+name);
-  // Reset category filter so new customer is always visible
   custFilterActive = 'all';
-  document.querySelectorAll('#screen-customers .filter-btn').forEach(b =>
-    b.classList.toggle('active', b.textContent.trim() === 'All')
-  );
+  document.querySelectorAll('#screen-customers .filter-btn').forEach(b=>b.classList.toggle('active',b.textContent.trim()==='All'));
   renderCustomerList();
   // Sync new customer to Google Sheet so all devices can see it
-  // Use STATE.sheetUrl, or fall back to DEFAULT_SHEET_URL if STATE wasn't set
-  const _syncUrl = STATE.sheetUrl || (typeof DEFAULT_SHEET_URL !== 'undefined' ? DEFAULT_SHEET_URL : '');
-  if(_syncUrl) {
-    // Ensure STATE is updated too
-    if(!STATE.sheetUrl) {
-      STATE.sheetUrl = _syncUrl;
-      localStorage.setItem(LS_URL, _syncUrl);
-      updateSheetDot();
-    }
-    syncCustomerToSheet(customer);
-  } else {
-    showToast('⚠ Customer saved locally — no sheet URL configured', 5000);
-  }
-  // Update search box with new customer name so user can tap to select
+  if(STATE.sheetUrl) syncCustomerToSheet(customer);
+  // If New Order screen is active, auto-search the new customer name
   const custSearch = document.getElementById('cust-search');
-  if(custSearch) {
+  if(custSearch && document.getElementById('screen-new-order')?.classList.contains('active')) {
     custSearch.value = name;
     searchCustomers(name);
   }
@@ -3948,7 +3822,7 @@ async function syncCustomersFromSheet() {
   if(!STATE.sheetUrl) return;
   try {
     const url = STATE.sheetUrl + '?action=getCustomers';
-    const res = await fetch(url, {redirect:'follow'});
+    const res = await fetch(url);
     const json = await res.json();
     if(!json.customers || !json.customers.length) return;
     const extras = JSON.parse(localStorage.getItem(LS_CUSTS)||'[]');
@@ -3978,9 +3852,6 @@ async function syncCustomersFromSheet() {
     });
     localStorage.setItem(LS_CUSTS, JSON.stringify(extras));
     if(added > 0) showToast('✓ '+added+' new customer(s) synced from sheet');
-    if(document.getElementById('screen-customers')?.classList.contains('active')) {
-      renderCustomerList(document.getElementById('cust-list-search')?.value || '');
-    }
   } catch(e) {
     console.warn('Customer sync from sheet failed:', e);
   }
@@ -4004,32 +3875,26 @@ async function syncCustomerToSheet(customer, retryCount) {
       createdBy: STATE.role||'',
       pricing: JSON.stringify(customer.pricing||{}),
     });
-    const res = await fetch(STATE.sheetUrl + '?' + params.toString(), {redirect:'follow'});
-    if(!res.ok) throw new Error('HTTP '+res.status);
+    const res = await fetch(STATE.sheetUrl + '?' + params.toString());
     const json = await res.json().catch(()=>({}));
     if(json.status === 'ok' || json.status === 'created' || json.status === 'updated') {
       // Mark as synced in localStorage so we know it's safe on sheet
       const extras = JSON.parse(localStorage.getItem(LS_CUSTS)||'[]');
       const idx = extras.findIndex(x => x.id === customer.id);
       if(idx >= 0) { extras[idx].synced = true; localStorage.setItem(LS_CUSTS, JSON.stringify(extras)); }
-      const newCustsB = JSON.parse(localStorage.getItem(LS_NEW_CUSTS)||'[]');
-      const bidx = newCustsB.findIndex(x => x.id === customer.id);
-      if(bidx >= 0) { newCustsB[bidx].synced = true; localStorage.setItem(LS_NEW_CUSTS, JSON.stringify(newCustsB)); }
-      // Also mark synced in backup key
       const sc = STATE.customers.find(x => x.id === customer.id);
       if(sc) sc.synced = true;
     } else {
-      console.error('[GF] upsertCustomer failed. Response:', JSON.stringify(json));
-      throw new Error(json.error || 'Sheet did not confirm: ' + JSON.stringify(json));
+      throw new Error('Sheet did not confirm');
     }
   } catch(e) {
-    console.warn('[GF] Customer sync failed (attempt '+(retryCount+1)+'):', e.message);
+    console.warn('Customer sync failed (attempt '+(retryCount+1)+'):', e);
     if(retryCount < 3) {
       // Retry with exponential backoff: 5s, 15s, 45s
       setTimeout(() => syncCustomerToSheet(customer, retryCount+1), 5000 * Math.pow(3, retryCount));
     } else {
       // After 3 retries, show a persistent warning so salesperson knows
-      showToast('\u26a0 '+customer.name+' not saved to Sheet \u2014 ' + e.message.slice(0,40), 8000);
+      showToast('\u26a0 '+customer.name+' not saved to Sheet \u2014 check connection', 6000);
       // Mark as unsynced in localStorage for visibility
       const extras = JSON.parse(localStorage.getItem(LS_CUSTS)||'[]');
       const idx = extras.findIndex(x => x.id === customer.id);
@@ -4335,7 +4200,7 @@ function renderSetup() {
   // Show PIN management only for owner
   const pinSection = document.getElementById('pin-mgmt-section');
   if(pinSection) pinSection.style.display = STATE.role==='owner' ? 'block' : 'none';
-  // Load current PINs and master code into fields (owner only)
+  // Load current PINs into fields (owner only)
   if(STATE.role==='owner') {
     const pins = JSON.parse(localStorage.getItem('gf_pins')||'{}');
     const po = document.getElementById('pin-owner');
@@ -4344,8 +4209,6 @@ function renderSetup() {
     if(po) po.value = pins.owner||'';
     if(ps) ps.value = pins.sales||'';
     if(pd) pd.value = pins.delivery||'';
-    const cd = document.getElementById('master-code-display');
-    if(cd) cd.textContent = getMasterCode();
   }
   document.getElementById('script-code').textContent=getAppsScriptCode();
   // Show master customer count
@@ -4354,9 +4217,10 @@ function renderSetup() {
   // Show share link section if URL is configured
   const shareLinkDiv = document.getElementById('share-link-section');
   if(shareLinkDiv) {
-    if(savedUrl) {
-      const baseUrl = window.location.href.split('?')[0];
-      const shareUrl = baseUrl + '?sheetUrl=' + encodeURIComponent(savedUrl);
+    const effectiveUrl = savedUrl || DEFAULT_SHEET_URL;
+    if(effectiveUrl) {
+      const baseUrl = window.location.href.split('?')[0].split('#')[0];
+      const shareUrl = baseUrl + '?sheetUrl=' + encodeURIComponent(effectiveUrl);
       document.getElementById('share-link-text').value = shareUrl;
       shareLinkDiv.style.display = 'block';
     } else {
@@ -4376,34 +4240,6 @@ function saveUrl() {
   if(url && STATE.role==='delivery') { stopDeliveryPoll(); startDeliveryPoll(); }
   // Re-render setup so share link section appears immediately
   renderSetup();
-}
-
-async function testUpsertCustomer() {
-  const url = (STATE.sheetUrl || '').trim();
-  const lsUrl = localStorage.getItem('gf_sheet_url') || '';
-  const defUrl = (typeof DEFAULT_SHEET_URL !== 'undefined') ? DEFAULT_SHEET_URL : 'NOT DEFINED';
-  if(!url) {
-    alert('STATE.sheetUrl is empty!\n\nlocalStorage URL: ' + (lsUrl||'(empty)') + '\n\nDEFAULT_SHEET_URL: ' + defUrl.slice(0,60) + '\n\nRefresh the page and try again.');
-    return;
-  }
-  showToast('Testing upsertCustomer...');
-  try {
-    const params = new URLSearchParams({
-      action: 'upsertCustomer',
-      id: 'TEST_' + Date.now(),
-      name: 'DIAGNOSTIC TEST (delete me)',
-      category: 'Retail', phone: '0000000000',
-      area: 'Test', address: '', balance: 0,
-      createdBy: 'diagnostic', pricing: '{}',
-    });
-    const res = await fetch(url + '?' + params.toString(), {redirect:'follow'});
-    const text = await res.text();
-    let json = {};
-    try { json = JSON.parse(text); } catch(e) {}
-    alert('RESULT: ' + JSON.stringify(json) + '\n\nExpected: {status:"created"} or {status:"updated"}\n\nRaw response: ' + text.slice(0,300));
-  } catch(e) {
-    alert('FETCH ERROR: ' + e.message + '\n\nThis means the URL is unreachable.');
-  }
 }
 
 async function testConnection() {
@@ -7568,11 +7404,13 @@ window.addEventListener('popstate', function() {
       history.pushState({screen: sid}, '', '#' + sid);
       return;
     }
-    const onNewOrder = document.getElementById('screen-new-order')?.classList.contains('active');
-    if (onNewOrder) { if (typeof saveOrderDraft==='function') saveOrderDraft(); showScreen('home'); return; }
-    const onHome = document.getElementById('screen-home')?.classList.contains('active');
-    if (!onHome) { showScreen('home'); return; }
-    // already on home — let browser exit
+    if (document.getElementById('screen-new-order')?.classList.contains('active')) {
+      if (typeof saveOrderDraft==='function') saveOrderDraft();
+      showScreen('home'); return;
+    }
+    if (!document.getElementById('screen-home')?.classList.contains('active')) {
+      showScreen('home'); return;
+    }
   } finally { _inPopstate = false; }
 });
 
