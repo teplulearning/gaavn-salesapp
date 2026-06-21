@@ -1241,26 +1241,20 @@ function idbDelete(key) {
   }).catch(function() {});
 }
 
-// Intercept localStorage.setItem for protected keys → also write to IDB
+// DO NOT override localStorage - use explicit idbSet calls instead
+// Overriding localStorage can cause SecurityError on some Android browsers
 var _origLSSet = localStorage.setItem.bind(localStorage);
 var _origLSRemove = localStorage.removeItem.bind(localStorage);
-localStorage.setItem = function(key, value) {
-  _origLSSet(key, value);
-  if(IDB_PROTECTED_KEYS.indexOf(key) !== -1) idbSet(key, value);
-};
-localStorage.removeItem = function(key) {
-  _origLSRemove(key);
-  if(IDB_PROTECTED_KEYS.indexOf(key) !== -1) idbDelete(key);
-};
 
-// Also protect order keys (gf_orders_YYYY-MM-DD)
-var _origLSSetOrders = localStorage.setItem.bind(localStorage);
-localStorage.setItem = function(key, value) {
-  _origLSSet(key, value);
-  if(IDB_PROTECTED_KEYS.indexOf(key) !== -1 || key.indexOf('gf_orders_') === 0 || key.indexOf('gf_order_draft') === 0) {
-    idbSet(key, value);
-  }
-};
+// Helper: save to both localStorage AND IDB
+function lsSet(key, value) {
+  try { localStorage.setItem(key, value); } catch(e) {}
+  idbSet(key, value);
+}
+function lsRemove(key) {
+  try { localStorage.removeItem(key); } catch(e) {}
+  idbDelete(key);
+}
 
 // On startup: restore any missing localStorage keys from IDB
 async function restoreFromIDB() {
@@ -1288,7 +1282,7 @@ async function restoreFromIDB() {
       if(!localStorage.getItem(key)) {
         var val = await idbGet(key);
         if(val !== null && val !== undefined) {
-          _origLSSet(key, val);
+          try { localStorage.setItem(key, val); } catch(e) {}
           restored++;
         }
       }
@@ -1996,7 +1990,7 @@ function checkPin() {
 
 function enterApp(role) {
   STATE.role = role;
-  localStorage.setItem(LS_ROLE, role);
+  lsSet(LS_ROLE, role);
   document.getElementById('role-screen').style.display = 'none';
   document.getElementById('app').style.display = 'block';
   const badge = document.getElementById('role-badge');
@@ -2014,7 +2008,7 @@ function enterApp(role) {
 function selectRole(role) { enterApp(role); }
 
 function switchRole() {
-  localStorage.removeItem(LS_ROLE);
+  lsRemove(LS_ROLE);
   STATE = {role:null,customers:[],orders:[],cart:{},selectedCustomer:null,orderDate:TODAY_KEY,
            sheetUrl:STATE.sheetUrl,custFilter:'all'};
   document.getElementById('app').style.display = 'none';
@@ -2133,7 +2127,7 @@ function initApp() {
   const paramUrl  = urlParams.get('sheetUrl') || urlParams.get('sheet');
   if(paramUrl && paramUrl.startsWith('https://script.google.com')) {
     // Save to localStorage so future sessions remember it
-    localStorage.setItem(LS_URL, paramUrl);
+    lsSet(LS_URL, paramUrl);
     STATE.sheetUrl = paramUrl;
     console.log('Sheet URL loaded from URL param and saved');
   } else {
@@ -2189,7 +2183,7 @@ function saveOrders() {
   });
 
   Object.entries(byDate).forEach(([date, orders]) => {
-    localStorage.setItem(LS_PREFIX + date, JSON.stringify(orders));
+    lsSet(LS_PREFIX + date, JSON.stringify(orders));
     if(date === TODAY_KEY) {
       localStorage.setItem(LS_ORDERS, JSON.stringify(orders));
     }
@@ -2653,7 +2647,7 @@ function saveOrderDraft() {
     orderDate: STATE.orderDate || TODAY_KEY,
     notes: document.getElementById('order-notes')?.value || ''
   };
-  localStorage.setItem(LS_ORDER_DRAFT, JSON.stringify(draft));
+  lsSet(LS_ORDER_DRAFT, JSON.stringify(draft));
 }
 
 function clearOrderDraft() {
@@ -3621,7 +3615,7 @@ function savePayment(orderId) {
       const extras=JSON.parse(localStorage.getItem(LS_CUSTS)||'[]');
       const ei=extras.findIndex(x=>x.id===cust.id);
       if(ei>=0) extras[ei].balance=cust.balance; else extras.push({...cust});
-      localStorage.setItem(LS_CUSTS,JSON.stringify(extras));
+      lsSet(LS_CUSTS,JSON.stringify(extras));
     }
   }
   showToast(isDue?'⏰ Marked as due':isPart?`💰 Partial ₹${amount}`:`✓ Payment ₹${amount} collected`);
@@ -3730,7 +3724,7 @@ function saveNewCustomer() {
   // Save to extras in localStorage
   const extras=JSON.parse(localStorage.getItem(LS_CUSTS)||'[]');
   extras.push(customer);
-  localStorage.setItem(LS_CUSTS,JSON.stringify(extras));
+  lsSet(LS_CUSTS,JSON.stringify(extras));
   closeModal('modal-add-customer');
   showToast('✓ Customer added: '+name);
   custFilterActive = 'all';
@@ -4531,7 +4525,7 @@ async function uploadCustomers(input) {
       if(idx>=0) { Object.assign(STATE.customers[idx],customer); updated++; }
       else { customer.id='cu'+Date.now()+added; STATE.customers.push(customer); extras.push(customer); added++; }
     }
-    localStorage.setItem(LS_CUSTS,JSON.stringify(extras));
+    lsSet(LS_CUSTS,JSON.stringify(extras));
     showToast(`✓ ${added} added, ${updated} updated`);
     renderCustomerList();
   } catch(e) { showToast('Upload failed: '+e.message); }
@@ -4719,7 +4713,7 @@ function saveUrl() {
   const url=document.getElementById('gs_url').value.trim();
   if(url && !url.startsWith('https://script.google.com')) { showToast('Paste the full Apps Script URL'); return; }
   STATE.sheetUrl=url;
-  localStorage.setItem(LS_URL,url);
+  lsSet(LS_URL,url);
   updateSheetDot();
   showToast(url?'✓ URL saved — Share link ready below':'URL cleared');
   // Restart poll if delivery
@@ -6024,7 +6018,7 @@ function saveDeliveryPayment() {
       const extras=JSON.parse(localStorage.getItem(LS_CUSTS)||'[]');
       const ei=extras.findIndex(x=>x.id===cust.id);
       if(ei>=0) extras[ei].balance=cust.balance; else extras.push({...cust});
-      localStorage.setItem(LS_CUSTS,JSON.stringify(extras));
+      lsSet(LS_CUSTS,JSON.stringify(extras));
     }
   }
   saveOrders();
@@ -6224,7 +6218,7 @@ async function loadRangeFromSheet() {
         });
         const dayOrders = Object.values(orderMap);
         // Save to localStorage for this date
-        localStorage.setItem(LS_PREFIX + date, JSON.stringify(dayOrders));
+        lsSet(LS_PREFIX + date, JSON.stringify(dayOrders));
         // Add to STATE.orders if not already there
         dayOrders.forEach(o => {
           if(!existingIds.has(o.id)) {
@@ -7184,7 +7178,7 @@ const PI_MODES = {
 };
 
 function savePaymentLedger() {
-  localStorage.setItem(LS_PAYMENTS, JSON.stringify(STATE.payments));
+  lsSet(LS_PAYMENTS, JSON.stringify(STATE.payments));
 }
 
 // ── Filter state ─────────────────────────────────────────────────────
