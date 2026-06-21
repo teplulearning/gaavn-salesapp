@@ -7827,11 +7827,17 @@ function applyRoleUI() {
 // Build the role cards as soon as the DOM is ready.
 // Three methods to ensure it fires on every browser/origin combination:
 function _startApp() {
-  // Restore any localStorage data that Android may have cleared
+  // Show role screen immediately so user can tap
+  try { buildRoleScreen(); } catch(e) {}
+  // Restore from IDB with timeout - never block the app
+  var idbDone = false;
+  var fallbackTimer = setTimeout(function() {
+    if(!idbDone) { idbDone = true; _startAppAfterRestore(); }
+  }, 1500); // 1.5s max wait
   restoreFromIDB().then(function() {
-    _startAppAfterRestore();
+    if(!idbDone) { idbDone = true; clearTimeout(fallbackTimer); _startAppAfterRestore(); }
   }).catch(function() {
-    _startAppAfterRestore();
+    if(!idbDone) { idbDone = true; clearTimeout(fallbackTimer); _startAppAfterRestore(); }
   });
 }
 function _startAppAfterRestore() {
