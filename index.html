@@ -3,12 +3,6 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-<meta name="theme-color" content="#C8830A">
-<meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="apple-mobile-web-app-title" content="Gaavn Sales">
-<link rel="manifest" href="data:application/manifest+json;base64,eyJuYW1lIjogIkdhYXZuIEZyZXNoIFNhbGVzIiwgInNob3J0X25hbWUiOiAiR2Fhdm4gU2FsZXMiLCAiZGVzY3JpcHRpb24iOiAiR2Fhdm4gRnJlc2ggU2FsZXMgT3JkZXIgU3lzdGVtIiwgInN0YXJ0X3VybCI6ICIvZ2Fhdm4tc2FsZXNhcHAvP3NoZWV0VXJsPWh0dHBzOi8vc2NyaXB0Lmdvb2dsZS5jb20vbWFjcm9zL3MvQUtmeWNiekc0ZFdxbHBCVk1jNjJVSGtGSEEtZHZFTG1zblY3dnQxaTRYVEVZdkk3Q0VQSHpjRWNUR2IwNVBpemV5Tmc3c1c0ZlEvZXhlYyIsICJzY29wZSI6ICIvZ2Fhdm4tc2FsZXNhcHAvIiwgImRpc3BsYXkiOiAic3RhbmRhbG9uZSIsICJiYWNrZ3JvdW5kX2NvbG9yIjogIiNGNUYwRTgiLCAidGhlbWVfY29sb3IiOiAiI0M4ODMwQSIsICJvcmllbnRhdGlvbiI6ICJwb3J0cmFpdCIsICJpY29ucyI6IFt7InNyYyI6ICJkYXRhOmltYWdlL3N2Zyt4bWwsJTNDc3ZnIHhtbG5zPSdodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2Zycgdmlld0JveD0nMCAwIDE5MiAxOTInJTNFJTNDcmVjdCB3aWR0aD0nMTkyJyBoZWlnaHQ9JzE5Micgcng9JzI0JyBmaWxsPSclMjNDODgzMEEnLyUzRSUzQ3RleHQgeD0nOTYnIHk9JzEzMCcgdGV4dC1hbmNob3I9J21pZGRsZScgZm9udC1zaXplPScxMDAnJTNFJUYwJTlGJTkwJTg0JTNDL3RleHQlM0UlM0Mvc3ZnJTNFIiwgInNpemVzIjogIjE5MngxOTIiLCAidHlwZSI6ICJpbWFnZS9zdmcreG1sIiwgInB1cnBvc2UiOiAiYW55IG1hc2thYmxlIn0sIHsic3JjIjogImRhdGE6aW1hZ2Uvc3ZnK3htbCwlM0NzdmcgeG1sbnM9J2h0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnJyB2aWV3Qm94PScwIDAgNTEyIDUxMiclM0UlM0NyZWN0IHdpZHRoPSc1MTInIGhlaWdodD0nNTEyJyByeD0nNjQnIGZpbGw9JyUyM0M4ODMwQScvJTNFJTNDdGV4dCB4PScyNTYnIHk9JzM0MCcgdGV4dC1hbmNob3I9J21pZGRsZScgZm9udC1zaXplPScyNjAnJTNFJUYwJTlGJTkwJTg0JTNDL3RleHQlM0UlM0Mvc3ZnJTNFIiwgInNpemVzIjogIjUxMng1MTIiLCAidHlwZSI6ICJpbWFnZS9zdmcreG1sIiwgInB1cnBvc2UiOiAiYW55IG1hc2thYmxlIn1dLCAiY2F0ZWdvcmllcyI6IFsiYnVzaW5lc3MiLCAicHJvZHVjdGl2aXR5Il0sICJsYW5nIjogImVuLUlOIn0=">
 <title>Gaavn Fresh — Sales</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -221,13 +215,6 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
   <div style="text-align:center;margin-top:12px;" id="unlock-wrap">
     <button onclick="promptUnlockRoles()" style="background:none;border:none;color:var(--muted);font-size:12px;cursor:pointer;text-decoration:underline;">Admin / Delivery access</button>
   </div>
-
-  <!-- Save to home screen instructions -->
-  <div style="margin-top:20px;text-align:center;">
-    <button onclick="showSaveInstructions()" style="background:var(--amber);color:#fff;border:none;border-radius:10px;padding:10px 20px;font-size:13px;font-weight:700;cursor:pointer;">
-      📱 Save App to Home Screen
-    </button>
-  </div>
   <!-- Step 2: PIN entry (slides in after role tap) -->
   <div id="pin-panel" style="display:none;width:100%;max-width:340px;margin:0 auto;text-align:center;">
     <div id="pin-role-label" style="font-size:14px;font-weight:700;color:var(--ink);margin-bottom:6px;"></div>
@@ -326,9 +313,7 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
       <div class="search-box">
         <span class="search-icon">🔍</span>
         <input type="text" id="cust-search" placeholder="Search by name, area or category..." oninput="searchCustomers(this.value)">
-        <button onclick="syncCustomersFromSheet().then(function(){var cs=document.getElementById('cust-search');if(cs&&cs.value)searchCustomers(cs.value);})" 
-          style="background:none;border:none;font-size:18px;cursor:pointer;color:var(--teal);padding:0 4px;flex-shrink:0;" 
-          title="Refresh customer list from sheet">&#8635;</button>
+        <button onclick="syncCustomersFromSheet().then(function(){var cs=document.getElementById('cust-search');if(cs&&cs.value)searchCustomers(cs.value);})" style="background:none;border:none;font-size:18px;cursor:pointer;color:var(--teal);padding:0 4px;flex-shrink:0;" title="Refresh">&#8635;</button>
       </div>
       <div style="text-align:right;margin-top:6px;">
         <button onclick="showAddCustomer()" ontouchstart="" style="background:none;border:none;color:var(--teal,#028090);font-size:12px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif;padding:4px 0;">
@@ -423,14 +408,6 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
       <button onclick="exportDuesToSheet()" style="background:var(--blue);color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:12px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif;">📤 Export Dues</button>
     </div>
     <div class="page-sub">FIFO credit tracking · alerts · stop orders</div>
-    <div style="margin:8px 0 4px;">
-      <div class="search-box" style="width:100%;box-sizing:border-box;">
-        <span class="search-icon">🔍</span>
-        <input type="text" id="dues-search" placeholder="Search customer..." 
-          oninput="renderDues(this.value)"
-          style="flex:1;background:transparent;border:none;outline:none;font-family:'DM Sans',sans-serif;font-size:14px;color:var(--ink);">
-      </div>
-    </div>
     <div class="stats-row">
       <div class="stat-box"><div class="stat-num" id="due-count">0</div><div class="stat-lbl">Invoices Due</div></div>
       <div class="stat-box"><div class="stat-num" id="due-amount" style="font-size:16px;">&#8377;0</div><div class="stat-lbl">Total Due</div></div>
@@ -809,49 +786,6 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
 
 <div id="toast"></div>
 
-<!-- Save to Home Screen Instructions Modal -->
-<div class="modal-overlay" id="modal-save-instructions">
-  <div class="modal-sheet" style="padding:20px;">
-    <div class="modal-handle"></div>
-    <div class="modal-title">📱 Save to Home Screen</div>
-    <div style="font-size:13px;color:var(--muted);margin-bottom:16px;">Choose your method:</div>
-    
-    <div style="background:#FFF8E1;border-radius:10px;padding:14px;margin-bottom:12px;">
-      <div style="font-weight:700;font-size:13px;margin-bottom:8px;">📌 Method 1 — Xiaomi/Samsung (Easiest)</div>
-      <ol style="font-size:13px;color:var(--ink);line-height:2;padding-left:18px;">
-        <li>Open <b>Chrome</b> on your phone</li>
-        <li>Go to this URL:<br>
-          <div style="background:#fff;border-radius:6px;padding:8px;margin:4px 0;font-size:11px;font-family:monospace;word-break:break-all;color:var(--teal);">teplulearning.github.io/gaavn-salesapp</div>
-        </li>
-        <li>Tap <b>⋮</b> (3 dots top right)</li>
-        <li>Tap <b>"Add to Home screen"</b></li>
-        <li>Tap <b>"Create shortcut"</b></li>
-        <li>Check home screen pages (swipe right)</li>
-      </ol>
-    </div>
-
-    <div style="background:#E3F2FD;border-radius:10px;padding:14px;margin-bottom:12px;">
-      <div style="font-weight:700;font-size:13px;margin-bottom:8px;">🌐 Method 2 — Use Xiaomi Browser</div>
-      <ol style="font-size:13px;color:var(--ink);line-height:2;padding-left:18px;">
-        <li>Open <b>Mi Browser</b> (default Xiaomi browser)</li>
-        <li>Go to the same URL above</li>
-        <li>Tap <b>⋮</b> → <b>"Add to Desktop"</b></li>
-        <li>Icon appears on home screen immediately ✓</li>
-      </ol>
-    </div>
-
-    <div style="background:#E8F5E9;border-radius:10px;padding:14px;margin-bottom:16px;">
-      <div style="font-weight:700;font-size:13px;margin-bottom:8px;">✅ Method 3 — WhatsApp Link (No shortcut needed)</div>
-      <div style="font-size:13px;color:var(--ink);line-height:1.8;">
-        Just <b>bookmark this WhatsApp message</b> — whenever you need the app, 
-        tap the link in WhatsApp. The app opens in Chrome and your data is always saved.
-      </div>
-    </div>
-
-    <button onclick="closeModal('modal-save-instructions')" class="btn btn-primary" style="width:100%;">Got it</button>
-  </div>
-</div>
-
 <!-- MANAGE CUSTOMER MODAL -->
 <div class="modal-overlay" id="modal-manage-cust">
   <div class="modal-sheet">
@@ -1161,138 +1095,7 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
 </div>
 
 
-
-  <!-- PWA Install Banner -->
-  <div id="pwa-install-banner" style="display:none;position:fixed;bottom:70px;left:12px;right:12px;
-    background:#1e3a8a;color:#fff;border-radius:14px;padding:14px 16px;z-index:999;
-    box-shadow:0 4px 20px rgba(0,0,0,.3);display:none;align-items:center;gap:12px;">
-    <span style="font-size:28px;">🐄</span>
-    <div style="flex:1;">
-      <div style="font-size:13px;font-weight:700;">Install Gaavn Sales App</div>
-      <div style="font-size:11px;opacity:.8;margin-top:2px;">Works offline · Never loses data</div>
-    </div>
-    <button id="pwa-install-btn" style="background:#C8830A;color:#fff;border:none;border-radius:8px;
-      padding:8px 14px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;">
-      Install
-    </button>
-    <button onclick="document.getElementById('pwa-install-banner').style.display='none'"
-      style="background:none;border:none;color:rgba(255,255,255,.6);font-size:20px;cursor:pointer;padding:0;">✕</button>
-  </div>
-
 <script>
-
-// ── INDEXEDDB BACKUP LAYER ───────────────────────────────────────────
-// Backs up critical data to IndexedDB which Android never clears.
-// localStorage is still used for speed (synchronous reads).
-// IDB is the safety net when Android clears localStorage.
-const GF_IDB_NAME = 'gaavn-fresh-db';
-const GF_IDB_VERSION = 1;
-const GF_IDB_STORE = 'keyval';
-
-// Critical keys to protect (sheet URL, customers, orders, payments, role)
-const IDB_PROTECTED_KEYS = [
-  'gf_sheet_url', 'gf_customers_extra', 'gf_new_customers',
-  'gf_payments', 'gf_last_role', 'gf_pins', 'gf_master_code',
-  'gf_product_gst'
-];
-
-let _idb = null;
-function _openIDB() {
-  if(_idb) return Promise.resolve(_idb);
-  return new Promise(function(resolve, reject) {
-    var req = indexedDB.open(GF_IDB_NAME, GF_IDB_VERSION);
-    req.onupgradeneeded = function(e) {
-      e.target.result.createObjectStore(GF_IDB_STORE);
-    };
-    req.onsuccess = function(e) { _idb = e.target.result; resolve(_idb); };
-    req.onerror = function(e) { reject(e.target.error); };
-  });
-}
-
-function idbSet(key, value) {
-  return _openIDB().then(function(db) {
-    return new Promise(function(resolve, reject) {
-      var tx = db.transaction(GF_IDB_STORE, 'readwrite');
-      tx.objectStore(GF_IDB_STORE).put(value, key);
-      tx.oncomplete = resolve;
-      tx.onerror = function(e) { reject(e.target.error); };
-    });
-  }).catch(function(e) { console.warn('[GF-IDB] set failed:', e); });
-}
-
-function idbGet(key) {
-  return _openIDB().then(function(db) {
-    return new Promise(function(resolve, reject) {
-      var tx = db.transaction(GF_IDB_STORE, 'readonly');
-      var req = tx.objectStore(GF_IDB_STORE).get(key);
-      req.onsuccess = function(e) { resolve(e.target.result); };
-      req.onerror = function(e) { reject(e.target.error); };
-    });
-  }).catch(function() { return null; });
-}
-
-function idbDelete(key) {
-  return _openIDB().then(function(db) {
-    return new Promise(function(resolve) {
-      var tx = db.transaction(GF_IDB_STORE, 'readwrite');
-      tx.objectStore(GF_IDB_STORE).delete(key);
-      tx.oncomplete = resolve;
-    });
-  }).catch(function() {});
-}
-
-// DO NOT override localStorage - use explicit idbSet calls instead
-// Overriding localStorage can cause SecurityError on some Android browsers
-var _origLSSet = localStorage.setItem.bind(localStorage);
-var _origLSRemove = localStorage.removeItem.bind(localStorage);
-
-// Helper: save to both localStorage AND IDB
-function lsSet(key, value) {
-  try { localStorage.setItem(key, value); } catch(e) {}
-  idbSet(key, value);
-}
-function lsRemove(key) {
-  try { localStorage.removeItem(key); } catch(e) {}
-  idbDelete(key);
-}
-
-// On startup: restore any missing localStorage keys from IDB
-async function restoreFromIDB() {
-  try {
-    // Get all keys we should check
-    var keysToRestore = IDB_PROTECTED_KEYS.slice();
-    // Add order keys from IDB
-    var db = await _openIDB();
-    var allIDBKeys = await new Promise(function(resolve) {
-      var tx = db.transaction(GF_IDB_STORE, 'readonly');
-      var req = tx.objectStore(GF_IDB_STORE).getAllKeys();
-      req.onsuccess = function(e) { resolve(e.target.result || []); };
-      req.onerror = function() { resolve([]); };
-    });
-    // Add order keys
-    allIDBKeys.forEach(function(k) {
-      if(k.indexOf('gf_orders_') === 0 || k.indexOf('gf_order_draft') === 0) {
-        keysToRestore.push(k);
-      }
-    });
-
-    var restored = 0;
-    for(var i = 0; i < keysToRestore.length; i++) {
-      var key = keysToRestore[i];
-      if(!localStorage.getItem(key)) {
-        var val = await idbGet(key);
-        if(val !== null && val !== undefined) {
-          try { localStorage.setItem(key, val); } catch(e) {}
-          restored++;
-        }
-      }
-    }
-    if(restored > 0) console.log('[GF-IDB] Restored ' + restored + ' keys from IndexedDB');
-  } catch(e) {
-    console.warn('[GF-IDB] Restore failed:', e);
-  }
-}
-
 // ── PRODUCT CATALOGUE ───────────────────────────────────────────────
 const PRODUCTS = [
   {id:'paneer', name:'Paneer',        unit:'kg',   stdRate:260, emoji:'🧀', hsn:'0406', gstRate:0},
@@ -1887,31 +1690,25 @@ function clearPins() {
   buildRoleScreen();
 }
 
-function showSaveInstructions() {
-  var modal = document.getElementById('modal-save-instructions');
-  if(modal) modal.classList.add('open');
-}
-
 function promptUnlockRoles() {
-  const code = prompt('Enter master code:');
+  var code = prompt('Enter master code:');
   if(code === null) return;
   if(code === (localStorage.getItem('gf_master_code')||'GF2024')) {
     sessionStorage.setItem('gf_unlocked','1');
     buildRoleScreen();
   } else { alert('Incorrect code.'); }
 }
-// Cards are static HTML — we just show/hide them
 function buildRoleScreen() {
-  const pins = getPins();
-  const unlocked = sessionStorage.getItem('gf_unlocked')==='1';
-  ['owner','sales','delivery'].forEach(role => {
-    const card  = document.getElementById('card-'+role);
-    const badge = document.getElementById('pin-badge-'+role);
+  var pins = getPins();
+  var unlocked = sessionStorage.getItem('gf_unlocked')==='1';
+  ['owner','sales','delivery'].forEach(function(role) {
+    var card = document.getElementById('card-'+role);
+    var badge = document.getElementById('pin-badge-'+role);
     if(!card) return;
     card.style.display = (role==='sales' || unlocked) ? '' : 'none';
     if(badge) badge.style.display = pins[role] ? 'inline' : 'none';
   });
-  const uw = document.getElementById('unlock-wrap');
+  var uw = document.getElementById('unlock-wrap');
   if(uw) uw.style.display = unlocked ? 'none' : 'block';
 }
 
@@ -1990,7 +1787,7 @@ function checkPin() {
 
 function enterApp(role) {
   STATE.role = role;
-  lsSet(LS_ROLE, role);
+  localStorage.setItem(LS_ROLE, role);
   document.getElementById('role-screen').style.display = 'none';
   document.getElementById('app').style.display = 'block';
   const badge = document.getElementById('role-badge');
@@ -2008,7 +1805,7 @@ function enterApp(role) {
 function selectRole(role) { enterApp(role); }
 
 function switchRole() {
-  lsRemove(LS_ROLE);
+  localStorage.removeItem(LS_ROLE);
   STATE = {role:null,customers:[],orders:[],cart:{},selectedCustomer:null,orderDate:TODAY_KEY,
            sheetUrl:STATE.sheetUrl,custFilter:'all'};
   document.getElementById('app').style.display = 'none';
@@ -2127,11 +1924,12 @@ function initApp() {
   const paramUrl  = urlParams.get('sheetUrl') || urlParams.get('sheet');
   if(paramUrl && paramUrl.startsWith('https://script.google.com')) {
     // Save to localStorage so future sessions remember it
-    lsSet(LS_URL, paramUrl);
+    localStorage.setItem(LS_URL, paramUrl);
     STATE.sheetUrl = paramUrl;
     console.log('Sheet URL loaded from URL param and saved');
   } else {
     STATE.sheetUrl = localStorage.getItem(LS_URL) || DEFAULT_SHEET_URL;
+    if(!localStorage.getItem(LS_URL) && DEFAULT_SHEET_URL) localStorage.setItem(LS_URL, DEFAULT_SHEET_URL);
   }
   updateSheetDot();
   history.replaceState({screen:'home'},'','#home');
@@ -2183,7 +1981,7 @@ function saveOrders() {
   });
 
   Object.entries(byDate).forEach(([date, orders]) => {
-    lsSet(LS_PREFIX + date, JSON.stringify(orders));
+    localStorage.setItem(LS_PREFIX + date, JSON.stringify(orders));
     if(date === TODAY_KEY) {
       localStorage.setItem(LS_ORDERS, JSON.stringify(orders));
     }
@@ -2647,7 +2445,7 @@ function saveOrderDraft() {
     orderDate: STATE.orderDate || TODAY_KEY,
     notes: document.getElementById('order-notes')?.value || ''
   };
-  lsSet(LS_ORDER_DRAFT, JSON.stringify(draft));
+  localStorage.setItem(LS_ORDER_DRAFT, JSON.stringify(draft));
 }
 
 function clearOrderDraft() {
@@ -3615,7 +3413,7 @@ function savePayment(orderId) {
       const extras=JSON.parse(localStorage.getItem(LS_CUSTS)||'[]');
       const ei=extras.findIndex(x=>x.id===cust.id);
       if(ei>=0) extras[ei].balance=cust.balance; else extras.push({...cust});
-      lsSet(LS_CUSTS,JSON.stringify(extras));
+      localStorage.setItem(LS_CUSTS,JSON.stringify(extras));
     }
   }
   showToast(isDue?'⏰ Marked as due':isPart?`💰 Partial ₹${amount}`:`✓ Payment ₹${amount} collected`);
@@ -3724,7 +3522,7 @@ function saveNewCustomer() {
   // Save to extras in localStorage
   const extras=JSON.parse(localStorage.getItem(LS_CUSTS)||'[]');
   extras.push(customer);
-  lsSet(LS_CUSTS,JSON.stringify(extras));
+  localStorage.setItem(LS_CUSTS,JSON.stringify(extras));
   closeModal('modal-add-customer');
   showToast('✓ Customer added: '+name);
   custFilterActive = 'all';
@@ -3741,16 +3539,14 @@ function saveNewCustomer() {
 }
 
 // ── DUES ─────────────────────────────────────────────────────────────
-function renderDues(searchQ) {
+function renderDues() {
   // ── Compute credit status for all unpaid orders ──────────────────
   const unpaidOrders = STATE.orders.filter(o =>
     o.status==='due' || o.status==='partial' ||
     ((o.status==='confirmed'||o.status==='delivered') && (o.total||0)>(o.payment?.amount||0))
   );
 
-  const _duesQ = (searchQ||document.getElementById('dues-search')?.value||'').toLowerCase().trim();
-  const custsDue = STATE.customers.filter(c=>(c.balance||0)>0 &&
-    (!_duesQ || c.name.toLowerCase().includes(_duesQ) || (c.area||'').toLowerCase().includes(_duesQ)));
+  const custsDue = STATE.customers.filter(c=>(c.balance||0)>0);
   const totalDue = unpaidOrders.reduce((s,o)=>s+((o.total||0)-(o.payment?.amount||0)),0)
                  + custsDue.reduce((s,c)=>s+(c.balance||0),0);
 
@@ -3844,8 +3640,7 @@ function renderDues(searchQ) {
       html += '<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">';
       html += '<button data-cid="'+_safeId+'" onclick="recordDuePayment(decodeURIComponent(this.dataset.cid))" style="flex:1;padding:8px;background:var(--green);color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">&#128176; Record Payment</button>';
       if(custPhone) {
-        html += '<button data-cid="'+_safeId+'" data-tp="client" onclick="sendCreditWA(decodeURIComponent(this.dataset.cid),this.dataset.tp)" style="padding:8px 12px;background:#25D366;color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">&#128242; Remind Client</button>'+
-        '<button data-cid="'+_safeId+'" onclick="sendStatement(decodeURIComponent(this.dataset.cid))" style="padding:8px 12px;background:#1565C0;color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">&#128196; Send Statement</button>';
+        html += '<button data-cid="'+_safeId+'" data-tp="client" onclick="sendCreditWA(decodeURIComponent(this.dataset.cid),this.dataset.tp)" style="padding:8px 12px;background:#25D366;color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">&#128242; Remind Client</button>';
       }
       html += '<button data-cid="'+_safeId+'" data-tp="internal" onclick="sendCreditWA(decodeURIComponent(this.dataset.cid),this.dataset.tp)" style="padding:8px 12px;background:var(--amber);color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">&#128203; Alert Sales</button>';
       html += '</div>';
@@ -3872,282 +3667,17 @@ function recordDuePayment(custId) {
   document.getElementById('modal-payment-in').classList.add('open');
 }
 
-async function sendStatement(custId) {
-  const cust = STATE.customers.find(function(c){return c.id===custId;});
-  if(!cust) return;
-  const url = STATE.sheetUrl || DEFAULT_SHEET_URL;
-  if(!url) { showToast('No sheet connected'); return; }
-  showToast('Fetching statement...', 4000);
-
-  var orders = [], openingBal = parseFloat(cust.balance||cust.openingBalance||0)||0;
-  try {
-    var p = new URLSearchParams({action:'getCustomerOrders', phone:cust.phone||'',
-      customerId:cust.id||'', customerName:cust.name||''});
-    var res = await fetch(url + '?' + p.toString());
-    var json = await res.json().catch(function(){return {};});
-    if(json.orders) { orders = json.orders; if(json.balance!==undefined) openingBal=parseFloat(json.balance)||0; }
-  } catch(e) {
-    orders = STATE.orders.filter(function(o){return o.customerId===custId;}).map(function(o){
-      return {'Order ID':o.id,'Date':o.date,'Status':o.status,
-        'Order Total (Rs)':o.total||0,'Payment Amt':o.payment?o.payment.amount||0:0,
-        'Payment Mode':o.payment?o.payment.mode||'':'','_items':o.items||[]};
-    });
-  }
-
-  // Group rows by Order ID
-  var orderMap = {};
-  orders.forEach(function(row){
-    var oid = String(row['Order ID']||'').trim();
-    if(!oid||oid.indexOf('TOTAL:')===0) return;
-    if(!orderMap[oid]) orderMap[oid]={id:oid,
-      date:String(row['Date']||'').substring(0,10), status:row['Status']||'',
-      total:parseFloat(row['Order Total (Rs)'])||0,
-      payAmt:parseFloat(row['Payment Amt'])||0, payMode:row['Payment Mode']||'',
-      items:row['_items']||[]};
-    if(!row['_items']&&row['Product']) orderMap[oid].items.push({
-      name:row['Product']||'', qty:parseFloat(row['Qty'])||0, unit:row['Unit']||'',
-      rate:parseFloat(row['Rate (Rs)'])||0, amount:parseFloat(row['Amount (Rs)'])||0});
-  });
-
-  function fmtD(d) {
-    if(!d) return '';
-    try { var dt=new Date(d); if(!isNaN(dt)){
-      var mn=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-      return String(dt.getDate()).padStart(2,'0')+' '+mn[dt.getMonth()]+' '+dt.getFullYear();
-    }} catch(e){} return d;
-  }
-  function inr(n) { return 'Rs ' + (parseFloat(n)||0).toLocaleString('en-IN'); }
-
-  var ordList = Object.values(orderMap).filter(function(o){return o.status!=='cancelled';})
-    .sort(function(a,b){return a.date.localeCompare(b.date);});
-  var totalOrders=0, totalPaid=0;
-  ordList.forEach(function(o){totalOrders+=o.total; totalPaid+=o.payAmt;});
-  var totalDue = openingBal + totalOrders - totalPaid;
-
-  // Load jsPDF + autotable dynamically
-  showToast('Generating PDF...', 5000);
-  try {
-    if(!window.jspdf) {
-      await new Promise(function(resolve, reject){
-        var s1 = document.createElement('script');
-        s1.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
-        s1.onload = function(){
-          var s2 = document.createElement('script');
-          s2.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js';
-          s2.onload = resolve;
-          s2.onerror = reject;
-          document.head.appendChild(s2);
-        };
-        s1.onerror = reject;
-        document.head.appendChild(s1);
-      });
-    }
-  } catch(e) {
-    showToast('Could not load PDF library. Check connection.');
-    return;
-  }
-
-  var jsPDF = window.jspdf.jsPDF;
-  var doc = new jsPDF({orientation:'portrait', unit:'mm', format:'a4'});
-  var pageW = doc.internal.pageSize.getWidth();
-  var margin = 14;
-  var y = 0;
-
-  // ── HEADER BANNER ──
-  doc.setFillColor(30, 58, 138);  // navy blue
-  doc.rect(0, 0, pageW, 38, 'F');
-  doc.setTextColor(255, 255, 255);
-  doc.setFontSize(18); doc.setFont('helvetica','bold');
-  doc.text('GAAVN FRESH', margin, 13);
-  doc.setFontSize(8); doc.setFont('helvetica','normal');
-  doc.text('Farm Fresh Dairy  |  Account Statement', margin, 19);
-  // Customer info
-  doc.setFontSize(10); doc.setFont('helvetica','bold');
-  doc.text(cust.name, margin, 28);
-  doc.setFontSize(8); doc.setFont('helvetica','normal');
-  var custSub = (cust.area||'') + (cust.phone ? '   Ph: '+cust.phone : '') + (cust.category ? '   '+cust.category : '');
-  if(custSub.trim()) doc.text(custSub.trim(), margin, 33);
-  // Date top right
-  doc.setFontSize(8);
-  doc.text('Date: '+fmtD(TODAY_KEY), pageW-margin, 28, {align:'right'});
-  y = 45;
-
-  // ── SUMMARY BOXES ──
-  var boxW = (pageW - margin*2 - 8) / 3;
-  var boxes = [
-    {label:'Opening Balance', val:inr(openingBal), color:[219,234,254]},
-    {label:'Total Orders',    val:inr(totalOrders), color:[219,234,254]},
-    {label:'AMOUNT DUE',     val:inr(totalDue),    color:[254,226,226]},
-  ];
-  boxes.forEach(function(b, i){
-    var bx = margin + i*(boxW+4);
-    doc.setFillColor(b.color[0],b.color[1],b.color[2]);
-    doc.roundedRect(bx, y, boxW, 14, 2, 2, 'F');
-    doc.setDrawColor(180,200,230);
-    doc.roundedRect(bx, y, boxW, 14, 2, 2, 'S');
-    doc.setTextColor(30,58,138);
-    doc.setFontSize(7); doc.setFont('helvetica','normal');
-    doc.text(b.label, bx+boxW/2, y+5, {align:'center'});
-    doc.setFontSize(i===2?9:8); doc.setFont('helvetica','bold');
-    doc.setTextColor(i===2?180:30, i===2?20:58, i===2?20:138);
-    doc.text(b.val, bx+boxW/2, y+11, {align:'center'});
-  });
-  y += 20;
-
-  // Opening balance line if set
-  if(openingBal > 0) {
-    doc.setFillColor(239,246,255);
-    doc.rect(margin, y, pageW-margin*2, 8, 'F');
-    doc.setDrawColor(147,197,253);
-    doc.rect(margin, y, pageW-margin*2, 8, 'S');
-    doc.setTextColor(30,64,175); doc.setFontSize(8); doc.setFont('helvetica','bold');
-    doc.text('Opening Balance (brought forward)', margin+3, y+5.5);
-    doc.text(inr(openingBal), pageW-margin-2, y+5.5, {align:'right'});
-    y += 12;
-  }
-
-  // ── ORDERS ──
-  ordList.forEach(function(o){
-    var outstanding = Math.max(0, o.total - o.payAmt);
-    // Check if need new page
-    var estimatedH = 10 + (o.items.length * 7) + 20;
-    if(y + estimatedH > 270) { doc.addPage(); y = 15; }
-
-    // Order header
-    doc.setFillColor(239,246,255);
-    doc.rect(margin, y, pageW-margin*2, 8, 'F');
-    doc.setDrawColor(147,197,253);
-    doc.rect(margin, y, pageW-margin*2, 8, 'S');
-    doc.setTextColor(30,58,138); doc.setFontSize(8); doc.setFont('helvetica','bold');
-    doc.text('Order #'+o.id, margin+3, y+5.5);
-    doc.setFont('helvetica','normal'); doc.setTextColor(100,116,139);
-    doc.text(fmtD(o.date), pageW-margin-2, y+5.5, {align:'right'});
-    y += 8;
-
-    // Items table
-    var tableRows = [];
-    o.items.filter(function(i){return i.name&&i.qty>0;}).forEach(function(item){
-      var amt = item.amount||(item.qty*item.rate);
-      tableRows.push([
-        item.name,
-        item.qty + (item.unit?' '+item.unit:''),
-        inr(item.rate),
-        inr(amt)
-      ]);
-    });
-    if(!tableRows.length) tableRows.push(['(no item details)','','','']);
-
-    doc.autoTable({
-      startY: y,
-      margin: {left: margin, right: margin},
-      head: [['Product','Qty','Rate','Amount']],
-      body: tableRows,
-      foot: [
-        ['Order Total','','',inr(o.total)],
-        ...(o.payAmt>0?[['Payment Received'+(o.payMode?' ('+o.payMode+')':""),'','','- '+inr(o.payAmt)]]:[]),
-        ...(outstanding>0?[['Outstanding','','',inr(outstanding)]]:[]),
-      ],
-      headStyles:{fillColor:[30,58,138], textColor:255, fontSize:8, fontStyle:'bold', halign:'left'},
-      bodyStyles:{fontSize:8, textColor:[30,41,59]},
-      columnStyles:{1:{halign:'right'},2:{halign:'right'},3:{halign:'right',fontStyle:'bold'}},
-      footStyles:{fillColor:[219,234,254], textColor:[30,64,175], fontStyle:'bold', fontSize:8},
-      alternateRowStyles:{fillColor:[248,250,255]},
-      tableLineColor:[191,219,254], tableLineWidth:0.3,
-      theme:'grid',
-      didParseCell: function(data){
-        if(data.section==='foot'){
-          var txt = String(data.cell.raw||'');
-          if(txt.indexOf('Outstanding')===0) {
-            data.cell.styles.fillColor=[254,243,199];
-            data.cell.styles.textColor=[146,64,14];
-          }
-          if(txt.indexOf('Payment')===0||txt.startsWith('- Rs')||txt.startsWith('-')) {
-            data.cell.styles.fillColor=[220,252,231];
-            data.cell.styles.textColor=[22,101,52];
-          }
-        }
-      }
-    });
-    y = doc.lastAutoTable.finalY + 5;
-  });
-
-  // ── FINAL SUMMARY ──
-  if(y > 250) { doc.addPage(); y = 15; }
-  doc.setFillColor(30,58,138);
-  doc.rect(margin, y, pageW-margin*2, openingBal>0?28:24, 'F');
-  var sy = y + 6;
-  doc.setTextColor(255,255,255); doc.setFontSize(8); doc.setFont('helvetica','normal');
-  if(openingBal>0) {
-    doc.text('Opening Balance', margin+3, sy); doc.text(inr(openingBal), pageW-margin-3, sy, {align:'right'}); sy+=5;
-  }
-  doc.text('Orders Total', margin+3, sy); doc.text(inr(totalOrders), pageW-margin-3, sy, {align:'right'}); sy+=5;
-  doc.text('Payments Received', margin+3, sy); doc.text('- '+inr(totalPaid), pageW-margin-3, sy, {align:'right'}); sy+=5;
-  doc.setDrawColor(255,255,255,0.3); doc.line(margin+3, sy, pageW-margin-3, sy); sy+=4;
-  doc.setFontSize(10); doc.setFont('helvetica','bold');
-  doc.setTextColor(252,211,77);  // gold
-  doc.text('AMOUNT DUE', margin+3, sy);
-  doc.text(inr(totalDue), pageW-margin-3, sy, {align:'right'});
-  y += (openingBal>0?28:24) + 6;
-
-  // ── FOOTER MESSAGE ──
-  doc.setFillColor(239,246,255);
-  doc.rect(margin, y, pageW-margin*2, 16, 'F');
-  doc.setDrawColor(147,197,253); doc.rect(margin, y, pageW-margin*2, 16, 'S');
-  doc.setTextColor(30,64,175); doc.setFontSize(8); doc.setFont('helvetica','normal');
-  doc.text('Dear '+cust.name+',', margin+3, y+5);
-  doc.text('Kindly make the payment at the earliest. For queries, please contact Gaavn Fresh.', margin+3, y+11);
-  y += 20;
-
-  // ── PAGE NUMBERS ──
-  var totalPages = doc.internal.getNumberOfPages();
-  for(var pg=1; pg<=totalPages; pg++){
-    doc.setPage(pg);
-    doc.setFontSize(7); doc.setTextColor(148,163,184); doc.setFont('helvetica','normal');
-    doc.text('Gaavn Fresh  |  Page '+pg+' of '+totalPages, pageW/2, 290, {align:'center'});
-  }
-
-  // ── SHARE / DOWNLOAD ──
-  var pdfBlob = doc.output('blob');
-  var fileName = 'Statement_'+cust.name.replace(/[^a-z0-9]/gi,'_')+'_'+TODAY_KEY+'.pdf';
-
-  if(navigator.share && navigator.canShare && navigator.canShare({files:[new File([pdfBlob],'test.pdf',{type:'application/pdf'})]})) {
-    // Web Share API - can share directly to WhatsApp
-    var file = new File([pdfBlob], fileName, {type:'application/pdf'});
-    navigator.share({title:'Statement - '+cust.name, files:[file]})
-      .catch(function(e){ if(e.name!=='AbortError') _downloadPdf(pdfBlob, fileName); });
-  } else {
-    // Fallback: download PDF
-    _downloadPdf(pdfBlob, fileName);
-    showToast('PDF downloaded. Open it and share via WhatsApp.', 5000);
-  }
-}
-
-function _downloadPdf(blob, fileName) {
-  var url = URL.createObjectURL(blob);
-  var a = document.createElement('a');
-  a.href = url; a.download = fileName;
-  document.body.appendChild(a); a.click();
-  document.body.removeChild(a);
-  setTimeout(function(){ URL.revokeObjectURL(url); }, 3000);
-}
-
-
 function sendCreditWA(custId, type) {
   const cust = STATE.customers.find(c=>c.id===custId);
   if(!cust) return;
   const alerts = getCustomerCreditAlerts(custId);
-  const openBal = cust.balance || cust.openingBalance || 0;
-  // Allow remind even if no overdue orders — customer may have an opening balance
-  if(!alerts.length && openBal <= 0) { showToast('No outstanding dues for this customer'); return; }
+  if(!alerts.length) { showToast('No overdue orders for this customer'); return; }
 
-  const ordersOwed = alerts.reduce((s,x)=>s+((x.order.total||0)-(x.order.payment?.amount||0)),0);
-  const totalOwed = ordersOwed + openBal;
-  const orderLines = alerts.length
-    ? alerts.map(x=>{
-        const outstanding = (x.order.total||0)-(x.order.payment?.amount||0);
-        return '\u2022 Order #'+x.order.id+' dated '+x.order.date+' \u2014 \u20b9'+outstanding.toLocaleString('en-IN')+' ('+x.cs.daysOverdue+'d overdue)';
-      }).join('\n')
-    : '\u2022 Opening balance: \u20b9'+openBal.toLocaleString('en-IN');
+  const totalOwed = alerts.reduce((s,x)=>s+((x.order.total||0)-(x.order.payment?.amount||0)),0);
+  const orderLines = alerts.map(x=>{
+    const outstanding = (x.order.total||0)-(x.order.payment?.amount||0);
+    return '\u2022 Order #'+x.order.id+' dated '+x.order.date+' \u2014 \u20b9'+outstanding.toLocaleString('en-IN')+' ('+x.cs.daysOverdue+'d overdue)';
+  }).join('\n');
 
   const cfg = getCreditConfig(cust.category);
   let msg = '';
@@ -4323,14 +3853,12 @@ async function syncCustomersFromSheet() {
     });
     localStorage.setItem(LS_CUSTS, JSON.stringify(extras));
     if(added > 0) showToast('✓ '+added+' new customer(s) synced from sheet');
-    // If salesperson is on New Order screen, refresh the search results
     if(document.getElementById('screen-new-order')?.classList.contains('active')) {
-      const cs = document.getElementById('cust-search');
+      var cs = document.getElementById('cust-search');
       if(cs && cs.value.trim()) searchCustomers(cs.value);
     }
-    // If on Customers screen, refresh the list
     if(document.getElementById('screen-customers')?.classList.contains('active')) {
-      renderCustomerList(document.getElementById('cust-list-search')?.value || '');
+      renderCustomerList(document.getElementById('cust-list-search')?.value||'');
     }
   } catch(e) {
     console.warn('Customer sync from sheet failed:', e);
@@ -4525,7 +4053,7 @@ async function uploadCustomers(input) {
       if(idx>=0) { Object.assign(STATE.customers[idx],customer); updated++; }
       else { customer.id='cu'+Date.now()+added; STATE.customers.push(customer); extras.push(customer); added++; }
     }
-    lsSet(LS_CUSTS,JSON.stringify(extras));
+    localStorage.setItem(LS_CUSTS,JSON.stringify(extras));
     showToast(`✓ ${added} added, ${updated} updated`);
     renderCustomerList();
   } catch(e) { showToast('Upload failed: '+e.message); }
@@ -4713,7 +4241,7 @@ function saveUrl() {
   const url=document.getElementById('gs_url').value.trim();
   if(url && !url.startsWith('https://script.google.com')) { showToast('Paste the full Apps Script URL'); return; }
   STATE.sheetUrl=url;
-  lsSet(LS_URL,url);
+  localStorage.setItem(LS_URL,url);
   updateSheetDot();
   showToast(url?'✓ URL saved — Share link ready below':'URL cleared');
   // Restart poll if delivery
@@ -6018,7 +5546,7 @@ function saveDeliveryPayment() {
       const extras=JSON.parse(localStorage.getItem(LS_CUSTS)||'[]');
       const ei=extras.findIndex(x=>x.id===cust.id);
       if(ei>=0) extras[ei].balance=cust.balance; else extras.push({...cust});
-      lsSet(LS_CUSTS,JSON.stringify(extras));
+      localStorage.setItem(LS_CUSTS,JSON.stringify(extras));
     }
   }
   saveOrders();
@@ -6218,7 +5746,7 @@ async function loadRangeFromSheet() {
         });
         const dayOrders = Object.values(orderMap);
         // Save to localStorage for this date
-        lsSet(LS_PREFIX + date, JSON.stringify(dayOrders));
+        localStorage.setItem(LS_PREFIX + date, JSON.stringify(dayOrders));
         // Add to STATE.orders if not already there
         dayOrders.forEach(o => {
           if(!existingIds.has(o.id)) {
@@ -7178,7 +6706,7 @@ const PI_MODES = {
 };
 
 function savePaymentLedger() {
-  lsSet(LS_PAYMENTS, JSON.stringify(STATE.payments));
+  localStorage.setItem(LS_PAYMENTS, JSON.stringify(STATE.payments));
 }
 
 // ── Filter state ─────────────────────────────────────────────────────
@@ -7821,29 +7349,15 @@ function applyRoleUI() {
 // Build the role cards as soon as the DOM is ready.
 // Three methods to ensure it fires on every browser/origin combination:
 function _startApp() {
-  // Show role screen immediately so user can tap
-  try { buildRoleScreen(); } catch(e) {}
-  // Restore from IDB with timeout - never block the app
-  var idbDone = false;
-  var fallbackTimer = setTimeout(function() {
-    if(!idbDone) { idbDone = true; _startAppAfterRestore(); }
-  }, 1500); // 1.5s max wait
-  restoreFromIDB().then(function() {
-    if(!idbDone) { idbDone = true; clearTimeout(fallbackTimer); _startAppAfterRestore(); }
-  }).catch(function() {
-    if(!idbDone) { idbDone = true; clearTimeout(fallbackTimer); _startAppAfterRestore(); }
-  });
-}
-function _startAppAfterRestore() {
-  const savedRole = localStorage.getItem(LS_ROLE);
-  if (savedRole) {
-    const pins = getPins();
-    if (!pins[savedRole]) {
+  var savedRole = localStorage.getItem(LS_ROLE);
+  if(savedRole) {
+    var pins = getPins();
+    if(!pins[savedRole]) {
       try { enterApp(savedRole); return; } catch(e) {}
     }
   }
   try { buildRoleScreen(); } catch(e) { console.error('buildRoleScreen failed:', e); }
-}  // end _startAppAfterRestore
+}
 if(document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', _startApp);
 } else {
@@ -7851,60 +7365,70 @@ if(document.readyState === 'loading') {
   _startApp();
 }
 
-
-
-// ── PWA INSTALL PROMPT ───────────────────────────────────────────────
-let _pwaInstallEvent = null;
-window.addEventListener('beforeinstallprompt', function(e) {
-  e.preventDefault();
-  _pwaInstallEvent = e;
-  // Show banner after 3 seconds if not already installed
-  setTimeout(function() {
-    const banner = document.getElementById('pwa-install-banner');
-    if(banner && _pwaInstallEvent) {
-      banner.style.display = 'flex';
+// ── PAGE VISIBILITY HANDLER ─────────────────────────────────────────
+// On Android, switching to WhatsApp and back can suspend/reload the page.
+// When the page becomes visible again, re-merge orders from localStorage.
+document.addEventListener('visibilitychange', function() {
+  // Save order draft whenever user switches away (app loses focus)
+  if(document.visibilityState === 'hidden') {
+    if(typeof saveOrderDraft === 'function') saveOrderDraft();
+  }
+  if(document.visibilityState === 'visible' && STATE && STATE.role) {
+    var existingIds = new Set(STATE.orders.map(function(o){return o.id;}));
+    for(var i=0; i<localStorage.length; i++) {
+      var key = localStorage.key(i);
+      if(!key || key.indexOf(LS_PREFIX)!==0) continue;
+      var date = key.slice(LS_PREFIX.length);
+      if(date.length!==10) continue; // must be yyyy-mm-dd
+      try {
+        var stored = JSON.parse(localStorage.getItem(key)||'[]');
+        stored.forEach(function(o) {
+          if(!existingIds.has(o.id)) {
+            STATE.orders.push(o);
+            existingIds.add(o.id);
+          }
+        });
+      } catch(e) {}
     }
-  }, 3000);
-});
-
-document.addEventListener('DOMContentLoaded', function() {
-  const btn = document.getElementById('pwa-install-btn');
-  if(btn) {
-    btn.addEventListener('click', function() {
-      if(!_pwaInstallEvent) return;
-      _pwaInstallEvent.prompt();
-      _pwaInstallEvent.userChoice.then(function(result) {
-        if(result.outcome === 'accepted') {
-          document.getElementById('pwa-install-banner').style.display = 'none';
-          showToast('✓ App installed! Find it on your home screen.', 4000);
-        }
-        _pwaInstallEvent = null;
-      });
-    });
+    if(typeof renderOrdersList==='function') renderOrdersList();
+    if(typeof renderDashboard==='function') renderDashboard();
+    if(typeof renderHistory==='function') {
+      var h = document.getElementById('screen-history');
+      if(h && h.classList.contains('active')) renderHistory();
+    }
   }
 });
 
-window.addEventListener('appinstalled', function() {
-  document.getElementById('pwa-install-banner').style.display = 'none';
-  _pwaInstallEvent = null;
-  console.log('[GF] PWA installed successfully');
+// ── ANDROID BACK BUTTON ──────────────────────────────────────────────
+window.addEventListener('popstate', function() {
+  if(!STATE || !STATE.role) return;
+  _inPopstate = true;
+  try {
+    var openModalEl = document.querySelector('.modal-overlay.open');
+    if(openModalEl) {
+      openModalEl.classList.remove('open');
+      var scr = document.querySelector('.screen.active');
+      var sid = scr ? scr.id.replace('screen-','') : 'home';
+      history.pushState({screen:sid},'','#'+sid);
+      return;
+    }
+    if(document.getElementById('screen-new-order')?.classList.contains('active')) {
+      if(typeof saveOrderDraft==='function') saveOrderDraft();
+      showScreen('home'); return;
+    }
+    if(!document.getElementById('screen-home')?.classList.contains('active')) {
+      showScreen('home'); return;
+    }
+  } finally { _inPopstate = false; }
 });
 
-// ── SERVICE WORKER REGISTRATION ─────────────────────────────────────
-if('serviceWorker' in navigator) {
-  window.addEventListener('load', function() {
-    // SW must be a separate file — register sw.js from same directory
-    navigator.serviceWorker.register('./sw.js', {scope: '/gaavn-salesapp/'})
-      .then(function(reg) {
-        console.log('[GF] Service Worker registered');
-        reg.addEventListener('updatefound', function() {
-          showToast('App update available — refresh to update', 4000);
-        });
-      })
-      .catch(function(err) {
-        // SW unavailable (blob: protocol, file: protocol, etc.) — non-fatal
-        console.warn('[GF] Service Worker not available:', err.message);
-      });
-  });
-}
->
+// pageshow fires on back-navigation (bfcache restore)
+window.addEventListener('pageshow', function(e) {
+  if(e.persisted && STATE && STATE.role) {
+    if(typeof renderOrdersList==='function') renderOrdersList();
+    if(typeof renderDashboard==='function') renderDashboard();
+  }
+});
+</script>
+</body>
+</html>
