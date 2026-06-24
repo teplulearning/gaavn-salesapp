@@ -3,6 +3,11 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
+<meta name="theme-color" content="#C8830A">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Gaavn Sales">
+<link rel="manifest" href="data:application/manifest+json;base64,eyJuYW1lIjogIkdhYXZuIEZyZXNoIFNhbGVzIiwgInNob3J0X25hbWUiOiAiR2Fhdm4gU2FsZXMiLCAic3RhcnRfdXJsIjogIi9nYWF2bi1zYWxlc2FwcC8/c2hlZXRVcmw9aHR0cHM6Ly9zY3JpcHQuZ29vZ2xlLmNvbS9tYWNyb3Mvcy9BS2Z5Y2J6RzRkV3FscEJWTWM2MlVIa0ZIQS1kdkVMbXNuVjd2dDFpNFhURVl2STdDRVBIemNFY1RHYjA1UGl6ZXlOZzdzVzRmUS9leGVjIiwgInNjb3BlIjogIi9nYWF2bi1zYWxlc2FwcC8iLCAiZGlzcGxheSI6ICJzdGFuZGFsb25lIiwgImJhY2tncm91bmRfY29sb3IiOiAiI0Y1RjBFOCIsICJ0aGVtZV9jb2xvciI6ICIjQzg4MzBBIiwgIm9yaWVudGF0aW9uIjogInBvcnRyYWl0IiwgImljb25zIjogW3sic3JjIjogImRhdGE6aW1hZ2Uvc3ZnK3htbCwlM0NzdmcgeG1sbnM9J2h0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnJyB2aWV3Qm94PScwIDAgNTEyIDUxMiclM0UlM0NyZWN0IHdpZHRoPSc1MTInIGhlaWdodD0nNTEyJyByeD0nNjQnIGZpbGw9JyUyM0M4ODMwQScvJTNFJTNDdGV4dCB4PScyNTYnIHk9JzM0MCcgdGV4dC1hbmNob3I9J21pZGRsZScgZm9udC1zaXplPScyNjAnJTNFJUYwJTlGJTkwJTg0JTNDL3RleHQlM0UlM0Mvc3ZnJTNFIiwgInNpemVzIjogIjUxMng1MTIiLCAidHlwZSI6ICJpbWFnZS9zdmcreG1sIiwgInB1cnBvc2UiOiAiYW55IG1hc2thYmxlIn1dfQ==">
 <title>Gaavn Fresh — Sales</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -1928,8 +1933,9 @@ function initApp() {
     STATE.sheetUrl = paramUrl;
     console.log('Sheet URL loaded from URL param and saved');
   } else {
-    STATE.sheetUrl = localStorage.getItem(LS_URL) || DEFAULT_SHEET_URL;
-    if(!localStorage.getItem(LS_URL) && DEFAULT_SHEET_URL) localStorage.setItem(LS_URL, DEFAULT_SHEET_URL);
+    const _savedUrl = localStorage.getItem(LS_URL);
+    STATE.sheetUrl = _savedUrl || DEFAULT_SHEET_URL;
+    if(!_savedUrl && DEFAULT_SHEET_URL) localStorage.setItem(LS_URL, DEFAULT_SHEET_URL);
   }
   updateSheetDot();
   history.replaceState({screen:'home'},'','#home');
@@ -1942,6 +1948,10 @@ function initApp() {
 
 // ── SHEET STATUS DOT ────────────────────────────────────────────────
 function updateSheetDot() {
+  if(!STATE.sheetUrl && DEFAULT_SHEET_URL) {
+    STATE.sheetUrl = DEFAULT_SHEET_URL;
+    localStorage.setItem(LS_URL, DEFAULT_SHEET_URL);
+  }
   const dot = document.getElementById('sheet-status-dot');
   if(!dot) return;
   dot.title = STATE.sheetUrl ? 'Sheet connected — tap Setup to change' : 'Sheet not connected — tap Setup';
@@ -3529,13 +3539,15 @@ function saveNewCustomer() {
   document.querySelectorAll('#screen-customers .filter-btn').forEach(b=>b.classList.toggle('active',b.textContent.trim()==='All'));
   renderCustomerList();
   // Sync new customer to Google Sheet so all devices can see it
-  if(STATE.sheetUrl) syncCustomerToSheet(customer);
-  // If New Order screen is active, auto-search the new customer name
-  const custSearch = document.getElementById('cust-search');
-  if(custSearch && document.getElementById('screen-new-order')?.classList.contains('active')) {
-    custSearch.value = name;
-    searchCustomers(name);
+  // Sync to sheet - use DEFAULT_SHEET_URL if STATE.sheetUrl not set
+  const _syncUrl = STATE.sheetUrl || DEFAULT_SHEET_URL;
+  if(_syncUrl) {
+    if(!STATE.sheetUrl) { STATE.sheetUrl = _syncUrl; localStorage.setItem(LS_URL, _syncUrl); updateSheetDot(); }
+    syncCustomerToSheet(customer);
   }
+  // Auto-search the new customer name so they appear immediately
+  const custSearch = document.getElementById('cust-search');
+  if(custSearch) { custSearch.value = name; searchCustomers(name); }
 }
 
 // ── DUES ─────────────────────────────────────────────────────────────
@@ -7421,6 +7433,16 @@ window.addEventListener('popstate', function() {
     }
   } finally { _inPopstate = false; }
 });
+
+
+// ── SERVICE WORKER ────────────────────────────────────────────────────
+if('serviceWorker' in navigator) {
+  window.addEventListener('load', function() {
+    navigator.serviceWorker.register('./sw.js')
+      .then(function(r){ console.log('[GF] SW registered'); })
+      .catch(function(e){ console.log('[GF] SW skipped:', e.message); });
+  });
+}
 
 // pageshow fires on back-navigation (bfcache restore)
 window.addEventListener('pageshow', function(e) {
