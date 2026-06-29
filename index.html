@@ -3683,13 +3683,18 @@ function sendCreditWA(custId, type) {
   const cust = STATE.customers.find(c=>c.id===custId);
   if(!cust) return;
   const alerts = getCustomerCreditAlerts(custId);
-  if(!alerts.length) { showToast('No overdue orders for this customer'); return; }
+  const balance = parseFloat(cust.balance)||0;
+  if(!alerts.length && balance <= 0) { showToast('No overdue orders for this customer'); return; }
 
-  const totalOwed = alerts.reduce((s,x)=>s+((x.order.total||0)-(x.order.payment?.amount||0)),0);
-  const orderLines = alerts.map(x=>{
-    const outstanding = (x.order.total||0)-(x.order.payment?.amount||0);
-    return '\u2022 Order #'+x.order.id+' dated '+x.order.date+' \u2014 \u20b9'+outstanding.toLocaleString('en-IN')+' ('+x.cs.daysOverdue+'d overdue)';
-  }).join('\n');
+  const totalOwed = alerts.length
+    ? alerts.reduce((s,x)=>s+((x.order.total||0)-(x.order.payment?.amount||0)),0)
+    : balance;
+  const orderLines = alerts.length
+    ? alerts.map(x=>{
+        const outstanding = (x.order.total||0)-(x.order.payment?.amount||0);
+        return '\u2022 Order #'+x.order.id+' dated '+x.order.date+' \u2014 \u20b9'+outstanding.toLocaleString('en-IN')+' ('+x.cs.daysOverdue+'d overdue)';
+      }).join('\n')
+    : '\u2022 Outstanding balance: \u20b9'+balance.toLocaleString('en-IN');
 
   const cfg = getCreditConfig(cust.category);
   let msg = '';
