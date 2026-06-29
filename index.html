@@ -258,7 +258,7 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
     <div class="top-bar-left">
       <span class="logo">🐄 GF</span>
       <span class="role-badge" id="role-badge">SALES</span>
-      <span style="font-size:9px;color:var(--muted);margin-left:4px;" id="build-stamp">v105</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:4px;" id="build-stamp">v106</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <span class="date-chip" id="today-chip"></span>
@@ -387,25 +387,56 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
   </div>
 
   <!-- CUSTOMERS -->
-  <div class="screen" id="screen-customers">
-    <div class="page-title">Customers</div>
-    <div class="page-sub" id="cust-page-sub">392 accounts loaded</div>
-    <div id="add-cust-btn-wrap" style="display:none;margin-bottom:12px;display:flex;gap:8px;flex-wrap:wrap;">
-      <button class="btn btn-primary" onclick="showAddCustomer()">+ Add Customer</button>
-      <button id="btn-download-custs" onclick="downloadCustomerList()" style="display:none;background:var(--ink);color:#fff;border:none;border-radius:8px;padding:9px 14px;font-size:12px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif;">⬇ Download List</button>
+  <div class="screen" id="screen-customers" style="padding:0;">
+    <!-- Split layout: list on left, detail on right (stacked on mobile) -->
+    <div id="clients-list-panel" style="padding:12px 12px 0;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+        <div>
+          <div class="page-title" style="margin-bottom:0;">Clients</div>
+          <div class="page-sub" id="cust-page-sub">Loading...</div>
+        </div>
+        <div style="display:flex;gap:6px;">
+          <button id="add-cust-btn-wrap" style="display:none;background:var(--green);color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:12px;font-weight:700;cursor:pointer;" onclick="showAddCustomer()">+ Add Client</button>
+          <button id="btn-download-custs" onclick="downloadCustomerList()" style="display:none;background:var(--ink);color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:12px;font-weight:700;cursor:pointer;">⬇ List</button>
+        </div>
+      </div>
+      <div class="search-box" style="margin-bottom:8px;">
+        <span class="search-icon">🔍</span>
+        <input type="text" id="cust-list-search" placeholder="Search by name, area or category..." oninput="renderCustomerList(this.value)">
+      </div>
+      <div style="display:flex;gap:6px;margin-bottom:10px;overflow-x:auto;padding-bottom:4px;">
+        <button class="filter-btn active" onclick="filterCustomers('all',this)">All</button>
+        <button class="filter-btn" onclick="filterCustomers('HORECA',this)">HORECA</button>
+        <button class="filter-btn" onclick="filterCustomers('Distributor -Retail',this)">Dist-Retail</button>
+        <button class="filter-btn" onclick="filterCustomers('Distributor -HORECA',this)">Dist-HORECA</button>
+        <button class="filter-btn" onclick="filterCustomers('Retail',this)">Retail</button>
+      </div>
+      <div id="customer-list-container"></div>
     </div>
-    <div class="search-box">
-      <span class="search-icon">🔍</span>
-      <input type="text" id="cust-list-search" placeholder="Search by name, category or area..." oninput="renderCustomerList(this.value)">
+
+    <!-- Client Detail Panel (slides in on mobile) -->
+    <div id="clients-detail-panel" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:var(--bg);z-index:200;overflow-y:auto;padding-bottom:80px;">
+      <div style="background:var(--surface);border-bottom:1.5px solid var(--border);padding:12px 16px;display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:10;">
+        <button onclick="closeClientDetail()" style="background:none;border:none;font-size:20px;cursor:pointer;padding:0;">←</button>
+        <div style="flex:1;">
+          <div id="client-detail-name" style="font-size:16px;font-weight:800;color:var(--ink);"></div>
+          <div id="client-detail-sub" style="font-size:11px;color:var(--muted);"></div>
+        </div>
+        <button onclick="sendStatement(currentClientId)" style="background:#1A527A;color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:12px;font-weight:700;cursor:pointer;">📄 Statement</button>
+      </div>
+
+      <!-- Client Info Card -->
+      <div id="client-info-card" style="margin:12px;background:var(--surface);border-radius:12px;padding:14px;border:1.5px solid var(--border);"></div>
+
+      <!-- Balance Summary -->
+      <div id="client-balance-card" style="margin:0 12px 12px;background:var(--surface);border-radius:12px;padding:14px;border:1.5px solid var(--border);"></div>
+
+      <!-- Transactions -->
+      <div style="margin:0 12px;">
+        <div style="font-size:13px;font-weight:700;color:var(--ink);margin-bottom:8px;">Transactions</div>
+        <div id="client-txn-list"></div>
+      </div>
     </div>
-    <div style="display:flex;gap:6px;margin-bottom:12px;overflow-x:auto;padding-bottom:4px;">
-      <button class="filter-btn active" onclick="filterCustomers('all',this)">All</button>
-      <button class="filter-btn" onclick="filterCustomers('HORECA',this)">HORECA</button>
-      <button class="filter-btn" onclick="filterCustomers('Distributor -Retail',this)">Dist-Retail</button>
-      <button class="filter-btn" onclick="filterCustomers('Distributor -HORECA',this)">Dist-HORECA</button>
-      <button class="filter-btn" onclick="filterCustomers('Retail',this)">Retail</button>
-    </div>
-    <div id="customer-list-container"></div>
   </div>
 
   <!-- DUES -->
@@ -1827,11 +1858,12 @@ function switchRole() {
 
 // ── NAV ─────────────────────────────────────────────────────────────
 const NAV_CONFIG = {
-  owner:    [{id:'home',icon:'🏠',label:'Home'},{id:'orders',icon:'📋',label:'Orders'},
-             {id:'history',icon:'📅',label:'History'},
-             {id:'customers',icon:'👥',label:'Customers'},{id:'manage',icon:'✏️',label:'Manage'},
+  owner:    [{id:'home',icon:'🏠',label:'Home'},{id:'customers',icon:'🏢',label:'Clients'},
+             {id:'orders',icon:'📋',label:'Orders'},{id:'history',icon:'📅',label:'History'},
+             {id:'manage',icon:'✏️',label:'Manage'},
              {id:'payment-in',icon:'💳',label:'Payments'},{id:'dues',icon:'💰',label:'Dues'},{id:'setup',icon:'⚙',label:'Setup'}],
-  sales:    [{id:'home',icon:'🏠',label:'Home'},{id:'new-order',icon:'➕',label:'New Order'},
+  sales:    [{id:'home',icon:'🏠',label:'Home'},{id:'customers',icon:'🏢',label:'Clients'},
+             {id:'new-order',icon:'➕',label:'New Order'},
              {id:'orders',icon:'📋',label:'My Orders'},{id:'history',icon:'📅',label:'History'},
              {id:'payment-in',icon:'💳',label:'Payments'},{id:'dues',icon:'💰',label:'Dues'},{id:'setup',icon:'⚙',label:'Setup'}],
   delivery: [{id:'home',icon:'🏠',label:'Home'},{id:'orders',icon:'🚚',label:'Deliveries'},
@@ -3454,53 +3486,171 @@ function renderCustomerList(q='') {
   if(q) custs = custs.filter(c=>c.name.toLowerCase().includes(q.toLowerCase())||
     (c.area||'').toLowerCase().includes(q.toLowerCase())||
     (c.category||'').toLowerCase().includes(q.toLowerCase()));
+  // Sort: customers with balance first
+  custs = [...custs].sort((a,b)=>(parseFloat(b.balance)||0)-(parseFloat(a.balance)||0));
   const sub = document.getElementById('cust-page-sub');
-  if(sub) sub.textContent = custs.length + ' customers' + (custFilterActive!=='all'?` · ${custFilterActive}`:'');
+  if(sub) sub.textContent = custs.length + ' clients' + (custFilterActive!=='all'?` · ${custFilterActive}`:'');
   const container = document.getElementById('customer-list-container');
-  if(!custs.length) { container.innerHTML='<div class="empty-state"><div class="empty-icon">👥</div><p>No customers found</p></div>'; return; }
-  container.innerHTML = custs.map(c=>`
-    <div class="customer-row" onclick="openCustomerDetail('${c.id}')">
+  if(!custs.length) { container.innerHTML='<div class="empty-state"><div class="empty-icon">🏢</div><p>No clients found</p></div>'; return; }
+  container.innerHTML = custs.map(c=>{
+    const bal = parseFloat(c.balance)||0;
+    const cfg = getCreditConfig(c.category||'');
+    return `<div style="background:var(--surface);border-radius:12px;padding:12px 14px;margin-bottom:8px;border:1.5px solid var(--border);cursor:pointer;display:flex;align-items:center;gap:10px;" onclick="openClientDetail('${c.id}')">
       <div style="flex:1;min-width:0;">
-        <div class="cust-name">${c.name}</div>
-        ${c.phone?`<div style="font-size:12px;font-weight:600;color:var(--blue);margin-top:2px;">📞 ${c.phone}</div>`:''}
+        <div style="font-size:14px;font-weight:800;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${c.name}</div>
         <div style="display:flex;align-items:center;gap:6px;margin-top:3px;flex-wrap:wrap;">
-          <span style="font-size:10px;font-weight:700;padding:1px 7px;border-radius:20px;background:${CAT_BG[c.category]||'#eee'};color:${CAT_COLOR[c.category]||'#888'};">${c.category||'—'}</span>
+          <span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:20px;background:${CAT_BG[c.category]||'#eee'};color:${CAT_COLOR[c.category]||'#888'};">${c.category||'—'}</span>
           ${c.area?`<span style="font-size:11px;color:var(--muted);">📍 ${c.area}</span>`:''}
+          ${cfg.days>0?`<span style="font-size:10px;color:var(--muted);">Credit: ${cfg.label}</span>`:''}
         </div>
+        ${c.phone?`<div style="font-size:12px;color:var(--blue);margin-top:2px;">📞 ${c.phone}</div>`:''}
       </div>
       <div style="text-align:right;flex-shrink:0;">
-        <div class="cust-balance ${(c.balance||0)>0?'owed':'clear'}">
-          ${(c.balance||0)>0?'₹'+(c.balance).toLocaleString('en-IN')+' due':'✓ Clear'}
-        </div>
+        <div style="font-size:15px;font-weight:800;color:${bal>0?'var(--red)':'var(--green)'};">${bal>0?'₹'+bal.toLocaleString('en-IN'):'✓ Clear'}</div>
+        ${bal>0?'<div style="font-size:10px;color:var(--muted);">outstanding</div>':''}
       </div>
-    </div>`).join('');
-}
-
-function openCustomerDetail(id) {
-  const c=STATE.customers.find(x=>x.id===id); if(!c) return;
-  const openBal=c.openingBalance||c.balance||0;
-  const balNote=openBal>0
-    ?`<div style="background:#FFEBEE;border-radius:10px;padding:8px 14px;margin-bottom:8px;font-size:12px;color:var(--red);">📋 Opening balance: <b>₹${openBal.toLocaleString('en-IN')}</b> (Dr)</div>`:''
-  const priceRows = PRODUCTS.map(p=>{
-    const rate=c.pricing?.[p.id]||p.stdRate;
-    const isCustom=c.pricing?.[p.id]&&c.pricing[p.id]!==p.stdRate;
-    return `<div class="order-item-row">
-      <div class="item-name">${p.emoji} ${p.name}</div>
-      <div style="font-size:13px;font-weight:${isCustom?'700':'400'};color:${isCustom?'var(--amber)':'var(--ink)'};">₹${rate}/${p.unit}${isCustom?' ★':''}</div>
     </div>`;
   }).join('');
-  document.getElementById('modal-order-title').textContent=c.name;
-  document.getElementById('modal-order-content').innerHTML=`
-    ${c.category?`<div style="display:inline-block;background:${CAT_BG[c.category]||'#eee'};color:${CAT_COLOR[c.category]||'#888'};font-size:11px;font-weight:700;padding:3px 12px;border-radius:20px;margin-bottom:10px;">${c.category}</div>`:''}
-    <div style="font-size:13px;color:var(--muted);margin-bottom:4px;">📞 ${c.phone||'—'}</div>
-    <div style="font-size:13px;color:var(--muted);margin-bottom:16px;">📍 ${c.address||c.area||'—'}</div>
-    ${balNote}
-    ${(c.balance||0)>0?`<div style="background:#FFEBEE;border-radius:10px;padding:10px 14px;margin-bottom:12px;font-size:13px;color:var(--red);font-weight:700;">💰 Outstanding: ₹${c.balance.toLocaleString('en-IN')}</div>`:''}
-    <div class="section-label">Pricing (★ = custom rate)</div>
-    ${priceRows}
-    <button class="btn btn-primary" style="margin-top:12px;" onclick="closeModal('modal-order')">Close</button>`;
-  document.getElementById('modal-order').classList.add('open');
 }
+
+let currentClientId = null;
+
+function closeClientDetail() {
+  document.getElementById('clients-detail-panel').style.display = 'none';
+  currentClientId = null;
+}
+
+async function openClientDetail(id) {
+  const c = STATE.customers.find(x => x.id === id);
+  if (!c) return;
+  currentClientId = id;
+  document.getElementById('clients-detail-panel').style.display = 'block';
+  document.getElementById('clients-detail-panel').scrollTop = 0;
+  document.getElementById('client-detail-name').textContent = c.name;
+  const cfg = getCreditConfig(c.category||'');
+  document.getElementById('client-detail-sub').textContent = (c.category||'') + (cfg.days>0?' · Credit: '+cfg.label:'');
+
+  document.getElementById('client-info-card').innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px;">
+      <div><div style="color:var(--muted);font-size:10px;">PHONE</div><b>${c.phone||'—'}</b></div>
+      <div><div style="color:var(--muted);font-size:10px;">AREA</div><b>${c.area||'—'}</b></div>
+      <div><div style="color:var(--muted);font-size:10px;">ADDRESS</div><b>${c.address||'—'}</b></div>
+      <div><div style="color:var(--muted);font-size:10px;">GSTIN</div><b>${c.gstin||'—'}</b></div>
+    </div>`;
+
+  const bal = parseFloat(c.balance)||0;
+  document.getElementById('client-balance-card').innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
+      <div>
+        <div style="font-size:10px;color:var(--muted);margin-bottom:2px;">TOTAL OUTSTANDING</div>
+        <div style="font-size:24px;font-weight:900;color:${bal>0?'var(--red)':'var(--green)'};">${bal>0?'₹'+bal.toLocaleString('en-IN'):'✓ Clear'}</div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:6px;">
+        <button onclick="recordDuePayment('${c.id}')" style="background:var(--green);color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:12px;font-weight:700;cursor:pointer;">💰 Record Payment</button>
+        ${c.phone?`<button onclick="sendCreditWA('${c.id}','client')" style="background:#25D366;color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:12px;font-weight:700;cursor:pointer;">📱 Remind</button>`:''}
+      </div>
+    </div>`;
+
+  document.getElementById('client-txn-list').innerHTML = '<div style="text-align:center;padding:20px;color:var(--muted);">Loading transactions...</div>';
+
+  let orders = STATE.orders.filter(o => o.customerId === id || o.customerName === c.name)
+    .sort((a,b) => (b.date||'').localeCompare(a.date||''));
+
+  if (!orders.length && (STATE.sheetUrl || DEFAULT_SHEET_URL)) {
+    try {
+      const url = STATE.sheetUrl || DEFAULT_SHEET_URL;
+      const params = new URLSearchParams({action:'getCustomerOrders', customerId:id, customerName:c.name, phone:c.phone||''});
+      const res = await fetch(url+'?'+params, {cache:'no-store'});
+      const data = await res.json();
+      if (data.orders && data.orders.length) {
+        const orderMap = {};
+        data.orders.forEach(row => {
+          const oid = String(row['Order ID']||'').trim();
+          if(!oid||oid.startsWith('TOTAL')) return;
+          if(!orderMap[oid]) orderMap[oid] = {
+            id:oid, date:row['Date']||'', customerName:row['Customer']||c.name,
+            total:parseFloat(row['Order Total (Rs)']||0),
+            paymentAmount:parseFloat(row['Payment Amt']||0),
+            status:row['Status']||'', items:[]
+          };
+          const product = String(row['Product']||'').trim();
+          if(product) orderMap[oid].items.push({
+            name:product, qty:parseFloat(row['Qty']||0), unit:row['Unit']||'',
+            rate:parseFloat(row['Rate (Rs)']||0), amount:parseFloat(row['Amount (Rs)']||0)
+          });
+        });
+        orders = Object.values(orderMap).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+      }
+    } catch(e) { console.log(e); }
+  }
+
+  if (!orders.length && bal === 0) {
+    document.getElementById('client-txn-list').innerHTML = '<div class="empty-state"><p>No transactions found</p></div>';
+    return;
+  }
+
+  const creditDays = cfg.days||0;
+  const openBal = parseFloat(c.openingBalance||0)||0;
+  let runBal = openBal;
+  const txnRows = [];
+
+  if(openBal > 0) {
+    txnRows.push(`<div style="background:#FFF8E1;border-radius:10px;padding:10px 12px;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center;border:1.5px solid #FFD54F;">
+      <div style="font-size:12px;font-weight:700;color:var(--amber);">Opening Balance</div>
+      <div style="font-size:14px;font-weight:800;color:var(--amber);">₹${openBal.toLocaleString('en-IN')}</div>
+    </div>`);
+  }
+
+  const ordersAsc = [...orders].reverse();
+  ordersAsc.forEach(o => {
+    const total = parseFloat(o.total)||0;
+    const paid = parseFloat(o.payment?.amount||o.paymentAmount)||0;
+    runBal += (total - paid);
+    const refNo = String(o.id||'').slice(-5);
+    const orderDate = o.date||'';
+    const now = new Date(); const od = new Date(orderDate);
+    const daysOld = Math.floor((now-od)/(1000*60*60*24));
+    const isOverdue = creditDays > 0 && daysOld > creditDays;
+    const isPaid = paid >= total;
+    const status = isPaid ? 'Paid' : isOverdue ? `Overdue ${daysOld-creditDays}d` : 'Unpaid';
+    const statusColor = isPaid ? 'var(--green)' : isOverdue ? 'var(--red)' : 'var(--amber)';
+    let dueStr = '';
+    if(creditDays > 0) {
+      try { const d=new Date(orderDate); d.setDate(d.getDate()+creditDays); dueStr=d.toLocaleDateString('en-IN',{day:'2-digit',month:'short'}); } catch(e){}
+    } else { dueStr = 'Cash'; }
+    const itemLines = (o.items||[]).map(i=>`<div style="display:grid;grid-template-columns:1fr 60px 55px 60px;gap:2px;font-size:11px;padding:3px 0;border-bottom:1px solid var(--border);">
+      <span>${i.name||''}</span>
+      <span style="text-align:right;">${i.qty||''} ${i.unit||''}</span>
+      <span style="text-align:right;">Rs.${i.rate||''}</span>
+      <span style="text-align:right;font-weight:700;">Rs.${(parseFloat(i.amount)||parseFloat(i.qty)*parseFloat(i.rate)||0).toLocaleString('en-IN')}</span>
+    </div>`).join('');
+    txnRows.push(`<div style="background:var(--surface);border-radius:12px;margin-bottom:8px;border:1.5px solid var(--border);overflow:hidden;">
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;background:var(--cream);">
+        <div>
+          <div style="font-size:12px;font-weight:700;">Sale #${refNo}</div>
+          <div style="font-size:11px;color:var(--muted);">${orderDate} · Due: ${dueStr}</div>
+        </div>
+        <div style="text-align:right;">
+          <div style="font-size:14px;font-weight:800;">₹${total.toLocaleString('en-IN')}</div>
+          <div style="font-size:10px;font-weight:700;color:${statusColor};">${status}</div>
+        </div>
+      </div>
+      ${itemLines?`<div style="padding:6px 12px;border-top:1px solid var(--border);">
+        <div style="display:grid;grid-template-columns:1fr 60px 55px 60px;gap:2px;font-size:10px;color:var(--muted);font-weight:700;margin-bottom:3px;padding-bottom:2px;border-bottom:1px solid var(--border);">
+          <span>Item</span><span style="text-align:right;">Qty</span><span style="text-align:right;">Rate</span><span style="text-align:right;">Amount</span>
+        </div>${itemLines}</div>`:''}
+      <div style="display:flex;justify-content:space-between;padding:6px 12px;background:#F5F5F5;font-size:11px;font-weight:700;">
+        <span style="color:var(--muted);">Receivable Balance</span>
+        <span style="color:var(--red);">₹${runBal.toLocaleString('en-IN')}</span>
+      </div>
+    </div>`);
+  });
+
+  document.getElementById('client-txn-list').innerHTML = txnRows.reverse().join('');
+}
+
+function openCustomerDetail(id) { openClientDetail(id); }
+
 
 // ── ADD CUSTOMER ─────────────────────────────────────────────────────
 function showAddCustomer() {
@@ -3691,8 +3841,33 @@ async function sendStatement(custId) {
       });
       const res = await fetch(url + '?' + params, {cache: 'no-store'});
       const data = await res.json();
-      if (data.orders && Array.isArray(data.orders)) {
-        custOrders = data.orders.sort((a, b) => (a.date||'').localeCompare(b.date||''));
+      if (data.orders && Array.isArray(data.orders) && data.orders.length) {
+        // Sheet returns flat rows — group by Order ID into structured orders
+        const orderMap = {};
+        data.orders.forEach(row => {
+          const oid = String(row['Order ID'] || row['id'] || '').trim();
+          if (!oid || oid.startsWith('TOTAL')) return;
+          if (!orderMap[oid]) {
+            orderMap[oid] = {
+              id: oid,
+              date: row['Date'] || row['date'] || '',
+              customerName: row['Customer'] || row['customerName'] || cust.name,
+              total: parseFloat(row['Order Total (Rs)'] || row['total'] || 0),
+              paymentAmount: parseFloat(row['Payment Amt'] || row['paymentAmount'] || 0),
+              status: row['Status'] || row['status'] || '',
+              items: []
+            };
+          }
+          const product = String(row['Product'] || row['product'] || '').trim();
+          const qty = parseFloat(row['Qty'] || row['qty'] || 0);
+          const rate = parseFloat(row['Rate (Rs)'] || row['rate'] || 0);
+          const amount = parseFloat(row['Amount (Rs)'] || row['amount'] || 0) || (qty * rate);
+          const unit = String(row['Unit'] || row['unit'] || '');
+          if (product) {
+            orderMap[oid].items.push({ name: product, qty, unit, rate, amount });
+          }
+        });
+        custOrders = Object.values(orderMap).sort((a, b) => (a.date||'').localeCompare(b.date||''));
       }
     } catch(e) { console.log('Sheet fetch failed', e); }
   }
@@ -3717,17 +3892,25 @@ async function sendStatement(custId) {
   doc.setTextColor(255, 255, 255);
   doc.setFontSize(16);
   doc.setFont('helvetica', 'bold');
-  doc.text('gaavn', margin + 26, 13);
-  doc.setFontSize(7);
+  // Company details
+  doc.setFontSize(12);
+  doc.setFont('helvetica', 'bold');
+  doc.text('Teplu Learning Pvt Ltd', margin + 26, 12);
+  doc.setFontSize(6.5);
   doc.setFont('helvetica', 'normal');
-  doc.text('FRESH FROM VILLAGE', margin + 26, 18);
-  doc.setFontSize(8);
-  doc.text('Unit: Panvadi Dairy, Saswad, Pune', margin + 26, 23);
-  doc.text('STATEMENT OF ACCOUNT', margin + 26, 28);
+  doc.text('Panvadi Village, Saswad, Purandhar taluka, Dist. Pune', margin + 26, 17);
+  doc.text('Ph: 9830910069  |  Email: contact@gaavn.com', margin + 26, 21);
+  doc.text('GSTIN: 27AAHCT4313K1Z7  |  State: 27-Maharashtra', margin + 26, 25);
+  doc.text('FSSAI License No: 11524998000303', margin + 26, 29);
   // Border line below header
   doc.setDrawColor(200, 131, 10);
   doc.setLineWidth(1);
-  doc.line(0, 38, pageW, 38);
+  doc.line(0, 40, pageW, 40);
+
+  // Statement label bottom of header
+  doc.setFontSize(8);
+  doc.setFont('helvetica', 'bold');
+  doc.text('STATEMENT OF ACCOUNT', pageW/2, 35, {align:'center'});
 
   // Date top right
   const today = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
@@ -3739,10 +3922,10 @@ async function sendStatement(custId) {
   doc.setTextColor(30, 30, 30);
   doc.setFontSize(11);
   doc.setFont('helvetica', 'bold');
-  doc.text(cust.name, margin, 46);
+  doc.text(cust.name, margin, 50);
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(9);
-  let infoY = 52;
+  let infoY = 56;
   if (cust.phone) { doc.text('Ph: ' + cust.phone, margin, infoY); infoY += 5; }
   if (cust.area)  { doc.text('Area: ' + cust.area,  margin, infoY); infoY += 5; }
   doc.text('Category: ' + (cust.category || ''), margin, infoY);
@@ -3808,7 +3991,7 @@ async function sendStatement(custId) {
       i.name || i.product || '',
       (i.qty || '') + ' ' + (i.unit || ''),
       'Rs.' + (i.rate || ''),
-      'Rs.' + ((i.amount || ((i.qty||0) * (i.rate||0))) || 0).toLocaleString('en-IN'),
+      'Rs.' + (parseFloat(i.amount) || (parseFloat(i.qty||0) * parseFloat(i.rate||0)) || 0).toLocaleString('en-IN'),
     ]);
 
     doc.autoTable({
@@ -5125,7 +5308,9 @@ function getAppsScriptCode() {
     '      var id=String(row[0]||"").trim();',
     '      var phone=String(row[4]||"").replace(/\\D/g,"").slice(-10);',
     '      if(!id||id.indexOf("TOTAL:")===0) return;',
-    '      if(phone===custPhone) matchIds[id]=true;',
+    '      var custName=String(p.customerName||\"\").trim().toLowerCase();',
+    '      var rowCust=String(row[2]||\"\").trim().toLowerCase();',
+    '      if((custPhone && phone===custPhone)||(custName && rowCust===custName)) matchIds[id]=true;',
     '    });',
     '    data.slice(1).forEach(function(row) {',
     '      var id=String(row[0]||"").trim();',
@@ -7674,6 +7859,30 @@ window.addEventListener('pageshow', function(e) {
     if(typeof renderDashboard==='function') renderDashboard();
   }
 });
+
+// ── SYNC ORDERS FROM SHEET ───────────────────────────────────────────
+async function syncOrdersFromSheet() {
+  const url = STATE.sheetUrl || DEFAULT_SHEET_URL;
+  if(!url) return;
+  try {
+    const btn = document.getElementById('btn-sync-orders');
+    if(btn) btn.textContent = '⏳ Syncing...';
+    const res = await fetch(url + '?action=getOrders&date=' + TODAY_KEY, {cache:'no-store'});
+    const data = await res.json();
+    if(data.orders && Array.isArray(data.orders)) {
+      const existingIds = new Set(STATE.orders.map(o=>o.id));
+      data.orders.forEach(o => { if(!existingIds.has(o.id)) STATE.orders.push(o); });
+      if(typeof renderOrdersList==='function') renderOrdersList();
+      if(typeof renderDashboard==='function') renderDashboard();
+    }
+    if(btn) btn.textContent = '☁ Sync';
+  } catch(e) {
+    console.log('syncOrdersFromSheet error', e);
+    const btn = document.getElementById('btn-sync-orders');
+    if(btn) btn.textContent = '☁ Sync';
+  }
+}
+
 </script>
 </body>
 </html>
