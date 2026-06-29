@@ -3674,9 +3674,28 @@ async function sendStatement(custId) {
   showToast('Generating bill...', 4000);
 
   // Gather orders for this customer from STATE
-  const custOrders = STATE.orders
+  let custOrders = STATE.orders
     .filter(o => o.customerId === custId || o.customerName === cust.name)
-    .sort((a, b) => a.date.localeCompare(b.date));
+    .sort((a, b) => (a.date||'').localeCompare(b.date||''));
+
+  // If no orders in STATE, fetch from sheet
+  if (!custOrders.length && (STATE.sheetUrl || DEFAULT_SHEET_URL)) {
+    showToast('Fetching orders from sheet...', 4000);
+    try {
+      const url = STATE.sheetUrl || DEFAULT_SHEET_URL;
+      const params = new URLSearchParams({
+        action: 'getCustomerOrders',
+        customerId: custId,
+        customerName: cust.name,
+        phone: cust.phone || ''
+      });
+      const res = await fetch(url + '?' + params, {cache: 'no-store'});
+      const data = await res.json();
+      if (data.orders && Array.isArray(data.orders)) {
+        custOrders = data.orders.sort((a, b) => (a.date||'').localeCompare(b.date||''));
+      }
+    } catch(e) { console.log('Sheet fetch failed', e); }
+  }
 
   const openingBal = parseFloat(cust.balance) || 0;
 
@@ -3724,8 +3743,8 @@ async function sendStatement(custId) {
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(9);
   let infoY = 52;
-  if (cust.phone) { doc.text('📞 ' + cust.phone, margin, infoY); infoY += 5; }
-  if (cust.area)  { doc.text('📍 ' + cust.area,  margin, infoY); infoY += 5; }
+  if (cust.phone) { doc.text('Ph: ' + cust.phone, margin, infoY); infoY += 5; }
+  if (cust.area)  { doc.text('Area: ' + cust.area,  margin, infoY); infoY += 5; }
   doc.text('Category: ' + (cust.category || ''), margin, infoY);
 
   // ── SUMMARY BAR ──────────────────────────────────────
