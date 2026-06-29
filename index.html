@@ -258,7 +258,7 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
     <div class="top-bar-left">
       <span class="logo">🐄 GF</span>
       <span class="role-badge" id="role-badge">SALES</span>
-      <span style="font-size:9px;color:var(--muted);margin-left:4px;" id="build-stamp">v106</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:4px;" id="build-stamp">v108</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <span class="date-chip" id="today-chip"></span>
@@ -415,7 +415,7 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
     </div>
 
     <!-- Client Detail Panel (slides in on mobile) -->
-    <div id="clients-detail-panel" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:var(--bg);z-index:200;overflow-y:auto;padding-bottom:80px;">
+    <div id="clients-detail-panel" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:var(--bg);z-index:500;overflow-y:auto;padding-bottom:80px;-webkit-overflow-scrolling:touch;">
       <div style="background:var(--surface);border-bottom:1.5px solid var(--border);padding:12px 16px;display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:10;">
         <button onclick="closeClientDetail()" style="background:none;border:none;font-size:20px;cursor:pointer;padding:0;">←</button>
         <div style="flex:1;">
@@ -1909,7 +1909,7 @@ function showScreen(id) {
   requestAnimationFrame(function() {
     if(id==='home')       renderDashboard();
     if(id==='orders')     renderOrdersList();
-    if(id==='customers')  { renderCustomerList(); document.getElementById('add-cust-btn-wrap').style.display=(STATE.role!=='delivery'?'block':'none'); }
+    if(id==='customers')  { closeClientDetail(); renderCustomerList(); document.getElementById('add-cust-btn-wrap').style.display=(STATE.role!=='delivery'?'block':'none'); }
     if(id==='dues')       renderDues();
     if(id==='approvals')  renderApprovals();
     if(id==='new-order')  initNewOrder();
@@ -3517,6 +3517,7 @@ let currentClientId = null;
 
 function closeClientDetail() {
   document.getElementById('clients-detail-panel').style.display = 'none';
+  document.getElementById('clients-list-panel').style.display = 'block';
   currentClientId = null;
 }
 
@@ -3524,6 +3525,7 @@ async function openClientDetail(id) {
   const c = STATE.customers.find(x => x.id === id);
   if (!c) return;
   currentClientId = id;
+  document.getElementById('clients-list-panel').style.display = 'none';
   document.getElementById('clients-detail-panel').style.display = 'block';
   document.getElementById('clients-detail-panel').scrollTop = 0;
   document.getElementById('client-detail-name').textContent = c.name;
@@ -3556,33 +3558,39 @@ async function openClientDetail(id) {
   let orders = STATE.orders.filter(o => o.customerId === id || o.customerName === c.name)
     .sort((a,b) => (b.date||'').localeCompare(a.date||''));
 
-  if (!orders.length && (STATE.sheetUrl || DEFAULT_SHEET_URL)) {
-    try {
-      const url = STATE.sheetUrl || DEFAULT_SHEET_URL;
+  // Always fetch from sheet for complete item details
+  try {
+    const url = STATE.sheetUrl || DEFAULT_SHEET_URL;
+    if(url) {
       const params = new URLSearchParams({action:'getCustomerOrders', customerId:id, customerName:c.name, phone:c.phone||''});
       const res = await fetch(url+'?'+params, {cache:'no-store'});
       const data = await res.json();
       if (data.orders && data.orders.length) {
         const orderMap = {};
         data.orders.forEach(row => {
-          const oid = String(row['Order ID']||'').trim();
+          const oid = String(row['Order ID']||row['id']||'').trim();
           if(!oid||oid.startsWith('TOTAL')) return;
           if(!orderMap[oid]) orderMap[oid] = {
-            id:oid, date:row['Date']||'', customerName:row['Customer']||c.name,
-            total:parseFloat(row['Order Total (Rs)']||0),
-            paymentAmount:parseFloat(row['Payment Amt']||0),
-            status:row['Status']||'', items:[]
+            id:oid, date:String(row['Date']||row['date']||''),
+            customerName:String(row['Customer']||row['customerName']||c.name),
+            total:parseFloat(row['Order Total (Rs)']||row['total']||0),
+            paymentAmount:parseFloat(row['Payment Amt']||row['paymentAmount']||0),
+            status:String(row['Status']||row['status']||''), items:[]
           };
-          const product = String(row['Product']||'').trim();
+          const product = String(row['Product']||row['product']||'').trim();
           if(product) orderMap[oid].items.push({
-            name:product, qty:parseFloat(row['Qty']||0), unit:row['Unit']||'',
-            rate:parseFloat(row['Rate (Rs)']||0), amount:parseFloat(row['Amount (Rs)']||0)
+            name:product,
+            qty:parseFloat(row['Qty']||row['qty']||0),
+            unit:String(row['Unit']||row['unit']||''),
+            rate:parseFloat(row['Rate (Rs)']||row['rate']||0),
+            amount:parseFloat(row['Amount (Rs)']||row['amount']||0)||parseFloat(row['Qty']||0)*parseFloat(row['Rate (Rs)']||0)
           });
         });
-        orders = Object.values(orderMap).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+        const sheetOrders = Object.values(orderMap).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+        if(sheetOrders.length) orders = sheetOrders;
       }
-    } catch(e) { console.log(e); }
-  }
+    }
+  } catch(e) { console.log('Sheet fetch error:', e); }
 
   if (!orders.length && bal === 0) {
     document.getElementById('client-txn-list').innerHTML = '<div class="empty-state"><p>No transactions found</p></div>';
@@ -3828,49 +3836,38 @@ async function sendStatement(custId) {
     .filter(o => o.customerId === custId || o.customerName === cust.name)
     .sort((a, b) => (a.date||'').localeCompare(b.date||''));
 
-  // If no orders in STATE, fetch from sheet
-  if (!custOrders.length && (STATE.sheetUrl || DEFAULT_SHEET_URL)) {
-    showToast('Fetching orders from sheet...', 4000);
-    try {
-      const url = STATE.sheetUrl || DEFAULT_SHEET_URL;
-      const params = new URLSearchParams({
-        action: 'getCustomerOrders',
-        customerId: custId,
-        customerName: cust.name,
-        phone: cust.phone || ''
-      });
-      const res = await fetch(url + '?' + params, {cache: 'no-store'});
+  // Always fetch from sheet for complete item details
+  try {
+    const url = STATE.sheetUrl || DEFAULT_SHEET_URL;
+    if(url) {
+      showToast('Fetching orders...', 4000);
+      const params = new URLSearchParams({action:'getCustomerOrders', customerId:custId, customerName:cust.name, phone:cust.phone||''});
+      const res = await fetch(url+'?'+params, {cache:'no-store'});
       const data = await res.json();
-      if (data.orders && Array.isArray(data.orders) && data.orders.length) {
-        // Sheet returns flat rows — group by Order ID into structured orders
+      if(data.orders && data.orders.length) {
         const orderMap = {};
         data.orders.forEach(row => {
-          const oid = String(row['Order ID'] || row['id'] || '').trim();
-          if (!oid || oid.startsWith('TOTAL')) return;
-          if (!orderMap[oid]) {
-            orderMap[oid] = {
-              id: oid,
-              date: row['Date'] || row['date'] || '',
-              customerName: row['Customer'] || row['customerName'] || cust.name,
-              total: parseFloat(row['Order Total (Rs)'] || row['total'] || 0),
-              paymentAmount: parseFloat(row['Payment Amt'] || row['paymentAmount'] || 0),
-              status: row['Status'] || row['status'] || '',
-              items: []
-            };
-          }
-          const product = String(row['Product'] || row['product'] || '').trim();
-          const qty = parseFloat(row['Qty'] || row['qty'] || 0);
-          const rate = parseFloat(row['Rate (Rs)'] || row['rate'] || 0);
-          const amount = parseFloat(row['Amount (Rs)'] || row['amount'] || 0) || (qty * rate);
-          const unit = String(row['Unit'] || row['unit'] || '');
-          if (product) {
-            orderMap[oid].items.push({ name: product, qty, unit, rate, amount });
-          }
+          const oid = String(row['Order ID']||row['id']||'').trim();
+          if(!oid||oid.startsWith('TOTAL')) return;
+          if(!orderMap[oid]) orderMap[oid] = {
+            id:oid, date:String(row['Date']||row['date']||''),
+            customerName:String(row['Customer']||cust.name),
+            total:parseFloat(row['Order Total (Rs)']||row['total']||0),
+            paymentAmount:parseFloat(row['Payment Amt']||row['paymentAmount']||0),
+            status:String(row['Status']||''), items:[]
+          };
+          const product = String(row['Product']||row['product']||'').trim();
+          const qty = parseFloat(row['Qty']||row['qty']||0);
+          const rate = parseFloat(row['Rate (Rs)']||row['rate']||0);
+          const amount = parseFloat(row['Amount (Rs)']||row['amount']||0)||(qty*rate);
+          const unit = String(row['Unit']||row['unit']||'');
+          if(product) orderMap[oid].items.push({name:product, qty, unit, rate, amount});
         });
-        custOrders = Object.values(orderMap).sort((a, b) => (a.date||'').localeCompare(b.date||''));
+        const sheetOrders = Object.values(orderMap).sort((a,b)=>(a.date||'').localeCompare(b.date||''));
+        if(sheetOrders.length) custOrders = sheetOrders;
       }
-    } catch(e) { console.log('Sheet fetch failed', e); }
-  }
+    }
+  } catch(e) { console.log('Statement fetch failed', e); }
 
   const openingBal = parseFloat(cust.balance) || 0;
 
