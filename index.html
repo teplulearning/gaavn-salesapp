@@ -180,6 +180,8 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
   document.head.appendChild(l);
 })();
 </script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
 </head>
 <body>
 
@@ -3655,6 +3657,7 @@ function renderDues() {
         html += '<button data-cid="'+_safeId+'" data-tp="client" onclick="sendCreditWA(decodeURIComponent(this.dataset.cid),this.dataset.tp)" style="padding:8px 12px;background:#25D366;color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">&#128242; Remind Client</button>';
       }
       html += '<button data-cid="'+_safeId+'" data-tp="internal" onclick="sendCreditWA(decodeURIComponent(this.dataset.cid),this.dataset.tp)" style="padding:8px 12px;background:var(--amber);color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">&#128203; Alert Sales</button>';
+      html += '<button data-cid="'+_safeId+'" onclick="sendStatement(decodeURIComponent(this.dataset.cid))" style="padding:8px 12px;background:#1A527A;color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">&#128196; Bill</button>';
       html += '</div>';
 
       html += '</div></div>';
@@ -3663,6 +3666,180 @@ function renderDues() {
 
   if(!html) html = '<div class="empty-state"><div class="empty-icon">🎉</div><p>No outstanding dues!</p></div>';
   list.innerHTML = html;
+}
+
+async function sendStatement(custId) {
+  const cust = STATE.customers.find(c => c.id === custId);
+  if (!cust) return;
+  showToast('Generating bill...', 4000);
+
+  // Gather orders for this customer from STATE
+  const custOrders = STATE.orders
+    .filter(o => o.customerId === custId || o.customerName === cust.name)
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  const openingBal = parseFloat(cust.balance) || 0;
+
+  // Build jsPDF
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+
+  const pageW = doc.internal.pageSize.getWidth();
+  const margin = 14;
+
+  // ── HEADER ──────────────────────────────────────────
+  doc.setFillColor(26, 82, 122); // dark blue
+  doc.rect(0, 0, pageW, 28, 'F');
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(18);
+  doc.setFont('helvetica', 'bold');
+  doc.text('Gaavn Fresh', margin, 12);
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'normal');
+  doc.text('Farm Fresh Dairy | Saswad, Pune', margin, 18);
+  doc.text('STATEMENT OF ACCOUNT', margin, 24);
+
+  // Date top right
+  const today = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+  doc.setFontSize(9);
+  doc.text('Date: ' + today, pageW - margin, 12, { align: 'right' });
+
+  // ── CUSTOMER INFO ────────────────────────────────────
+  doc.setTextColor(30, 30, 30);
+  doc.setFontSize(11);
+  doc.setFont('helvetica', 'bold');
+  doc.text(cust.name, margin, 36);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  let infoY = 42;
+  if (cust.phone) { doc.text('📞 ' + cust.phone, margin, infoY); infoY += 5; }
+  if (cust.area)  { doc.text('📍 ' + cust.area,  margin, infoY); infoY += 5; }
+  doc.text('Category: ' + (cust.category || ''), margin, infoY);
+
+  // ── SUMMARY BAR ──────────────────────────────────────
+  let totalOrders = 0, totalPaid = 0;
+  custOrders.forEach(o => {
+    totalOrders += parseFloat(o.total) || 0;
+    totalPaid   += parseFloat(o.payment?.amount || o.paymentAmount) || 0;
+  });
+  const totalDue = openingBal + totalOrders - totalPaid;
+
+  const barY = infoY + 8;
+  doc.setFillColor(240, 248, 255);
+  doc.roundedRect(margin, barY, pageW - margin * 2, 18, 3, 3, 'F');
+  doc.setFontSize(8);
+  doc.setTextColor(80, 80, 80);
+  const col = (pageW - margin * 2) / 3;
+  doc.text('Opening Balance', margin + col * 0 + 4, barY + 6);
+  doc.text('Total Orders',    margin + col * 1 + 4, barY + 6);
+  doc.text('Amount Due',      margin + col * 2 + 4, barY + 6);
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(30, 30, 30);
+  doc.text('₹' + openingBal.toLocaleString('en-IN'), margin + col * 0 + 4, barY + 13);
+  doc.text('₹' + totalOrders.toLocaleString('en-IN'), margin + col * 1 + 4, barY + 13);
+  doc.setTextColor(180, 30, 30);
+  doc.text('₹' + totalDue.toLocaleString('en-IN'), margin + col * 2 + 4, barY + 13);
+  doc.setTextColor(30, 30, 30);
+
+  let curY = barY + 26;
+
+  // ── OPENING BALANCE ROW ───────────────────────────────
+  if (openingBal > 0) {
+    doc.autoTable({
+      startY: curY,
+      margin: { left: margin, right: margin },
+      head: [['Opening Balance', '', '', '₹' + openingBal.toLocaleString('en-IN')]],
+      body: [],
+      headStyles: { fillColor: [200, 131, 10], textColor: 255, fontSize: 9, fontStyle: 'bold' },
+      columnStyles: { 0: { cellWidth: 70 }, 1: { cellWidth: 30 }, 2: { cellWidth: 30 }, 3: { cellWidth: 46, halign: 'right' } },
+      theme: 'grid',
+    });
+    curY = doc.lastAutoTable.finalY + 4;
+  }
+
+  // ── PER-ORDER TABLES ──────────────────────────────────
+  custOrders.forEach((o, idx) => {
+    const orderTotal = parseFloat(o.total) || 0;
+    const paid = parseFloat(o.payment?.amount || o.paymentAmount) || 0;
+    const outstanding = orderTotal - paid;
+
+    // Parse items
+    let items = [];
+    try { items = JSON.parse(o.items || '[]'); } catch(e) {}
+    if (!Array.isArray(items)) items = [];
+
+    const orderRows = items.map(i => [
+      i.name || '',
+      (i.qty || '') + ' ' + (i.unit || ''),
+      '₹' + (i.rate || ''),
+      '₹' + ((i.amount || (i.qty * i.rate)) || '').toLocaleString('en-IN'),
+    ]);
+
+    doc.autoTable({
+      startY: curY,
+      margin: { left: margin, right: margin },
+      head: [[
+        'Order #' + (o.id || '') + '  |  ' + (o.date || ''),
+        'Qty', 'Rate', 'Amount'
+      ]],
+      body: [
+        ...orderRows,
+        [{ content: 'Order Total', colSpan: 3, styles: { fontStyle: 'bold', fillColor: [220, 235, 255] } },
+         { content: '₹' + orderTotal.toLocaleString('en-IN'), styles: { fontStyle: 'bold', fillColor: [220, 235, 255], halign: 'right' } }],
+        ...(paid > 0 ? [[
+          { content: 'Payment Received', colSpan: 3, styles: { fillColor: [220, 255, 220] } },
+          { content: '-₹' + paid.toLocaleString('en-IN'), styles: { fillColor: [220, 255, 220], halign: 'right', textColor: [30, 130, 30] } }
+        ]] : []),
+        [{ content: 'Outstanding', colSpan: 3, styles: { fontStyle: 'bold', fillColor: [255, 240, 200] } },
+         { content: '₹' + outstanding.toLocaleString('en-IN'), styles: { fontStyle: 'bold', fillColor: [255, 240, 200], halign: 'right', textColor: [150, 80, 0] } }],
+      ],
+      headStyles: { fillColor: [26, 82, 122], textColor: 255, fontSize: 8, fontStyle: 'bold' },
+      bodyStyles: { fontSize: 8 },
+      columnStyles: { 0: { cellWidth: 80 }, 1: { cellWidth: 20 }, 2: { cellWidth: 26 }, 3: { cellWidth: 50, halign: 'right' } },
+      theme: 'grid',
+    });
+    curY = doc.lastAutoTable.finalY + 5;
+  });
+
+  // ── TOTAL DUE FOOTER ─────────────────────────────────
+  doc.autoTable({
+    startY: curY,
+    margin: { left: margin, right: margin },
+    body: [[
+      { content: 'TOTAL AMOUNT DUE', styles: { fontStyle: 'bold', fontSize: 11, fillColor: [26, 82, 122], textColor: 255 } },
+      { content: '₹' + totalDue.toLocaleString('en-IN'), styles: { fontStyle: 'bold', fontSize: 11, fillColor: [26, 82, 122], textColor: [255, 215, 0], halign: 'right' } }
+    ]],
+    columnStyles: { 0: { cellWidth: 126 }, 1: { cellWidth: 50 } },
+    theme: 'grid',
+  });
+  curY = doc.lastAutoTable.finalY + 8;
+
+  // ── FOOTER NOTE ───────────────────────────────────────
+  doc.setFontSize(8);
+  doc.setTextColor(100, 100, 100);
+  doc.setFont('helvetica', 'italic');
+  doc.text('Kindly make the payment at the earliest. Thank you for your business!', margin, curY);
+  doc.setFont('helvetica', 'normal');
+  doc.text('Gaavn Fresh | Saswad, Pune | gaavnfresh.com', margin, curY + 5);
+
+  // ── SHARE / DOWNLOAD ─────────────────────────────────
+  const fileName = 'GaavnFresh_Bill_' + cust.name.replace(/\s+/g, '_') + '_' + TODAY_KEY + '.pdf';
+  const pdfBlob = doc.output('blob');
+
+  if (navigator.share && navigator.canShare && navigator.canShare({ files: [new File([pdfBlob], fileName, { type: 'application/pdf' })] })) {
+    try {
+      await navigator.share({
+        files: [new File([pdfBlob], fileName, { type: 'application/pdf' })],
+        title: 'Bill - ' + cust.name,
+        text: 'Payment statement from Gaavn Fresh',
+      });
+    } catch(e) {
+      doc.save(fileName);
+    }
+  } else {
+    doc.save(fileName);
+  }
 }
 
 function recordDuePayment(custId) {
