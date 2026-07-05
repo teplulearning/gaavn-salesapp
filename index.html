@@ -4557,7 +4557,7 @@ function buildImportReview(parsed){
     return Object.assign({}, r, {decision:decision, chosenId:chosenId, cands:cands});
   });
   renderImportReview();
-  openModal('modal-import-review');
+  var _m=document.getElementById('modal-import-review'); if(_m) _m.classList.add('open');
 }
 
 function renderImportReview(){
