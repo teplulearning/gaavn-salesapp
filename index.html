@@ -563,6 +563,19 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
       </div>
     </div>
 
+    <div class="setup-card" id="settle-orders-card" style="border-color:#C8830A;">
+      <div class="section-label" style="margin-top:0;color:#C8830A;">🔄 Migration: Settle Old Orders</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:10px;line-height:1.6;">
+        One-time cut-over. Marks every order up to the chosen date as <b>settled (paid)</b> — they stay as delivery history but stop adding to dues. Run this together with importing opening balances, so the Khatabook balance becomes the single source of truth (no double-counting).
+      </div>
+      <div class="field">
+        <label>Settle all orders up to (inclusive)</label>
+        <input type="date" id="settle-date" value="2026-07-05" style="width:100%;background:var(--cream);border:1.5px solid var(--border);border-radius:8px;padding:9px 12px;font-size:14px;">
+      </div>
+      <div id="settle-status" style="font-size:12px;min-height:16px;margin:8px 0;"></div>
+      <button class="btn btn-blue" style="width:100%;" onclick="runSettleOrders()">🔄 Settle Orders Up To Date</button>
+    </div>
+
     <div class="setup-card">
       <div class="section-label" style="margin-top:0;">🧾 Product GST Master</div>
       <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">Set HSN code and GST rate for each product. Used in GST Report for your CA. Fresh dairy is generally exempt (0%). Flavoured drinks attract 12%.</div>
@@ -691,6 +704,21 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
       <div style="display:flex;flex-direction:column;gap:8px;">
         <button class="btn btn-success" onclick="generateGSTReport('csv')">⬇ Download CSV (for CA)</button>
         <button class="btn btn-secondary" onclick="closeModal('modal-gst-export')">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- CUSTOMER IMPORT REVIEW MODAL -->
+  <div class="modal-overlay" id="modal-import-review">
+    <div class="modal-sheet" style="max-height:88vh;overflow-y:auto;">
+      <div class="modal-handle"></div>
+      <div class="modal-title">🔍 Review Customer Import</div>
+      <div id="import-review-summary" style="font-size:13px;margin-bottom:10px;"></div>
+      <div id="import-review-list"></div>
+      <div id="import-review-status" style="font-size:12px;color:var(--muted);min-height:16px;margin-top:8px;"></div>
+      <div class="btn-row" style="margin-top:10px;">
+        <button class="btn btn-secondary" onclick="closeModal('modal-import-review')">Cancel</button>
+        <button class="btn btn-blue" id="btn-apply-import" onclick="applyImportConfirmed()">✓ Apply Import</button>
       </div>
     </div>
   </div>
@@ -4474,15 +4502,14 @@ async function exportDuesToSheet() {
 // ── UPLOAD CUSTOMERS ─────────────────────────────────────────────────
 async function uploadCustomers(input) {
   const file=input.files[0]; if(!file) return;
-  showToast('⏳ Processing...');
+  showToast('⏳ Reading file...');
   try {
     const {read,utils}=await import('https://cdn.sheetjs.com/xlsx-0.20.1/package/xlsx.mjs');
     const ab=await file.arrayBuffer();
     const wb=read(ab);
     const ws=wb.Sheets[wb.SheetNames[0]];
     const rows=utils.sheet_to_json(ws,{defval:''});
-    let added=0,updated=0;
-    const extras=JSON.parse(localStorage.getItem(LS_CUSTS)||'[]');
+    const parsed=[];
     for(const row of rows) {
       const name=String(row['Customer Name']||row['Name']||row['name']||'').trim();
       if(!name) continue;
@@ -4493,20 +4520,111 @@ async function uploadCustomers(input) {
         const val=parseFloat(row[newKey]||row[oldKey]||0);
         if(val>0) pricing[p.id]=val;
       });
-      const openBal=parseFloat(row['Opening Balance (₹)']||row['Opening_Balance']||0)||0;
-      const cat=String(row['Category']||row['category']||'').trim();
-      const customer={name,category:cat||'Retail',
-        phone:String(row['Phone']||'').trim(),area:String(row['Area / Route']||row['Area']||'').trim(),
-        pricing,balance:openBal,openingBalance:openBal,
-        openingBalanceDate:new Date().toLocaleDateString('en-IN'),createdAt:Date.now()};
-      const idx=STATE.customers.findIndex(c=>c.name.toLowerCase()===name.toLowerCase());
-      if(idx>=0) { Object.assign(STATE.customers[idx],customer); updated++; }
-      else { customer.id='cu'+Date.now()+added; STATE.customers.push(customer); extras.push(customer); added++; }
+      const openBal=parseFloat(row['Opening Balance (₹)']||row['Opening_Balance']||row['Balance']||0)||0;
+      parsed.push({name, category:String(row['Category']||row['category']||'').trim(),
+        phone:String(row['Phone']||'').trim(), area:String(row['Area / Route']||row['Area']||'').trim(),
+        pricing, balance:openBal});
     }
-    localStorage.setItem(LS_CUSTS,JSON.stringify(extras));
-    showToast(`✓ ${added} added, ${updated} updated`);
-    renderCustomerList();
+    input.value='';
+    if(!parsed.length){ showToast('No rows found in file'); return; }
+    buildImportReview(parsed);
   } catch(e) { showToast('Upload failed: '+e.message); }
+}
+
+function _normName(x){ return String(x||'').toLowerCase().replace(/[.,()\-_/]/g,' ').replace(/\s+/g,' ').trim(); }
+function _scoreMatch(inputName, custName){
+  const a=_normName(inputName), b=_normName(custName);
+  if(!a||!b) return 0;
+  if(a===b) return 100;
+  if(b.indexOf(a)>=0 || a.indexOf(b)>=0) return 82;
+  const aw=a.split(' ').filter(w=>w.length>2), bw=b.split(' ').filter(w=>w.length>2);
+  if(!aw.length||!bw.length) return 0;
+  const m=aw.filter(w=>bw.some(cw=>cw.indexOf(w)>=0||w.indexOf(cw)>=0));
+  return Math.round((m.length/Math.max(aw.length,bw.length))*72);
+}
+
+var _pendingImport=[];
+function buildImportReview(parsed){
+  _pendingImport = parsed.map(function(r){
+    var cands=[];
+    STATE.customers.forEach(function(c){ var sc=_scoreMatch(r.name,c.name); if(sc>=45) cands.push({id:c.id,name:c.name,cat:c.category||'',score:sc}); });
+    cands.sort(function(a,b){return b.score-a.score;});
+    cands=cands.slice(0,3);
+    var decision, chosenId=null;
+    if(cands.length && cands[0].score>=100){ decision='update'; chosenId=cands[0].id; }
+    else if(cands.length){ decision='review'; chosenId=(cands[0].score>=80?cands[0].id:null); }
+    else { decision='new'; }
+    return Object.assign({}, r, {decision:decision, chosenId:chosenId, cands:cands});
+  });
+  renderImportReview();
+  openModal('modal-import-review');
+}
+
+function renderImportReview(){
+  var auto=_pendingImport.filter(function(p){return p.decision==='update';}).length;
+  var rev=_pendingImport.filter(function(p){return p.decision==='review';});
+  var nw=_pendingImport.filter(function(p){return p.decision==='new';}).length;
+  document.getElementById('import-review-summary').innerHTML =
+    '<b>'+_pendingImport.length+'</b> rows &middot; <span style="color:#2A7A45;">'+auto+' exact (update)</span> &middot; '
+    +'<span style="color:#C8830A;">'+rev.length+' to confirm</span> &middot; <span style="color:#1A527A;">'+nw+' new</span>';
+  var html='';
+  if(rev.length){
+    html+='<div style="font-size:12px;color:var(--muted);margin:6px 0;">Possible duplicates — pick the right choice for each:</div>';
+    _pendingImport.forEach(function(p,i){
+      if(p.decision!=='review') return;
+      html+='<div style="border:1.5px solid var(--border);border-radius:10px;padding:8px 10px;margin-bottom:8px;">'
+        +'<div style="font-weight:700;font-size:13px;">'+p.name+' &middot; ₹'+(p.balance||0).toLocaleString('en-IN')+'</div>'
+        +'<div style="display:flex;flex-direction:column;gap:5px;margin-top:6px;">';
+      html+='<label style="font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;">'
+        +'<input type="radio" name="imp'+i+'" '+(p.chosenId===null?'checked':'')+' onchange="_pendingImport['+i+'].chosenId=null;">'
+        +'🆕 Create new customer</label>';
+      p.cands.forEach(function(c){
+        html+='<label style="font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;">'
+          +'<input type="radio" name="imp'+i+'" '+(p.chosenId===c.id?'checked':'')+" onchange=\"_pendingImport["+i+"].chosenId='"+c.id+"';\">"
+          +'✅ Same as: <b>'+c.name+'</b> <span style="color:var(--muted);">'+(c.cat?'('+c.cat+') ':'')+'&middot; '+c.score+'%</span></label>';
+      });
+      html+='</div></div>';
+    });
+  } else {
+    html+='<div style="font-size:12px;color:#2A7A45;">No ambiguous duplicates — every row is a clear match or a new customer.</div>';
+  }
+  document.getElementById('import-review-list').innerHTML=html;
+}
+
+async function applyImportConfirmed(){
+  var btn=document.getElementById('btn-apply-import'); if(btn){btn.disabled=true; btn.textContent='⏳ Applying...';}
+  var status=document.getElementById('import-review-status');
+  var extras=JSON.parse(localStorage.getItem(LS_CUSTS)||'[]');
+  var updated=0, created=0, n=0;
+  for(const p of _pendingImport){
+    n++;
+    var targetId = (p.decision==='update'||p.decision==='review') ? p.chosenId : null;
+    if(targetId){
+      var c=STATE.customers.find(function(x){return x.id===targetId;});
+      if(c){
+        c.balance=p.balance; c.openingBalance=p.balance;
+        if(!c.phone && p.phone) c.phone=p.phone;
+        if(!c.category && p.category) c.category=p.category;
+        if(!c.area && p.area) c.area=p.area;
+        var ei=extras.findIndex(function(x){return x.id===targetId;});
+        if(ei>=0){ Object.assign(extras[ei],{balance:p.balance,name:c.name,category:c.category||'',phone:c.phone||'',area:c.area||'',pricing:c.pricing||{}}); }
+        else { extras.push({id:c.id,name:c.name,balance:p.balance,category:c.category||'',phone:c.phone||'',area:c.area||'',pricing:c.pricing||{}}); }
+        updated++;
+      }
+    } else {
+      var id='cu'+Date.now()+n;
+      var nc={id:id,name:p.name,category:p.category||'Retail',phone:p.phone||'',area:p.area||'',pricing:p.pricing||{},balance:p.balance,openingBalance:p.balance,openingBalanceDate:new Date().toLocaleDateString('en-IN'),createdAt:Date.now()};
+      STATE.customers.push(nc); extras.push(nc); created++;
+    }
+  }
+  localStorage.setItem(LS_CUSTS, JSON.stringify(extras));
+  if(btn){btn.disabled=false; btn.textContent='✓ Apply Import';}
+  if(status) status.innerHTML='<span style="color:#2A7A45;font-weight:700;">✓ '+updated+' updated, '+created+' created locally. Syncing to Sheet…</span>';
+  showToast('✓ '+updated+' updated, '+created+' new — syncing...');
+  closeModal('modal-import-review');
+  if(typeof renderCustomerList==='function') renderCustomerList();
+  if(typeof renderDues==='function') renderDues();
+  if(typeof pushAllCustomersToSheet==='function') pushAllCustomersToSheet();
 }
 
 function downloadTemplate() {
@@ -4649,6 +4767,24 @@ async function applyBalanceImport() {
   _balanceImportMatches = [];
   showToast('✓ Balances imported');
   renderDues();
+}
+
+async function runSettleOrders(){
+  const url=getSheetUrl(); if(!url){ showToast('\u2699 Set Sheet URL in Setup first'); return; }
+  const date=(document.getElementById('settle-date')||{}).value||'2026-07-05';
+  if(!confirm('Mark ALL orders up to '+date+' as settled (paid)?\n\nTheir dues become \u20b90 (delivery history is kept), so imported opening balances become the source of truth. This updates the Google Sheet for all devices.')) return;
+  const st=document.getElementById('settle-status'); if(st){st.style.color='var(--muted)';st.textContent='\u23F3 Settling orders up to '+date+'...';}
+  showToast('\u23F3 Settling orders...');
+  try{
+    const res=await fetch(url+'?action=settleOrdersUpto&date='+encodeURIComponent(date),{cache:'no-store'});
+    const d=await res.json();
+    if(d && d.status==='ok'){
+      if(st){st.style.color='#2A7A45';st.textContent='\u2713 Settled '+d.settled+' orders up to '+date+'. Now import opening balances.';}
+      showToast('\u2713 Settled '+d.settled+' orders');
+    } else {
+      if(st){st.style.color='var(--red)';st.textContent='\u26a0 '+((d&&d.error)||'Failed');}
+    }
+  }catch(e){ if(st){st.style.color='var(--red)';st.textContent='\u26a0 Failed \u2014 check connection';} }
 }
 
 // ── SETUP SCREEN ─────────────────────────────────────────────────────
@@ -4824,6 +4960,7 @@ function getAppsScriptCode() {
     '    if (a === "logPayment")   return logPayment(e.parameter);',
     '    if (a === "getOrders")    return getOrders(e.parameter);',
     '    if (a === "getMonthOrders") return getMonthOrders(e.parameter);',
+    '    if (a === "settleOrdersUpto") return settleOrdersUpto(e.parameter);',
     '    if (a === "logCustomer")  return logCustomer(e.parameter);',
     '    if (a === "getCustomers") return getCustomers(e.parameter);',
     '    if (a === "getCustomerByPhone")    return getCustomerByPhone(e.parameter);',
@@ -5313,6 +5450,34 @@ function getAppsScriptCode() {
     '    return obj;',
     '  });',
     '  return jsonOut({orders:orders,month:month,count:orders.length});',
+    '}',
+    '',
+    'function settleOrdersUpto(p) {',
+    '  var ss=SpreadsheetApp.openById(SS_ID);',
+    '  var cutoff=String(p.date||"").slice(0,10);',
+    '  if(!cutoff) return jsonOut({error:"no date"});',
+    '  var tz=Session.getScriptTimeZone(); var settled=0;',
+    '  ss.getSheets().forEach(function(sh){',
+    '    if(sh.getName().indexOf("Orders_")!==0) return;',
+    '    var rng=sh.getDataRange(); var data=rng.getValues();',
+    '    if(data.length<2) return;',
+    '    var changed=false;',
+    '    for(var r=1;r<data.length;r++){',
+    '      var id=String(data[r][0]||"").trim();',
+    '      if(!id || id.indexOf("TOTAL:")===0 || id.indexOf("RESUBMIT:")===0) continue;',
+    '      var d=normDateCell(data[r][1],tz);',
+    '      if(!d || d>cutoff) continue;',
+    '      var tot=parseFloat(data[r][6])||0;',
+    '      if(tot>0){',
+    '        data[r][5]="paid";',
+    '        data[r][8]=tot;',
+    '        if(!String(data[r][7]||"").trim()) data[r][7]="settled";',
+    '        settled++; changed=true;',
+    '      }',
+    '    }',
+    '    if(changed) rng.setValues(data);',
+    '  });',
+    '  return jsonOut({status:"ok",settled:settled,cutoff:cutoff});',
     '}',
     '',
     '// ── CUSTOMER APP FUNCTIONS ───────────────────────────────────────────',
