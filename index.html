@@ -3831,43 +3831,67 @@ async function sendStatement(custId) {
   if (!cust) return;
   showToast('Generating bill...', 4000);
 
-  // Gather orders for this customer from STATE
-  let custOrders = STATE.orders
-    .filter(o => o.customerId === custId || o.customerName === cust.name)
-    .sort((a, b) => (a.date||'').localeCompare(b.date||''));
-
-  // Always fetch from sheet for complete item details
+  // Gather this customer's orders from LOCAL storage (all dates), so item
+  // lines still print offline or when the Sheet name-match misses.
+  const _sameCust = o => o && (o.customerId === custId || (o.customerName||'').trim().toLowerCase() === (cust.name||'').trim().toLowerCase());
+  const localById = {};
+  (STATE.orders||[]).forEach(o => { if(_sameCust(o)) localById[o.id] = o; });
   try {
-    const url = STATE.sheetUrl || DEFAULT_SHEET_URL;
+    for(let i=0;i<localStorage.length;i++){
+      const k = localStorage.key(i);
+      if(!k || k.indexOf('gf_orders_')!==0) continue;
+      let arr=[]; try{ arr=JSON.parse(localStorage.getItem(k)||'[]'); }catch(e){}
+      (arr||[]).forEach(o => { if(_sameCust(o) && !localById[o.id]) localById[o.id]=o; });
+    }
+  } catch(e){}
+
+  // Fetch the same customer's orders from the SHEET (full history + items).
+  const sheetById = {};
+  try {
+    const url = STATE.sheetUrl || getSheetUrl() || DEFAULT_SHEET_URL;
     if(url) {
       showToast('Fetching orders...', 4000);
       const params = new URLSearchParams({action:'getCustomerOrders', customerId:custId, customerName:cust.name, phone:cust.phone||''});
       const res = await fetch(url+'?'+params, {cache:'no-store'});
       const data = await res.json();
-      if(data.orders && data.orders.length) {
-        const orderMap = {};
-        data.orders.forEach(row => {
-          const oid = String(row['Order ID']||row['id']||'').trim();
-          if(!oid||oid.startsWith('TOTAL')) return;
-          if(!orderMap[oid]) orderMap[oid] = {
-            id:oid, date:String(row['Date']||row['date']||''),
-            customerName:String(row['Customer']||cust.name),
-            total:parseFloat(row['Order Total (Rs)']||row['total']||0),
-            paymentAmount:parseFloat(row['Payment Amt']||row['paymentAmount']||0),
-            status:String(row['Status']||''), items:[]
-          };
-          const product = String(row['Product']||row['product']||'').trim();
-          const qty = parseFloat(row['Qty']||row['qty']||0);
-          const rate = parseFloat(row['Rate (Rs)']||row['rate']||0);
-          const amount = parseFloat(row['Amount (Rs)']||row['amount']||0)||(qty*rate);
-          const unit = String(row['Unit']||row['unit']||'');
-          if(product) orderMap[oid].items.push({name:product, qty, unit, rate, amount});
-        });
-        const sheetOrders = Object.values(orderMap).sort((a,b)=>(a.date||'').localeCompare(b.date||''));
-        if(sheetOrders.length) custOrders = sheetOrders;
-      }
+      (data.orders||[]).forEach(row => {
+        const oid = String(row['Order ID']||row['id']||'').trim();
+        if(!oid || oid.startsWith('TOTAL')) return;
+        // Backend may return ALL customers' orders (it doesn't filter when no
+        // phone is passed) — so filter to THIS customer here on the client.
+        const _rc = String(row['Customer']||row['customerName']||'').trim().toLowerCase();
+        const _wc = (cust.name||'').trim().toLowerCase();
+        if(_wc && _rc && _rc !== _wc) return;
+        if(!sheetById[oid]) sheetById[oid] = {
+          id:oid, date:String(row['Date']||row['date']||''),
+          customerName:String(row['Customer']||cust.name),
+          total:parseFloat(row['Order Total (Rs)']||row['total']||0),
+          paymentAmount:parseFloat(row['Payment Amt']||row['paymentAmount']||0),
+          status:String(row['Status']||''), items:[]
+        };
+        const product = String(row['Product']||row['product']||'').trim();
+        if(!product || product === '(no items)') return;
+        const qty = parseFloat(row['Qty']||row['qty']||0);
+        const rate = parseFloat(row['Rate (Rs)']||row['rate']||0);
+        const amount = parseFloat(row['Amount (Rs)']||row['amount']||0)||(qty*rate);
+        const unit = String(row['Unit']||row['unit']||'');
+        sheetById[oid].items.push({name:product, qty, unit, rate, amount});
+      });
     }
   } catch(e) { console.log('Statement fetch failed', e); }
+
+  // Merge both sources, keeping whichever actually has item lines.
+  const _hasItems = o => o && Array.isArray(o.items) && o.items.length > 0;
+  const mergedById = {};
+  Object.keys(localById).forEach(id => { mergedById[id] = localById[id]; });
+  Object.keys(sheetById).forEach(id => {
+    const sh = sheetById[id], lo = localById[id];
+    if(!lo) { mergedById[id] = sh; return; }
+    if(!_hasItems(lo) && _hasItems(sh)) lo.items = sh.items;
+    if(!(parseFloat(lo.total)>0) && parseFloat(sh.total)>0) lo.total = sh.total;
+    mergedById[id] = lo;
+  });
+  let custOrders = Object.values(mergedById).sort((a,b)=>(a.date||'').localeCompare(b.date||''));
 
   const openingBal = parseFloat(cust.balance) || 0;
 
@@ -5295,7 +5319,9 @@ function getAppsScriptCode() {
     '',
     'function getCustomerOrders(p) {',
     '  var ss=SpreadsheetApp.openById(SS_ID);',
+    '  function norm(x){return String(x||"").replace(/\\s+/g," ").trim().toLowerCase();}',
     '  var custPhone=String(p.phone||"").replace(/\\D/g,"").slice(-10);',
+    '  var wantName=norm(p.customerName);',
     '  var allOrders=[], allSheets=ss.getSheets();',
     '  allSheets.forEach(function(sh) {',
     '    if(sh.getName().indexOf("Orders_")!==0) return;',
@@ -5303,11 +5329,8 @@ function getAppsScriptCode() {
     '    var headers=data[0], matchIds={};',
     '    data.slice(1).forEach(function(row) {',
     '      var id=String(row[0]||"").trim();',
-    '      var phone=String(row[4]||"").replace(/\\D/g,"").slice(-10);',
     '      if(!id||id.indexOf("TOTAL:")===0) return;',
-    '      var custName=String(p.customerName||\"\").trim().toLowerCase();',
-    '      var rowCust=String(row[2]||\"\").trim().toLowerCase();',
-    '      if((custPhone && phone===custPhone)||(custName && rowCust===custName)) matchIds[id]=true;',
+    '      if(wantName && norm(row[2])===wantName) matchIds[id]=true;',
     '    });',
     '    data.slice(1).forEach(function(row) {',
     '      var id=String(row[0]||"").trim();',
@@ -5317,9 +5340,11 @@ function getAppsScriptCode() {
     '  var balance=0, csh=ss.getSheetByName("Customers");',
     '  if(csh){',
     '    var cd=csh.getDataRange().getValues(), ch=cd[0];',
-    '    var balIdx=ch.indexOf("Balance"), phIdx=ch.indexOf("Phone");',
+    '    var balIdx=ch.indexOf("Balance"), phIdx=ch.indexOf("Phone"), nmIdx=ch.indexOf("Name");',
     '    for(var r=1;r<cd.length;r++){',
-    '      if(String(cd[r][phIdx]||"").replace(/\\D/g,"").slice(-10)===custPhone){balance=parseFloat(cd[r][balIdx])||0;break;}',
+    '      var byPhone = custPhone && phIdx>=0 && String(cd[r][phIdx]||"").replace(/\\D/g,"").slice(-10)===custPhone;',
+    '      var byName = wantName && nmIdx>=0 && norm(cd[r][nmIdx])===wantName;',
+    '      if(byPhone||byName){balance=parseFloat(cd[r][balIdx])||0;break;}',
     '    }',
     '  }',
     '  return jsonOut({orders:allOrders,balance:balance,count:allOrders.length});',
@@ -7775,6 +7800,69 @@ function _startApp() {
   }
   try { buildRoleScreen(); } catch(e) { console.error('buildRoleScreen failed:', e); }
 }
+// ── OFFLINE AUTO-SYNC + ONLINE/OFFLINE INDICATOR ──────────────────────
+// Orders already save to localStorage instantly (works with no internet).
+// This pushes any un-synced orders to the Sheet automatically the moment
+// connectivity returns, and shows a live status pill.
+function getPendingOrders(){
+  const seen={}, out=[];
+  (STATE.orders||[]).forEach(function(o){ if(o && o.synced!==true){ out.push(o); seen[o.id]=true; }});
+  try{
+    for(let i=0;i<localStorage.length;i++){
+      const k=localStorage.key(i);
+      if(!k || k.indexOf('gf_orders_')!==0) continue;
+      let arr=[]; try{ arr=JSON.parse(localStorage.getItem(k)||'[]'); }catch(e){}
+      (arr||[]).forEach(function(o){ if(o && o.synced!==true && !seen[o.id]){ out.push(o); seen[o.id]=true; }});
+    }
+  }catch(e){}
+  return out;
+}
+function ensureOnlineIndicator(){
+  let el=document.getElementById('online-indicator');
+  if(!el){
+    el=document.createElement('div');
+    el.id='online-indicator';
+    el.style.cssText='position:fixed;bottom:70px;left:50%;transform:translateX(-50%);z-index:9999;font-size:11px;font-weight:700;padding:5px 12px;border-radius:14px;box-shadow:0 2px 6px rgba(0,0,0,0.2);cursor:pointer;';
+    el.title='Tap to sync now';
+    el.onclick=function(){ autoSyncPending(false); };
+    document.body.appendChild(el);
+  }
+  return el;
+}
+function updateOnlineIndicator(){
+  let el; try{ el=ensureOnlineIndicator(); }catch(e){ return; }
+  const pend=getPendingOrders().length;
+  if(navigator.onLine){
+    el.textContent = pend ? ('⏳ '+pend+' to sync') : '🟢 Online';
+    el.style.background = pend ? '#FFF3E0' : '#E8F5E9';
+    el.style.color = pend ? '#E65100' : '#1B7A2E';
+  } else {
+    el.textContent = pend ? ('📴 Offline · '+pend+' saved') : '📴 Offline';
+    el.style.background = '#FDECEA';
+    el.style.color = '#B3261E';
+  }
+}
+let _autoSyncing=false;
+async function autoSyncPending(silent){
+  if(_autoSyncing) return;
+  if(!navigator.onLine){ if(!silent) showToast('📴 Offline — will sync when back online'); updateOnlineIndicator(); return; }
+  const url=(typeof getSheetUrl==='function'?getSheetUrl():'')||'';
+  if(!url){ if(!silent) showToast('⚠ Set Sheet URL in Setup first'); return; }
+  const pend=getPendingOrders();
+  if(!pend.length){ if(!silent) showToast('✓ All orders already synced'); updateOnlineIndicator(); return; }
+  _autoSyncing=true;
+  if(!silent) showToast('⏳ Syncing '+pend.length+' pending order'+(pend.length>1?'s':'')+'...');
+  let ok=0;
+  for(const o of pend){ try{ const r=await syncOneOrder(o.id, o); if(r) ok++; }catch(e){} }
+  _autoSyncing=false;
+  updateOnlineIndicator();
+  if(ok) showToast('✓ Synced '+ok+' order'+(ok>1?'s':'')+' to Sheet');
+}
+window.addEventListener('online', function(){ updateOnlineIndicator(); showToast('🟢 Back online — syncing pending orders...'); autoSyncPending(false); });
+window.addEventListener('offline', function(){ updateOnlineIndicator(); showToast('📴 Offline — orders are saved on this device'); });
+setTimeout(function(){ try{ updateOnlineIndicator(); autoSyncPending(true); }catch(e){} }, 2500);
+setInterval(function(){ try{ updateOnlineIndicator(); }catch(e){} }, 5000);
+
 if(document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', _startApp);
 } else {
