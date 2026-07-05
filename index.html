@@ -1667,7 +1667,7 @@ const CAT_BG = {
 // ── PIN AUTHENTICATION ────────────────────────────────────────────────
 const LS_PINS = 'gf_pins';
 const LS_ROLE = 'gf_last_role';
-const DEFAULT_SHEET_URL = 'https://script.google.com/macros/s/AKfycbzG4dWqlpBVMc62UHkFHA-dvELmsnV7vt1i4XTEYvI7CEPHzcEcTGb05PizeyNg7sW4fQ/exec';
+const DEFAULT_SHEET_URL = 'https://script.google.com/macros/s/AKfycbwNAn6_OXoTRRwm8Dg6TyU0T746OSYIQejMNS41zgky-i9brq9YyjXIBjvw8P-cu1pWMw/exec';
 const LS_PRODUCT_GST = 'gf_product_gst'; // HSN + GST rate overrides per product
 
 // Load saved HSN/GST overrides into PRODUCTS array
@@ -1958,6 +1958,16 @@ function initApp() {
   if(STATE.orders.length === 0 && STATE.sheetUrl) {
     setTimeout(syncOrdersFromSheet, 1000);
   }
+  // One-time migration: if this device still has an OLD deployment URL saved,
+  // replace it with the current DEFAULT_SHEET_URL (new deployment).
+  try {
+    const _OLD_URLS = ['https://script.google.com/macros/s/AKfycbzG4dWqlpBVMc62UHkFHA-dvELmsnV7vt1i4XTEYvI7CEPHzcEcTGb05PizeyNg7sW4fQ/exec'];
+    const _cur = localStorage.getItem(LS_URL);
+    if(_cur && _OLD_URLS.indexOf(_cur) !== -1) {
+      localStorage.setItem(LS_URL, DEFAULT_SHEET_URL);
+      STATE.sheetUrl = DEFAULT_SHEET_URL;
+    }
+  } catch(e){}
   // Load saved sheet URL — check URL params first (allows pre-configuration via link)
   const urlParams = new URLSearchParams(window.location.search);
   const paramUrl  = urlParams.get('sheetUrl') || urlParams.get('sheet');
