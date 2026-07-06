@@ -258,7 +258,7 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
     <div class="top-bar-left">
       <span class="logo">🐄 GF</span>
       <span class="role-badge" id="role-badge">SALES</span>
-      <span style="font-size:9px;color:var(--muted);margin-left:4px;" id="build-stamp">v118</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:4px;" id="build-stamp">v120</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <span class="date-chip" id="today-chip"></span>
@@ -4407,39 +4407,38 @@ async function pushAllCustomersToSheet() {
   if(btn) { btn.disabled = true; btn.innerHTML = '⏳ Pushing...'; }
   if(status) { status.textContent = 'Sending all customers in one request...'; status.style.color = 'var(--muted)'; }
 
-  // Send ALL customers in a single request — Apps Script writes them all at once
-  // This completes in 3-5 seconds regardless of screen lock (one fetch call)
+  // Send in small BATCHES. A single URL holding hundreds of customers exceeds the
+  // request-length limit and the server returns an error page (\"Unknown error\").
+  // bulkUpsertCustomers upserts by id/name, so batching is safe and re-runnable.
   try {
-    const payload = STATE.customers.map(c => ({
-      id:       c.id,
-      name:     c.name,
-      category: c.category||'',
-      phone:    c.phone||'',
-      area:     c.area||'',
-      address:  c.address||'',
-      balance:  c.balance||0,
-      pricing:  c.pricing||{},
+    const all = STATE.customers.map(c => ({
+      id: c.id, name: c.name, category: c.category||'', phone: c.phone||'',
+      area: c.area||'', address: c.address||'', balance: c.balance||0, pricing: c.pricing||{},
     }));
-
-    const params = new URLSearchParams({
-      action:    'bulkUpsertCustomers',
-      customers: JSON.stringify(payload),
-      createdBy: 'master-push',
-    });
-
-    const res  = await fetch(url + '?' + params.toString());
-    const json = await res.json().catch(()=>({}));
-
+    const CHUNK = 15;
+    let done = 0, failed = 0;
+    for(let i=0; i<all.length; i+=CHUNK) {
+      const batch = all.slice(i, i+CHUNK);
+      if(status) { status.textContent = 'Syncing ' + Math.min(i+CHUNK, all.length) + ' / ' + all.length + '...'; status.style.color = 'var(--muted)'; }
+      const params = new URLSearchParams({
+        action:    'bulkUpsertCustomers',
+        customers: JSON.stringify(batch),
+        createdBy: 'master-push',
+      });
+      try {
+        const res  = await fetch(url + '?' + params.toString());
+        const json = await res.json().catch(()=>({}));
+        if(json && json.status === 'ok') done += (json.count || batch.length);
+        else failed += batch.length;
+      } catch(be) { failed += batch.length; }
+    }
     if(btn) { btn.disabled = false; btn.innerHTML = '☁ Push All Customers to Sheet'; }
-
-    if(json.status === 'ok') {
-      if(status) {
-        status.textContent = '✓ All ' + json.count + ' customers pushed successfully!';
-        status.style.color = 'var(--green,#2E7D32)';
-      }
-      showToast('✓ ' + json.count + ' customers synced to Sheet');
+    if(failed === 0) {
+      if(status) { status.textContent = '✓ All ' + done + ' customers pushed successfully!'; status.style.color = 'var(--green,#2E7D32)'; }
+      showToast('✓ ' + done + ' customers synced to Sheet');
     } else {
-      throw new Error(json.error || 'Unknown error');
+      if(status) { status.textContent = '⚠ ' + done + ' synced, ' + failed + ' failed — tap the button again to retry the rest.'; status.style.color = 'var(--red)'; }
+      showToast('⚠ ' + failed + ' failed — tap to retry');
     }
   } catch(e) {
     if(btn) { btn.disabled = false; btn.innerHTML = '☁ Push All Customers to Sheet'; }
@@ -4778,22 +4777,51 @@ async function applyBalanceImport() {
   renderDues();
 }
 
+function settleLocalOrders(cutoff){
+  function markPaid(o){
+    if(!o || !o.date || o.date > cutoff) return false;
+    if(o.status==='paid') return false;
+    var out=(o.total||0)-((o.payment&&o.payment.amount)||0);
+    if(out>0 || o.status==='due' || o.status==='partial' || o.status==='confirmed' || o.status==='delivered'){
+      o.status='paid';
+      o.payment={mode:(o.payment&&o.payment.mode)||'settled', amount:(o.total||0), received:true};
+      return true;
+    }
+    return false;
+  }
+  var n=0;
+  (STATE.orders||[]).forEach(function(o){ if(markPaid(o)) n++; });
+  for(var i=0;i<localStorage.length;i++){
+    var key=localStorage.key(i);
+    if(!key || key.indexOf('gf_orders_')!==0) continue;
+    var date=key.slice('gf_orders_'.length);
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(date) || date > cutoff) continue;
+    var arr=[]; try{arr=JSON.parse(localStorage.getItem(key)||'[]');}catch(e){}
+    var changed=false;
+    arr.forEach(function(o){ if(markPaid(o)) changed=true; });
+    if(changed) localStorage.setItem(key, JSON.stringify(arr));
+  }
+  return n;
+}
+
 async function runSettleOrders(){
-  const url=getSheetUrl(); if(!url){ showToast('\u2699 Set Sheet URL in Setup first'); return; }
+  const url=getSheetUrl(); if(!url){ showToast('⚙ Set Sheet URL in Setup first'); return; }
   const date=(document.getElementById('settle-date')||{}).value||'2026-07-05';
-  if(!confirm('Mark ALL orders up to '+date+' as settled (paid)?\n\nTheir dues become \u20b90 (delivery history is kept), so imported opening balances become the source of truth. This updates the Google Sheet for all devices.')) return;
-  const st=document.getElementById('settle-status'); if(st){st.style.color='var(--muted)';st.textContent='\u23F3 Settling orders up to '+date+'...';}
-  showToast('\u23F3 Settling orders...');
+  if(!confirm('Mark ALL orders up to '+date+' as settled (paid)?\n\nTheir dues become ₹0 (delivery history is kept). Updates the Google Sheet AND this device.')) return;
+  const st=document.getElementById('settle-status'); if(st){st.style.color='var(--muted)';st.textContent='⏳ Settling orders up to '+date+'...';}
+  showToast('⏳ Settling orders...');
+  var backendMsg='';
   try{
     const res=await fetch(url+'?action=settleOrdersUpto&date='+encodeURIComponent(date),{cache:'no-store'});
     const d=await res.json();
-    if(d && d.status==='ok'){
-      if(st){st.style.color='#2A7A45';st.textContent='\u2713 Settled '+d.settled+' orders up to '+date+'. Now import opening balances.';}
-      showToast('\u2713 Settled '+d.settled+' orders');
-    } else {
-      if(st){st.style.color='var(--red)';st.textContent='\u26a0 '+((d&&d.error)||'Failed');}
-    }
-  }catch(e){ if(st){st.style.color='var(--red)';st.textContent='\u26a0 Failed \u2014 check connection';} }
+    backendMsg = (d && d.status==='ok') ? ('Sheet: '+d.settled+' settled') : ('Sheet: '+((d&&d.error)||'not updated'));
+  }catch(e){ backendMsg='Sheet: retry when online'; }
+  var localN=0;
+  try{ localN=settleLocalOrders(date); saveOrders(); }catch(e){}
+  if(typeof renderDues==='function') renderDues();
+  if(typeof renderOrdersList==='function') renderOrdersList();
+  if(st){ st.style.color='#2A7A45'; st.textContent='✓ '+localN+' settled on this device · '+backendMsg+'. Check Dues.'; }
+  showToast('✓ Settled '+localN+' here · '+backendMsg);
 }
 
 // ── SETUP SCREEN ─────────────────────────────────────────────────────
