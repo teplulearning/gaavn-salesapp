@@ -258,7 +258,7 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
     <div class="top-bar-left">
       <span class="logo">🐄 GF</span>
       <span class="role-badge" id="role-badge">SALES</span>
-      <span style="font-size:9px;color:var(--muted);margin-left:4px;" id="build-stamp">v120</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:4px;" id="build-stamp">v121</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <span class="date-chip" id="today-chip"></span>
@@ -443,7 +443,7 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
   <div class="screen" id="screen-dues">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
       <div class="page-title">Payment Dues</div>
-      <button onclick="exportDuesToSheet()" style="background:var(--blue);color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:12px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif;">📤 Export Dues</button>
+      <button onclick="downloadDuesExcel()" style="background:#1D6F42;color:#fff;border:none;border-radius:8px;padding:7px 10px;font-size:12px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif;margin-right:6px;">📊 Excel</button><button onclick="downloadDuesPDF()" style="background:var(--blue);color:#fff;border:none;border-radius:8px;padding:7px 10px;font-size:12px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif;">📄 PDF</button>
     </div>
     <div class="page-sub">FIFO credit tracking · alerts · stop orders</div>
     <div class="stats-row">
@@ -4505,6 +4505,72 @@ async function exportDuesToSheet() {
   showToast('⏳ Exporting dues...');
   for(const o of dueOrders) await syncOneOrder(o.id);
   showToast(`✓ ${dueOrders.length} due orders exported`);
+}
+
+// ── DUES EXPORT (Excel / PDF) ─────────────────────────────────────────
+function getDuesRows(){
+  const by={};
+  const kf=function(n){return (n||'').trim().toLowerCase();};
+  (STATE.customers||[]).forEach(function(c){
+    const ob=parseFloat(c.balance)||0;
+    if(ob>0){ by[kf(c.name)]={name:c.name,cat:c.category||'',phone:c.phone||'',opening:ob,orderDue:0}; }
+  });
+  (STATE.orders||[]).forEach(function(o){
+    const unpaid = o.status==='due'||o.status==='partial'||((o.status==='confirmed'||o.status==='delivered')&&(o.total||0)>((o.payment&&o.payment.amount)||0));
+    if(!unpaid) return;
+    const out=(o.total||0)-((o.payment&&o.payment.amount)||0);
+    if(out<=0) return;
+    const k=kf(o.customerName);
+    if(!by[k]) by[k]={name:o.customerName||'',cat:o.customerCategory||'',phone:o.customerPhone||'',opening:0,orderDue:0};
+    by[k].orderDue+=out;
+  });
+  const rows=Object.keys(by).map(function(k){const r=by[k]; r.total=r.opening+r.orderDue; return r;}).filter(function(r){return r.total>0.5;});
+  rows.sort(function(a,b){return b.total-a.total;});
+  return rows;
+}
+function _duesStamp(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+function _duesDownload(blob, filename){ const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=filename; document.body.appendChild(a); a.click(); setTimeout(function(){document.body.removeChild(a); URL.revokeObjectURL(a.href);},1200); }
+
+async function downloadDuesExcel(){
+  const rows=getDuesRows();
+  if(!rows.length){ showToast('No dues to export'); return; }
+  showToast('⏳ Building Excel...');
+  try{
+    const XLSX=await import('https://cdn.sheetjs.com/xlsx-0.20.1/package/xlsx.mjs');
+    const total=rows.reduce(function(s,r){return s+r.total;},0);
+    const data=rows.map(function(r){return {'Customer':r.name,'Category':r.cat,'Phone':r.phone,'Opening Balance':Math.round(r.opening*100)/100,'Order Dues':Math.round(r.orderDue*100)/100,'Total Outstanding':Math.round(r.total*100)/100};});
+    data.push({'Customer':'TOTAL','Category':'','Phone':'','Opening Balance':'','Order Dues':'','Total Outstanding':Math.round(total*100)/100});
+    const ws=XLSX.utils.json_to_sheet(data,{header:['Customer','Category','Phone','Opening Balance','Order Dues','Total Outstanding']});
+    ws['!cols']=[{wch:36},{wch:18},{wch:14},{wch:15},{wch:12},{wch:16}];
+    const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,'Dues');
+    const outArr=XLSX.write(wb,{bookType:'xlsx',type:'array'});
+    _duesDownload(new Blob([outArr],{type:'application/octet-stream'}), 'Gaavn_Dues_'+_duesStamp()+'.xlsx');
+    showToast('✓ Excel downloaded ('+rows.length+' customers)');
+  }catch(e){ showToast('Excel failed — need internet: '+e.message); }
+}
+
+function downloadDuesPDF(){
+  const rows=getDuesRows();
+  if(!rows.length){ showToast('No dues to export'); return; }
+  try{
+    const { jsPDF }=window.jspdf;
+    const doc=new jsPDF({orientation:'portrait',unit:'mm',format:'a4'});
+    const pageW=doc.internal.pageSize.getWidth();
+    doc.setFillColor(26,50,110); doc.rect(0,0,pageW,20,'F');
+    doc.setTextColor(255,255,255); doc.setFontSize(13); doc.setFont('helvetica','bold');
+    doc.text('Payment Dues - Gaavn Fresh', 14, 13);
+    doc.setFontSize(9); doc.setFont('helvetica','normal');
+    doc.text('As of '+new Date().toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}), pageW-14, 13, {align:'right'});
+    const total=rows.reduce(function(s,r){return s+r.total;},0);
+    const body=rows.map(function(r){return [r.name, r.cat, r.phone, 'Rs.'+Math.round(r.opening).toLocaleString('en-IN'), 'Rs.'+Math.round(r.orderDue).toLocaleString('en-IN'), 'Rs.'+Math.round(r.total).toLocaleString('en-IN')];});
+    body.push([{content:'TOTAL',colSpan:5,styles:{fontStyle:'bold',halign:'right',fillColor:[240,244,251]}},{content:'Rs.'+Math.round(total).toLocaleString('en-IN'),styles:{fontStyle:'bold',halign:'right',fillColor:[240,244,251]}}]);
+    doc.autoTable({ startY:26, head:[['Customer','Category','Phone','Opening','Order Dues','Total']], body:body,
+      headStyles:{fillColor:[26,82,122],textColor:255,fontSize:8}, bodyStyles:{fontSize:7.5},
+      columnStyles:{0:{cellWidth:52},1:{cellWidth:28},2:{cellWidth:24},3:{cellWidth:24,halign:'right'},4:{cellWidth:22,halign:'right'},5:{cellWidth:26,halign:'right'}},
+      margin:{left:14,right:14}, theme:'grid' });
+    doc.save('Gaavn_Dues_'+_duesStamp()+'.pdf');
+    showToast('✓ PDF downloaded ('+rows.length+' customers)');
+  }catch(e){ showToast('PDF failed: '+e.message); }
 }
 
 // ── UPLOAD CUSTOMERS ─────────────────────────────────────────────────
