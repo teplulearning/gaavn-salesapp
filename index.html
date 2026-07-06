@@ -258,7 +258,7 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
     <div class="top-bar-left">
       <span class="logo">🐄 GF</span>
       <span class="role-badge" id="role-badge">SALES</span>
-      <span style="font-size:9px;color:var(--muted);margin-left:4px;" id="build-stamp">v117</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:4px;" id="build-stamp">v118</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <span class="date-chip" id="today-chip"></span>
@@ -2717,6 +2717,13 @@ function getRate(pid) {
       if(cPricing.lc && cPricing.lc > 150) return cPricing.lc;
       return p?.stdRate || 270;
     }
+  }
+  // Generic alternate-unit pricing (e.g. Shrikhand/Amrakhand "5kg bag", Malai Paneer "pack").
+  // When the cart line is switched to the product's altUnit, use its altRate.
+  var _ap = PRODUCTS.find(function(x){return x.id===pid;});
+  if(_ap && _ap.altUnit && STATE.cart[pid] && STATE.cart[pid].unit === _ap.altUnit){
+    if(c && c.pricing && c.pricing[pid+'_alt'] != null) return c.pricing[pid+'_alt'];
+    return _ap.altRate || _ap.stdRate || 0;
   }
   if(c?.pricing?.[pid]) return c.pricing[pid];
   return PRODUCTS.find(p=>p.id===pid)?.stdRate || 0;
