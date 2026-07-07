@@ -258,7 +258,7 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
     <div class="top-bar-left">
       <span class="logo">🐄 GF</span>
       <span class="role-badge" id="role-badge">SALES</span>
-      <span style="font-size:9px;color:var(--muted);margin-left:4px;" id="build-stamp">v132</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:4px;" id="build-stamp">v133</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <span class="date-chip" id="today-chip"></span>
@@ -798,6 +798,8 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
           style="background:var(--green);color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:12px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif;">+ Record</button>
         <button onclick="openPaymentUpload()"
           style="background:var(--blue);color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:12px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif;">📤 Upload</button>
+        <button onclick="openPhonePeReconcile()"
+          style="background:#5F259F;color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:12px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif;">🟣 PhonePe</button>
       </div>
     </div>
     <div class="page-sub">All payments received from customers</div>
@@ -1202,6 +1204,33 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
     <div class="btn-row" style="margin-top:14px;">
       <button class="btn btn-secondary" onclick="closeModal('modal-payment-upload')">Cancel</button>
       <button class="btn btn-success" id="payment-upload-confirm" style="display:none;" onclick="confirmPaymentUpload()">✓ Import All Payments</button>
+    </div>
+  </div>
+</div>
+
+<!-- PHONEPE RECONCILE MODAL -->
+<div class="modal-overlay" id="modal-ppe-recon">
+  <div class="modal-sheet" style="max-height:88vh;overflow-y:auto;">
+    <div class="modal-handle"></div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+      <div class="modal-title" style="margin:0;">🟣 Reconcile PhonePe</div>
+      <button onclick="closeModal('modal-ppe-recon')" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--muted);">✕</button>
+    </div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:12px;">Import your PhonePe transaction report (.csv). The app suggests which customer each payment settles by matching the amount to their outstanding dues — you confirm before anything is applied.</div>
+
+    <div class="upload-zone" onclick="document.getElementById('ppe-csv-upload').click()" id="ppe-upload-zone">
+      <div style="font-size:30px;">🟣</div>
+      <p>Tap to upload PhonePe report (.csv)</p>
+      <p style="font-size:11px;margin-top:4px;">The FORWARD_TRANSACTION file from PhonePe Business</p>
+    </div>
+    <input type="file" id="ppe-csv-upload" accept=".csv" style="display:none;" onchange="handlePhonePeUpload(this)">
+
+    <div id="ppe-summary" style="display:none;margin-top:12px;"></div>
+    <div id="ppe-results" style="display:none;margin-top:8px;"></div>
+
+    <div class="btn-row" style="margin-top:14px;">
+      <button class="btn btn-secondary" onclick="closeModal('modal-ppe-recon')">Close</button>
+      <button class="btn btn-success" id="ppe-apply-btn" style="display:none;" onclick="applyPhonePeSelected()">✓ Apply Selected to Dues</button>
     </div>
   </div>
 </div>
@@ -8197,6 +8226,227 @@ document.addEventListener('click', function(e) {
 });
 
 // ── END PAYMENT-IN LEDGER ─────────────────────────────────────────────
+
+// ══════════════════════════════════════════════════════════════════════
+// PHONEPE RECONCILIATION
+// PhonePe's merchant report has NO payer name/phone/VPA — only amount,
+// timestamp and reference IDs. So we match each payment to a customer by
+// exact outstanding-due amount and let the user confirm. Nothing is applied
+// without an explicit tap, and every applied PhonePe reference is remembered
+// so re-importing the same file can never double-apply a payment.
+// ══════════════════════════════════════════════════════════════════════
+var LS_PPE_APPLIED = 'gf_ppe_applied';
+var _ppeTxns = [];
+
+function _ppeGetApplied() {
+  try { return JSON.parse(localStorage.getItem(LS_PPE_APPLIED) || '[]'); } catch(e) { return []; }
+}
+function _ppeMarkApplied(refs) {
+  var cur = _ppeGetApplied();
+  refs.forEach(function(r){ if(cur.indexOf(r) < 0) cur.push(r); });
+  localStorage.setItem(LS_PPE_APPLIED, JSON.stringify(cur));
+}
+
+// Outstanding a customer owes = opening balance + unpaid order balances.
+// Mirrors the figure shown on the profile / QR screens.
+function _ppeCustOutstanding(c) {
+  var opening = parseFloat(c.balance) || 0;
+  var od = (STATE.orders || []).filter(function(o){
+    return (o.customerId === c.id || o.customerName === c.name) &&
+      (o.status === 'due' || o.status === 'partial' ||
+       ((o.status === 'confirmed' || o.status === 'delivered') && (o.total||0) > ((o.payment && o.payment.amount) || 0)));
+  }).reduce(function(s,o){ return s + ((o.total||0) - ((o.payment && o.payment.amount)||0)); }, 0);
+  return Math.round((opening + od) * 100) / 100;
+}
+
+// Minimal CSV line splitter (handles simple quoted fields).
+function _ppeSplit(line) {
+  var out = [], cur = '', q = false;
+  for (var i = 0; i < line.length; i++) {
+    var ch = line[i];
+    if (ch === '"') { q = !q; }
+    else if (ch === ',' && !q) { out.push(cur); cur = ''; }
+    else { cur += ch; }
+  }
+  out.push(cur);
+  return out.map(function(v){ return v.trim().replace(/^"|"$/g, ''); });
+}
+
+function openPhonePeReconcile() {
+  _ppeTxns = [];
+  document.getElementById('ppe-summary').style.display = 'none';
+  document.getElementById('ppe-results').style.display = 'none';
+  document.getElementById('ppe-results').innerHTML = '';
+  document.getElementById('ppe-apply-btn').style.display = 'none';
+  document.getElementById('ppe-csv-upload').value = '';
+  document.getElementById('modal-ppe-recon').classList.add('open');
+}
+
+function handlePhonePeUpload(input) {
+  var file = input.files[0]; if(!file) return;
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    try { parsePhonePeCSV(e.target.result); }
+    catch(err) { showToast('Could not read file: ' + err.message); }
+  };
+  reader.readAsText(file);
+}
+
+function parsePhonePeCSV(text) {
+  var lines = text.split(/\r?\n/).filter(function(l){ return l.trim(); });
+  if(lines.length < 2) { showToast('File looks empty'); return; }
+  var hdr = _ppeSplit(lines[0]).map(function(h){ return h.toLowerCase(); });
+  function col(name) { return hdr.indexOf(name.toLowerCase()); }
+  var iRef = col('PhonePe Reference Id');
+  var iAmt = col('Total Transaction Amount');
+  var iDate = col('Transaction Date');
+  var iStat = col('Transaction Status');
+  var iInst = col('Instrument');
+  if(iRef < 0 || iAmt < 0 || iDate < 0) {
+    showToast("This doesn't look like a PhonePe report (columns not found)");
+    return;
+  }
+  var applied = _ppeGetApplied();
+  var txns = [];
+  for(var i = 1; i < lines.length; i++) {
+    var v = _ppeSplit(lines[i]);
+    var status = (iStat >= 0 ? v[iStat] : 'COMPLETED') || '';
+    if(status.toUpperCase() !== 'COMPLETED') continue;
+    var amt = parseFloat((v[iAmt]||'').replace(/[^\d.]/g,'')) || 0;
+    if(amt <= 0) continue;
+    var ref = (v[iRef]||'').trim();
+    var dt = (v[iDate]||'').trim();
+    txns.push({
+      ref: ref, amount: Math.round(amt*100)/100,
+      dateTime: dt, date: dt.slice(0,10) || TODAY_KEY,
+      instrument: (iInst >= 0 ? v[iInst] : '') || '',
+      alreadyApplied: applied.indexOf(ref) >= 0,
+      candidates: [], bucket: ''
+    });
+  }
+  if(!txns.length) { showToast('No completed transactions found'); return; }
+
+  // Match each txn to customers by exact outstanding amount.
+  var custOut = STATE.customers
+    .map(function(c){ return {id:c.id, name:c.name, out:_ppeCustOutstanding(c)}; })
+    .filter(function(x){ return x.out > 0; });
+  txns.forEach(function(t){
+    if(t.alreadyApplied) { t.bucket = 'done'; return; }
+    var cands = custOut.filter(function(x){ return Math.abs(x.out - t.amount) < 0.5; });
+    t.candidates = cands;
+    t.bucket = cands.length === 1 ? 'auto' : cands.length > 1 ? 'ambiguous' : 'counter';
+  });
+
+  _ppeTxns = txns;
+  renderPhonePeResults();
+}
+
+function renderPhonePeResults() {
+  var txns = _ppeTxns;
+  var total = txns.reduce(function(s,t){ return s + t.amount; }, 0);
+  var auto = txns.filter(function(t){ return t.bucket==='auto'; });
+  var amb  = txns.filter(function(t){ return t.bucket==='ambiguous'; });
+  var cntr = txns.filter(function(t){ return t.bucket==='counter'; });
+  var done = txns.filter(function(t){ return t.bucket==='done'; });
+  var actionable = auto.concat(amb);
+
+  var sEl = document.getElementById('ppe-summary');
+  sEl.innerHTML =
+    '<div style="background:var(--cream);border-radius:10px;padding:12px 14px;font-size:12px;line-height:1.7;">' +
+      '<div style="font-size:13px;font-weight:800;color:var(--ink);margin-bottom:4px;">' + txns.length + ' payments · ₹' + total.toLocaleString('en-IN') + '</div>' +
+      '<div>🟢 <b>' + auto.length + '</b> match one customer’s due (suggested)</div>' +
+      '<div>🟡 <b>' + amb.length + '</b> match several customers (you pick)</div>' +
+      '<div>⚪ <b>' + cntr.length + '</b> no due match — likely counter sales</div>' +
+      (done.length ? '<div>✓ <b>' + done.length + '</b> already applied earlier (skipped)</div>' : '') +
+    '</div>';
+  sEl.style.display = 'block';
+
+  var html = '';
+  if(actionable.length) {
+    html += '<div style="font-size:11px;font-weight:800;color:var(--muted);margin:14px 0 6px;letter-spacing:.5px;">SUGGESTED MATCHES — CONFIRM CUSTOMER</div>';
+    actionable.forEach(function(t){
+      var idx = txns.indexOf(t);
+      var dstr = t.date;
+      var opts = '<option value="">— Ignore (counter sale) —</option>';
+      t.candidates.forEach(function(x){
+        var sel = (t.bucket==='auto') ? ' selected' : '';
+        opts += '<option value="'+x.id+'"'+sel+'>'+x.name+' (owes ₹'+x.out.toLocaleString('en-IN')+')</option>';
+      });
+      html +=
+        '<div style="border:1.5px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px;">' +
+          '<div style="display:flex;justify-content:space-between;align-items:baseline;">' +
+            '<div style="font-size:15px;font-weight:800;color:var(--ink);">₹'+t.amount.toLocaleString('en-IN')+'</div>' +
+            '<div style="font-size:11px;color:var(--muted);">'+dstr+' · '+t.instrument+'</div>' +
+          '</div>' +
+          '<select id="ppe-sel-'+idx+'" style="width:100%;margin-top:8px;padding:8px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;font-family:inherit;background:#fff;">'+opts+'</select>' +
+        '</div>';
+    });
+  } else {
+    html += '<div style="text-align:center;color:var(--muted);font-size:13px;padding:16px;">No payments matched an outstanding due. Nothing to apply — these are likely counter sales.</div>';
+  }
+
+  if(cntr.length) {
+    html +=
+      '<details style="margin-top:8px;">' +
+        '<summary style="cursor:pointer;font-size:12px;font-weight:700;color:var(--muted);">Show ' + cntr.length + ' unmatched (counter sales) — ₹' + cntr.reduce(function(s,t){return s+t.amount;},0).toLocaleString('en-IN') + '</summary>' +
+        '<div style="margin-top:6px;font-size:11px;color:var(--muted);">These didn’t match any customer’s exact due, so they’re left untouched. Assign one to a customer any time via <b>+ Record</b>.</div>' +
+        '<div style="margin-top:6px;max-height:180px;overflow-y:auto;">' +
+          cntr.map(function(t){ return '<div style="display:flex;justify-content:space-between;font-size:11px;padding:4px 2px;border-bottom:1px solid var(--border);"><span>'+t.date+'</span><span style="font-weight:700;">₹'+t.amount.toLocaleString('en-IN')+'</span></div>'; }).join('') +
+        '</div>' +
+      '</details>';
+  }
+
+  var rEl = document.getElementById('ppe-results');
+  rEl.innerHTML = html;
+  rEl.style.display = 'block';
+  document.getElementById('ppe-apply-btn').style.display = actionable.length ? 'block' : 'none';
+}
+
+function applyPhonePeSelected() {
+  var txns = _ppeTxns;
+  var appliedRefs = [], count = 0, sum = 0;
+  var hasUrl = !!getSheetUrl();
+  txns.forEach(function(t){
+    if(t.bucket !== 'auto' && t.bucket !== 'ambiguous') return;
+    var idx = txns.indexOf(t);
+    var sel = document.getElementById('ppe-sel-' + idx);
+    if(!sel) return;
+    var custId = sel.value;
+    if(!custId) return;                       // user chose ignore
+    if(t.alreadyApplied) return;
+    var cust = STATE.customers.find(function(c){ return c.id === custId; });
+    if(!cust) return;
+
+    var entry = {
+      id: 'PPE' + String(t.ref || Date.now()).slice(-12) + idx,
+      custName: cust.name, custId: custId,
+      date: t.date, amount: t.amount, mode: 'phonepe',
+      ref: 'PhonePe ' + t.ref, notes: 'PhonePe reconcile',
+      createdAt: Date.now(), createdBy: STATE.role || 'ppe'
+    };
+    STATE.payments.unshift(entry);
+
+    // Apply oldest-first to orders; surplus reduces opening balance (same as manual Record Payment).
+    var res = allocatePaymentFIFO(custId, t.amount);
+    if(res.surplus > 0) {
+      cust.balance = Math.max(0, (cust.balance||0) - res.surplus);
+      _saveCustomerBalance(cust);
+    }
+    if(hasUrl) { try { syncPaymentToSheet(entry); } catch(e){} }
+
+    appliedRefs.push(t.ref);
+    count++; sum += t.amount;
+  });
+
+  if(!count) { showToast('Nothing selected to apply'); return; }
+  _ppeMarkApplied(appliedRefs);
+  savePaymentLedger();
+  if(typeof saveOrders === 'function') { try { saveOrders(); } catch(e){} }
+  closeModal('modal-ppe-recon');
+  if(typeof renderPaymentIn === 'function') renderPaymentIn();
+  if(typeof renderDues === 'function') renderDues();
+  showToast('✓ Applied ' + count + ' payment' + (count>1?'s':'') + ' · ₹' + sum.toLocaleString('en-IN') + ' to dues');
+}
 
 // ── DELIVERY AUTO-POLL (every 30s) ───────────────────────────────────
 // Delivery person sees orders automatically — no copy-paste needed.
