@@ -258,7 +258,7 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
     <div class="top-bar-left">
       <span class="logo">🐄 GF</span>
       <span class="role-badge" id="role-badge">SALES</span>
-      <span style="font-size:9px;color:var(--muted);margin-left:4px;" id="build-stamp">v127</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:4px;" id="build-stamp">v129</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <span class="date-chip" id="today-chip"></span>
@@ -3643,7 +3643,7 @@ async function openClientDetail(id) {
       </div>
       <div style="display:flex;flex-direction:column;gap:6px;">
         <button onclick="recordDuePayment('${c.id}')" style="background:var(--green);color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:12px;font-weight:700;cursor:pointer;">💰 Record Payment</button>
-        ${c.phone?`<button onclick="sendCreditWA('${c.id}','client')" style="background:#25D366;color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:12px;font-weight:700;cursor:pointer;">📱 Remind</button>`:''}
+        ${c.phone?`<button ontouchstart="" onclick="sendClientReminder('en','${c.id}')" style="background:#25D366;color:#fff;border:none;border-radius:8px;padding:7px 10px;font-size:12px;font-weight:700;cursor:pointer;">📱 Eng</button><button ontouchstart="" onclick="sendClientReminder('mr','${c.id}')" style="background:#1A9F53;color:#fff;border:none;border-radius:8px;padding:7px 10px;font-size:12px;font-weight:700;cursor:pointer;margin-left:6px;">📱 मराठी</button>`:''}
       </div>
     </div>`;
 
@@ -3904,13 +3904,14 @@ function renderDues() {
       const custPhone = STATE.customers.find(c=>c.id===custId)?.phone||'';
       const _safeId = encodeURIComponent(custId);
       html += '<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">';
-      html += '<button data-cid="'+_safeId+'" onclick="recordDuePayment(decodeURIComponent(this.dataset.cid))" style="flex:1;padding:8px;background:var(--green);color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">&#128176; Record Payment</button>';
+      html += '<button ontouchstart="" data-cid="'+_safeId+'" onclick="recordDuePayment(decodeURIComponent(this.dataset.cid))" style="flex:1;padding:8px;background:var(--green);color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">&#128176; Record Payment</button>';
       if(custPhone) {
-        html += '<button data-cid="'+_safeId+'" data-tp="client" onclick="sendCreditWA(decodeURIComponent(this.dataset.cid),this.dataset.tp)" style="padding:8px 12px;background:#25D366;color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">&#128242; Remind Client</button>';
+        html += '<button ontouchstart="" data-cid="'+_safeId+'" onclick="sendClientReminder(\'en\',decodeURIComponent(this.dataset.cid))" style="padding:8px 10px;background:#25D366;color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">&#128242; Eng</button>';
+      html += '<button ontouchstart="" data-cid="'+_safeId+'" onclick="sendClientReminder(\'mr\',decodeURIComponent(this.dataset.cid))" style="padding:8px 10px;background:#1A9F53;color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">&#128242; मराठी</button>';
       }
-      html += '<button data-cid="'+_safeId+'" data-tp="internal" onclick="sendCreditWA(decodeURIComponent(this.dataset.cid),this.dataset.tp)" style="padding:8px 12px;background:var(--amber);color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">&#128203; Alert Sales</button>';
-      html += '<button data-cid="'+_safeId+'" onclick="sendStatement(decodeURIComponent(this.dataset.cid))" style="padding:8px 12px;background:#1A527A;color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">&#128196; Bill</button>';
-      html += '<button data-cid="'+_safeId+'" onclick="showPayQR(decodeURIComponent(this.dataset.cid))" style="padding:8px 12px;background:#5B2C8D;color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">&#128241; Pay QR</button>';
+      html += '<button ontouchstart="" data-cid="'+_safeId+'" data-tp="internal" onclick="sendCreditWA(decodeURIComponent(this.dataset.cid),this.dataset.tp)" style="padding:8px 12px;background:var(--amber);color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">&#128203; Alert Sales</button>';
+      html += '<button ontouchstart="" data-cid="'+_safeId+'" onclick="sendStatement(decodeURIComponent(this.dataset.cid))" style="padding:8px 12px;background:#1A527A;color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">&#128196; Bill</button>';
+      html += '<button ontouchstart="" data-cid="'+_safeId+'" onclick="showPayQR(decodeURIComponent(this.dataset.cid))" style="padding:8px 12px;background:#5B2C8D;color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">&#128241; Pay QR</button>';
       html += '</div>';
 
       html += '</div></div>';
@@ -4209,7 +4210,10 @@ function showPayQR(custId){
   var u=document.getElementById('payqr-upi'); if(u) u.textContent='UPI: '+upi;
   var img=document.getElementById('payqr-img');
   if(img){ img.src=GAAVN_QR_DATAURL; }
-  document.getElementById('modal-payqr').classList.add('open');
+  var _mq=document.getElementById('modal-payqr');
+  _mq.classList.add('open');
+  void _mq.offsetHeight;
+  if(img){ img.src=''; img.src=GAAVN_QR_DATAURL; }
 }
 
 function setReminderLang(lang){
@@ -4255,10 +4259,9 @@ function sendCreditWA(custId, type) {
   _openExternal('https://wa.me/?text='+encodeURIComponent(msg));
 }
 
-function sendClientReminder(lang) {
-  const custId=_remindCustId;
-  var m=document.getElementById('modal-remind-lang');
-  if(!custId){ if(m) m.classList.remove('open'); return; }
+function sendClientReminder(lang, custId) {
+  custId = custId || _remindCustId;
+  var m=document.getElementById('modal-remind-lang'); if(m) m.classList.remove('open');
   const cust = STATE.customers.find(c=>c.id===custId); if(!cust) return;
   const alerts = getCustomerCreditAlerts(custId);
   const balance = parseFloat(cust.balance)||0;
