@@ -182,7 +182,6 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
 </script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
 </head>
 <body>
 
@@ -259,7 +258,7 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
     <div class="top-bar-left">
       <span class="logo">🐄 GF</span>
       <span class="role-badge" id="role-badge">SALES</span>
-      <span style="font-size:9px;color:var(--muted);margin-left:4px;" id="build-stamp">v125</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:4px;" id="build-stamp">v127</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <span class="date-chip" id="today-chip"></span>
@@ -1073,7 +1072,7 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
     <div id="payqr-amt" style="font-size:20px;font-weight:800;color:var(--red,#C0392B);margin-bottom:10px;"></div>
     <img id="payqr-img" style="width:240px;height:240px;margin:0 auto;display:block;border-radius:8px;" alt="Payment QR">
     <div id="payqr-upi" style="font-size:12px;color:var(--muted);margin-top:8px;"></div>
-    <div style="font-size:11px;color:var(--muted);margin-top:2px;">Customer scans with any UPI app (PhonePe / Paytm / GPay)</div>
+    <div style="font-size:11px;color:var(--muted);margin-top:2px;">Customer scans, then enters the amount shown above (PhonePe / Paytm / GPay). Works offline.</div>
     <div class="btn-row" style="margin-top:12px;">
       <button class="btn btn-secondary" onclick="closeModal('modal-payqr')" style="width:100%;">Close</button>
     </div>
@@ -1726,6 +1725,7 @@ function getCustomerCreditAlerts(custId) {
 }
 const LS_ORDERS = 'gf_orders_' + TODAY_KEY;
 const DEFAULT_UPI = 'Q848318837@ybl'; // Gaavn PhonePe merchant VPA
+const GAAVN_QR_DATAURL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAa4AAAGuAQAAAADgjt83AAADSUlEQVR4nO2cUY7cIAyGP5dIfUykHmCOwt6s6s2So+wBKpHHlYjcB3BIZt62085GmCcy4dMEyTL2b0CUT7Tt22cocMwxxxxzrG9sk9om+3WZNoFVhEUGrFfbaz7SsRdiqGpGVVV1HlV1HjNEe6w9oLytg/Ml5ubYk7Gl+IhNYB2oPaheJaagFJ8zvfAjHfsyWExB9dcUVH6mTXQmqLyNH/Jv/s2xS2DD3bPEOUNMoIuAxPchs0zpLmG+xNwcexZWrSSaFegyJWCdUMbfgy63D4F1yEBZdl7wkY59CawkL2/lp01YbvkwRufxo6Q8IjK87CMdexlW05vaMjqPmdYjakY1BT2Pu8TcHHsWZhYBwKhaQhJNwZLgMdckeB/iVtIdVnxJMxAYM6oJgKCWBFOTH/clXWKmqiUAwlFVO7RkK9NciUvMzbFnYcVKWs901rrOWFxio6Nrrz1ituJQF5ZiEVG1LDaHEHYG6nrkVtIZVn1JTFjkkYK24KQVeGqE4tFrj9gx3phH3R1K2It/e1hL2CMUt5K+sF0bOSXB5jIO/uVQInYr6Q07Kmh7jqMzoVkEliKr6kxwK+kPO/sSW1Pmtro0lSQFG+JW0hl28iVtTanGwEFuq3mPxyUdYgdVrQUi9cXuPGYwpS25lXSIHRV6dhltBkwbeZDu3Ur6xTYhpn1H41j1WHlbRfTXBMT37ypyK8nytebm2F9i+86BTPEWJb1J0Co6dWRTU9yXdIhtwjJRvAVRPwTMVGAVsbwHy4kvNDfHnoHt1b5THQegRSPVyVga5L6kO+whx7kLYWOp47Q41vWSDrEHvaQIsE2FHS3/PYj4biWdYcezfUexNXN3ys/0WPclHWKnvWq7t2inPecWx0LbO32JuTn2LGygBK6jAmyDsoYsMW3lhcAmutzyoLDZ4IvMzbFnYu3OgaD1JPA6nIvFUJJlVr9zoEPsfOeAbSiZaXsbz1Ue31/SI/a4J9qCVLOXcD4i7NFrh9i9lZQWbV+9PepBc3Mr6R6rm19LXLLra+tQUmS/v6RP7HznQFBYBV0mYHkLGdYf5YIbALFE5xpzc+xZ2OHUVqnZtGikCGptB2yqJT9fcbrDxO97dcwxxxxz7L9gfwCziaA5umMLRwAAAABJRU5ErkJggg=='; // embedded static UPI QR (works offline)
 const LS_URL    = 'gf_sheet_url';
 const LS_CUSTS    = 'gf_customers_extra';  // manually added customers
 const LS_PAYMENTS = 'gf_payments';           // payment-in ledger
@@ -4208,7 +4208,7 @@ function showPayQR(custId){
   var a=document.getElementById('payqr-amt'); if(a) a.textContent = due>0 ? ('\u20b9'+due.toLocaleString('en-IN')) : 'Any amount';
   var u=document.getElementById('payqr-upi'); if(u) u.textContent='UPI: '+upi;
   var img=document.getElementById('payqr-img');
-  if(img){ img.src='https://api.qrserver.com/v1/create-qr-code/?size=280x280&margin=10&data='+encodeURIComponent(link); img.onerror=function(){ img.alt='QR needs internet'; }; }
+  if(img){ img.src=GAAVN_QR_DATAURL; }
   document.getElementById('modal-payqr').classList.add('open');
 }
 
@@ -4229,6 +4229,10 @@ function saveUpiId(){
   showToast(v?'Payment UPI ID saved':'UPI ID cleared');
 }
 
+function _openExternal(url){
+  var w=null; try{ w=window.open(url,'_blank'); }catch(e){}
+  if(!w){ try{ location.href=url; }catch(e){} }   // iOS standalone-PWA fallback
+}
 var _remindCustId=null;
 function sendCreditWA(custId, type) {
   const cust = STATE.customers.find(c=>c.id===custId);
@@ -4248,12 +4252,13 @@ function sendCreditWA(custId, type) {
     : '\u2022 Outstanding balance: \u20b9'+balance.toLocaleString('en-IN');
   const blocked = alerts.some(x=>x.cs.stopOrder);
   const msg = '\uD83D\uDD34 PAYMENT ALERT \u2014 Gaavn Fresh\n\nCustomer: '+cust.name+'\nCategory: '+cust.category+(cust.phone?'\nPhone: '+cust.phone:'')+'\n\nOverdue Invoices:\n'+orderLines+'\n\nTotal Due: \u20b9'+totalOwed.toLocaleString('en-IN')+(blocked?'\n\n\u26a0 Payment significantly overdue \u2014 please prioritise collection.':'')+'\n\nPlease follow up for payment immediately.';
-  window.open('https://wa.me/?text='+encodeURIComponent(msg),'_blank');
+  _openExternal('https://wa.me/?text='+encodeURIComponent(msg));
 }
 
 function sendClientReminder(lang) {
-  var m=document.getElementById('modal-remind-lang'); if(m) m.classList.remove('open');
-  const custId=_remindCustId; if(!custId) return;
+  const custId=_remindCustId;
+  var m=document.getElementById('modal-remind-lang');
+  if(!custId){ if(m) m.classList.remove('open'); return; }
   const cust = STATE.customers.find(c=>c.id===custId); if(!cust) return;
   const alerts = getCustomerCreditAlerts(custId);
   const balance = parseFloat(cust.balance)||0;
@@ -4276,7 +4281,8 @@ function sendClientReminder(lang) {
   }
   const phone=(cust.phone||'').replace(/\D/g,'');
   const waUrl = phone ? 'https://wa.me/91'+phone+'?text='+encodeURIComponent(msg) : 'https://wa.me/?text='+encodeURIComponent(msg);
-  window.open(waUrl,'_blank');
+  _openExternal(waUrl);
+  if(m) m.classList.remove('open');
 }
 
 
