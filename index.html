@@ -258,7 +258,7 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
     <div class="top-bar-left">
       <span class="logo">🐄 GF</span>
       <span class="role-badge" id="role-badge">SALES</span>
-      <span style="font-size:9px;color:var(--muted);margin-left:4px;" id="build-stamp">v133</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:4px;" id="build-stamp">v135</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <span class="date-chip" id="today-chip"></span>
@@ -2133,8 +2133,14 @@ function saveOrders() {
     legacy.forEach(o => { if(!allOrders[o.id]) allOrders[o.id] = o; });
   } catch(e) {}
 
-  // Merge STATE.orders into the combined set (STATE takes priority for updates)
-  STATE.orders.forEach(o => { allOrders[o.id] = o; });
+  // Merge STATE.orders into the combined set (STATE takes priority) — but a
+  // settled ('paid') copy ALWAYS wins so a stale 'due' can never revert it.
+  STATE.orders.forEach(o => {
+    const ex = allOrders[o.id];
+    allOrders[o.id] = (ex && ex.status==='paid' && o.status!=='paid')
+      ? Object.assign({}, o, {status:'paid', payment: ex.payment||o.payment})
+      : o;
+  });
 
   // Group merged orders by date and write back
   const byDate = {};
@@ -2512,6 +2518,10 @@ function renderOrdersList() {
         if(!existingIds.has(o.id)) {
           STATE.orders.push(o);
           existingIds.add(o.id);
+        } else if(o.status==='paid') {
+          // A settled copy on disk must correct a stale in-memory 'due'
+          const cur = STATE.orders.find(x=>x.id===o.id);
+          if(cur && cur.status!=='paid') { cur.status='paid'; cur.payment=o.payment||cur.payment; }
         }
       });
     } catch(e) {}
@@ -3893,8 +3903,9 @@ function renderDues() {
   // ── Group all unpaid orders by customer ───────────────────────────
   const byCust = {};
   unpaidOrders.forEach(o=>{
-    if(!byCust[o.customerId]) byCust[o.customerId]={name:o.customerName,cat:o.customerCategory,orders:[]};
-    byCust[o.customerId].orders.push(o);
+    const _k = o.customerId || o.customerName || 'unknown';   // sheet-loaded orders lack customerId — fall back to name so each customer stays separate
+    if(!byCust[_k]) byCust[_k]={name:o.customerName,cat:o.customerCategory,orders:[]};
+    byCust[_k].orders.push(o);
   });
   // Also add opening balance customers
   custsDue.forEach(c=>{
@@ -6641,6 +6652,7 @@ async function loadRangeFromSheet() {
             orderMap[oid] = {
               id: oid, date: date,
               customerName: row['Customer']||'',
+              customerId: (function(nm){var c=(STATE.customers||[]).find(function(x){return x.name===nm;});return c?c.id:'';})(row['Customer']||''),
               customerCategory: row['Category']||'',
               customerArea: row['Area']||'',
               status: row['Status']||'confirmed',
@@ -6673,6 +6685,10 @@ async function loadRangeFromSheet() {
             STATE.orders.push(o);
             existingIds.add(o.id);
             found++;
+          } else if(o.status==='paid') {
+            // Sheet is source of truth — a settled order must update the cached copy
+            const idx = STATE.orders.findIndex(x=>x.id===o.id);
+            if(idx>=0 && STATE.orders[idx].status!=='paid') { STATE.orders[idx].status='paid'; STATE.orders[idx].payment=o.payment||STATE.orders[idx].payment; }
           }
         });
       }
