@@ -258,7 +258,7 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
     <div class="top-bar-left">
       <span class="logo">🐄 GF</span>
       <span class="role-badge" id="role-badge">SALES</span>
-      <span style="font-size:9px;color:var(--muted);margin-left:4px;" id="build-stamp">v135</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:4px;" id="build-stamp">v136</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <span class="date-chip" id="today-chip"></span>
@@ -3902,15 +3902,22 @@ function renderDues() {
 
   // ── Group all unpaid orders by customer ───────────────────────────
   const byCust = {};
+  const _kf = n => (n||'').trim().toLowerCase();
+  // real customer id resolved from the customer list, so action buttons still work
+  const _idByName = {};
+  (STATE.customers||[]).forEach(c=>{ if(c.name) _idByName[_kf(c.name)] = c.id; });
+  // Orders — keyed by normalized customer name so they merge with opening balances
   unpaidOrders.forEach(o=>{
-    const _k = o.customerId || o.customerName || 'unknown';   // sheet-loaded orders lack customerId — fall back to name so each customer stays separate
-    if(!byCust[_k]) byCust[_k]={name:o.customerName,cat:o.customerCategory,orders:[]};
+    const _k = _kf(o.customerName) || 'unknown';
+    if(!byCust[_k]) byCust[_k]={name:o.customerName,cat:o.customerCategory,orders:[],custId:(o.customerId||_idByName[_k]||'')};
     byCust[_k].orders.push(o);
   });
-  // Also add opening balance customers
+  // Opening-balance customers — same name key, so they combine with any orders
   custsDue.forEach(c=>{
-    if(!byCust[c.id]) byCust[c.id]={name:c.name,cat:c.category,orders:[]};
-    byCust[c.id].openBal = c.balance;
+    const _k = _kf(c.name) || 'unknown';
+    if(!byCust[_k]) byCust[_k]={name:c.name,cat:c.category,orders:[],custId:c.id};
+    byCust[_k].openBal = c.balance;
+    if(!byCust[_k].custId) byCust[_k].custId = c.id;
   });
 
   // Sort customers: stop first, then overdue, then warning
@@ -3922,7 +3929,8 @@ function renderDues() {
   });
 
   if(custEntries.length) {
-    custEntries.forEach(([custId,cg])=>{
+    custEntries.forEach(([_key,cg])=>{
+      const custId = cg.custId || _key;   // real customer id for the action buttons
       const totalOwed = (cg.orders.reduce((s,o)=>s+((o.total||0)-(o.payment?.amount||0)),0)) + (cg.openBal||0);
       const cfg = getCreditConfig(cg.cat);
       const isBlocked = cg.orders.some(o=>getCreditStatus(o).stopOrder);
