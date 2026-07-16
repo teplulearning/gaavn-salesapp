@@ -12,6 +12,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <style>
+html{-webkit-text-size-adjust:100%;-moz-text-size-adjust:100%;text-size-adjust:100%;}
+html,body{max-width:100%;overflow-x:hidden;}
 :root{--cream:#FEFAF3;--ink:#1C1810;--amber:#C8830A;--amber2:#E09B1A;--green:#2A7A45;--red:#C0392B;--blue:#1A527A;--surface:#FFFFFF;--border:#E8DFC8;--muted:#8A7A60;--card:#FFFDF8;--shadow:0 2px 12px rgba(28,24,16,0.08);--radius:14px;}
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
 /* System fonts render instantly — DM Sans/Serif swap in once loaded */
@@ -258,7 +260,7 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
     <div class="top-bar-left">
       <span class="logo">🐄 GF</span>
       <span class="role-badge" id="role-badge">SALES</span>
-      <span style="font-size:9px;color:var(--muted);margin-left:4px;" id="build-stamp">v140</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:4px;" id="build-stamp">v141</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <span class="date-chip" id="today-chip"></span>
@@ -451,7 +453,7 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
       <div class="stat-box"><div class="stat-num" id="due-amount" style="font-size:16px;">&#8377;0</div><div class="stat-lbl">Total Due</div></div>
       <div class="stat-box"><div class="stat-num" id="due-overdue">0</div><div class="stat-lbl">Stop/Overdue</div></div>
     </div>
-    <input id="dues-search" type="search" placeholder="🔍 Search client by name…" oninput="renderDues()" autocomplete="off" style="width:100%;box-sizing:border-box;margin:10px 0 4px;padding:11px 14px;border:1.5px solid var(--border);border-radius:10px;font-size:14px;font-family:inherit;">
+    <input id="dues-search" type="text" placeholder="🔍 Search client by name…" oninput="renderDues()" autocomplete="off" style="width:100%;box-sizing:border-box;margin:10px 0 4px;padding:11px 14px;border:1.5px solid var(--border);border-radius:10px;font-size:14px;font-family:inherit;">
     <div id="dues-list"></div>
   </div>
 
@@ -2050,6 +2052,24 @@ function buildNav(role) {
     </button>`).join('');
 }
 
+function attachSearchClears(){
+  ['cust-search','cust-list-search','dues-search','manage-search','pi-search'].forEach(function(id){
+    var el=document.getElementById(id); if(!el || el._clrAdded) return;
+    el._clrAdded=true;
+    var holder=document.createElement('span');
+    holder.style.cssText='position:relative;display:block;';
+    el.parentNode.insertBefore(holder, el);
+    holder.appendChild(el);
+    el.style.width='100%'; el.style.boxSizing='border-box'; el.style.paddingRight='34px';
+    var b=document.createElement('span');
+    b.textContent='✕';
+    b.style.cssText='position:absolute;right:9px;top:50%;transform:translateY(-50%);cursor:pointer;color:#999;font-size:15px;font-weight:700;z-index:6;padding:4px 6px;display:'+(el.value?'block':'none')+';';
+    b.addEventListener('click', function(){ el.value=''; el.dispatchEvent(new Event('input',{bubbles:true})); b.style.display='none'; try{el.focus();}catch(e){} });
+    el.addEventListener('input', function(){ b.style.display = el.value ? 'block' : 'none'; });
+    holder.appendChild(b);
+  });
+}
+
 function showScreen(id) {
   if (!_inPopstate && history.state?.screen !== id) {
     history.pushState({screen: id}, '', '#' + id);
@@ -2080,8 +2100,8 @@ function showScreen(id) {
   //    active screen before we fill it — fixes blank screen on mobile
   //    when navigating to a screen that was already active.
   requestAnimationFrame(function() {
-    if(id==='home')       renderDashboard();
-    if(id==='orders')     renderOrdersList();
+    if(id==='home')       { renderDashboard(); if(STATE.sheetUrl) syncOrdersFromSheet(); }
+    if(id==='orders')     { renderOrdersList(); if(STATE.sheetUrl) syncOrdersFromSheet(); }
     if(id==='customers')  { closeClientDetail(); renderCustomerList(); document.getElementById('add-cust-btn-wrap').style.display=(STATE.role!=='delivery'?'block':'none'); }
     if(id==='dues')       renderDues();
     if(id==='approvals')  renderApprovals();
@@ -2090,6 +2110,7 @@ function showScreen(id) {
     if(id==='manage')     renderManageCustomers();
     if(id==='history')    renderHistory();
     if(id==='payment-in') renderPaymentIn();
+    try{ attachSearchClears(); }catch(e){}
   });
 }
 
@@ -4139,7 +4160,7 @@ function buildInvoicePDF(o, invNo, withGST, gstRate){
   doc.text('Teplu Learning Pvt Ltd', margin, 16);
   doc.setFontSize(7.5); doc.setFont('helvetica','normal');
   doc.text('Panvadi Village, Saswad, Purandhar taluka, Dist. Pune', margin, 21);
-  doc.text('Ph: 9830910069  |  Email: contact@gaavn.com', margin, 25);
+  doc.text('Ph: 9881299045, 9830910069  |  Email: contact@gaavn.com', margin, 25);
   doc.text('GSTIN: 27AAHCT4313K1Z7  |  State: 27-Maharashtra', margin, 29);
   doc.text('FSSAI License No: 11524998000303', margin, 33);
   doc.setDrawColor(200,131,10); doc.setLineWidth(0.6); doc.line(margin,36,pageW-margin,36);
@@ -4295,7 +4316,7 @@ async function sendStatement(custId) {
   doc.setFontSize(6.5);
   doc.setFont('helvetica', 'normal');
   doc.text('Panvadi Village, Saswad, Purandhar taluka, Dist. Pune', margin + 26, 17);
-  doc.text('Ph: 9830910069  |  Email: contact@gaavn.com', margin + 26, 21);
+  doc.text('Ph: 9881299045, 9830910069  |  Email: contact@gaavn.com', margin + 26, 21);
   doc.text('GSTIN: 27AAHCT4313K1Z7  |  State: 27-Maharashtra', margin + 26, 25);
   doc.text('FSSAI License No: 11524998000303', margin + 26, 29);
   // Border line below header
