@@ -258,7 +258,7 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
     <div class="top-bar-left">
       <span class="logo">🐄 GF</span>
       <span class="role-badge" id="role-badge">SALES</span>
-      <span style="font-size:9px;color:var(--muted);margin-left:4px;" id="build-stamp">v139</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:4px;" id="build-stamp">v140</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <span class="date-chip" id="today-chip"></span>
@@ -2128,7 +2128,9 @@ function initApp() {
     loadPastDuesForDelivery();
   }
   // If orders still empty after loading localStorage, auto-fetch from sheet
-  if(STATE.orders.length === 0 && STATE.sheetUrl) {
+  if(STATE.sheetUrl) {
+    // Always pull today's orders from the sheet (merges by id) so the owner/sales
+    // device sees orders entered on other devices, even if it already has past orders.
     setTimeout(syncOrdersFromSheet, 1000);
   }
   // One-time migration: if this device still has an OLD deployment URL saved,
@@ -3939,9 +3941,11 @@ function saveNewCustomer() {
 // ── DUES ─────────────────────────────────────────────────────────────
 function renderDues() {
   // ── Compute credit status for all unpaid orders ──────────────────
+  const _cutover = localStorage.getItem('gf_cutover') || '2026-07-05';
   const unpaidOrders = STATE.orders.filter(o =>
-    o.status==='due' || o.status==='partial' ||
-    ((o.status==='confirmed'||o.status==='delivered') && (o.total||0)>(o.payment?.amount||0))
+    (String(o.date||'') >= _cutover) &&
+    (o.status==='due' || o.status==='partial' ||
+    ((o.status==='confirmed'||o.status==='delivered') && (o.total||0)>(o.payment?.amount||0)))
   );
 
   const custsDue = STATE.customers.filter(c=>(c.balance||0)>0);
