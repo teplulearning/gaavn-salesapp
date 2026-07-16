@@ -258,7 +258,7 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
     <div class="top-bar-left">
       <span class="logo">🐄 GF</span>
       <span class="role-badge" id="role-badge">SALES</span>
-      <span style="font-size:9px;color:var(--muted);margin-left:4px;" id="build-stamp">v136</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:4px;" id="build-stamp">v138</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <span class="date-chip" id="today-chip"></span>
@@ -451,6 +451,7 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
       <div class="stat-box"><div class="stat-num" id="due-amount" style="font-size:16px;">&#8377;0</div><div class="stat-lbl">Total Due</div></div>
       <div class="stat-box"><div class="stat-num" id="due-overdue">0</div><div class="stat-lbl">Stop/Overdue</div></div>
     </div>
+    <input id="dues-search" type="search" placeholder="🔍 Search client by name…" oninput="renderDues()" autocomplete="off" style="width:100%;box-sizing:border-box;margin:10px 0 4px;padding:11px 14px;border:1.5px solid var(--border);border-radius:10px;font-size:14px;font-family:inherit;">
     <div id="dues-list"></div>
   </div>
 
@@ -1677,8 +1678,73 @@ const CREDIT_CONFIG = {
   'Distributor -Retail':   {days: 3,  warnDaysBefore: 1,  graceDays: 3,  label:'3 days'},
 };
 
-function getCreditConfig(category) {
-  return CREDIT_CONFIG[category] || CREDIT_CONFIG['Retail'];
+function _credKey(s){ return (s||'').trim().toLowerCase(); }
+function getCreditOverrides(){ try{ return JSON.parse(localStorage.getItem('gf_credit_overrides')||'{}'); }catch(e){ return {}; } }
+function setCreditOverride(name, days){
+  var o=getCreditOverrides(); var k=_credKey(name);
+  if(days===null||days===undefined||days===''){ delete o[k]; } else { o[k]=parseInt(days,10)||0; }
+  try{ localStorage.setItem('gf_credit_overrides', JSON.stringify(o)); }catch(e){}
+}
+function getCreditConfig(category, nameKey) {
+  var base = CREDIT_CONFIG[category] || CREDIT_CONFIG['Retail'];
+  if(nameKey){
+    var o=getCreditOverrides(); var k=_credKey(nameKey);
+    if(k in o){
+      var d=parseInt(o[k],10)||0;
+      return { days:d, warnDaysBefore:(d>0?1:0), graceDays:(base.graceDays||3),
+               label:(d===0?'Cash & Carry':(d+' day'+(d>1?'s':''))), _override:true };
+    }
+  }
+  return base;
+}
+// ── EDITABLE CREDIT PERIOD (per customer) ─────────────────────────────
+function _closeCredit(){ var o=document.getElementById('credit-ov'); if(o) o.remove(); }
+function _applyCredit(days){
+  var c=window._credCtx||{}; setCreditOverride(c.name, days); _closeCredit();
+  if(typeof showToast==='function') showToast('Credit for '+c.name+': '+(days===0?'Cash & Carry':days+' day'+(days>1?'s':'')));
+  if(typeof renderDues==='function') renderDues();
+}
+function _setCredit(d){ _applyCredit(d); }
+function _setCreditCustom(){
+  var el=document.getElementById('credit-custom'); if(!el) return;
+  var v=(el.value||'').trim(); if(v===''){ return; }
+  var d=parseInt(v,10); if(isNaN(d)||d<0){ if(typeof showToast==='function') showToast('Enter a valid number of days'); return; }
+  _applyCredit(d);
+}
+function _resetCredit(){
+  var c=window._credCtx||{}; setCreditOverride(c.name,null); _closeCredit();
+  if(typeof showToast==='function') showToast(c.name+' reset to category default');
+  if(typeof renderDues==='function') renderDues();
+}
+function editCredit(encName, cat){
+  var name=decodeURIComponent(encName||''); cat=cat||'';
+  window._credCtx={name:name, cat:cat};
+  var base=CREDIT_CONFIG[cat]||CREDIT_CONFIG['Retail'];
+  var o=getCreditOverrides(); var k=_credKey(name);
+  var cur=(k in o)?(parseInt(o[k],10)||0):null;
+  var old=document.getElementById('credit-ov'); if(old) old.remove();
+  var presets=[['Cash & Carry',0],['3 days',3],['7 days',7],['15 days',15]];
+  var btns=presets.map(function(p){ var sel=(cur===p[1]);
+    return '<button onclick="_setCredit('+p[1]+')" style="flex:1;min-width:72px;padding:12px 6px;border:1.5px solid '+(sel?'#2e7d32':'#ddd')+';background:'+(sel?'#e8f5ee':'#fff')+';border-radius:10px;font-weight:700;font-size:13px;cursor:pointer;font-family:inherit;">'+p[0]+'</button>';
+  }).join('');
+  var wrap=document.createElement('div'); wrap.id='credit-ov';
+  wrap.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:99999;display:flex;align-items:center;justify-content:center;padding:18px;';
+  var curTxt=(cur!=null)?('currently '+(cur===0?'Cash & Carry':cur+' day'+(cur>1?'s':''))+' (custom)'):('currently '+base.label+' — category default');
+  wrap.innerHTML='<div style="background:#fff;border-radius:16px;padding:20px;max-width:420px;width:100%;font-family:inherit;box-shadow:0 12px 40px rgba(0,0,0,.3);">'
+    +'<div style="font-size:16px;font-weight:800;margin-bottom:2px;color:#1c1c1c;">Credit period</div>'
+    +'<div style="font-size:13px;color:#777;margin-bottom:2px;">'+name+' &middot; '+cat+'</div>'
+    +'<div style="font-size:11px;color:#999;margin-bottom:14px;">'+curTxt+'</div>'
+    +'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">'+btns+'</div>'
+    +'<div style="display:flex;gap:8px;align-items:center;margin-bottom:14px;">'
+      +'<input id="credit-custom" type="number" min="0" inputmode="numeric" placeholder="custom days" value="'+(cur!=null?cur:'')+'" style="flex:1;border:1.5px solid #ddd;border-radius:10px;padding:11px;font-size:15px;font-family:inherit;">'
+      +'<button onclick="_setCreditCustom()" style="background:#1A5276;color:#fff;border:none;border-radius:10px;padding:11px 16px;font-weight:700;cursor:pointer;font-family:inherit;">Set</button>'
+    +'</div>'
+    +'<div style="display:flex;gap:8px;">'
+      +'<button onclick="_resetCredit()" style="flex:1;background:#f3f0e8;border:none;border-radius:10px;padding:12px;font-weight:700;cursor:pointer;font-family:inherit;color:#8a6d3b;">Reset to default</button>'
+      +'<button onclick="_closeCredit()" style="flex:1;background:#fff;border:1.5px solid #ddd;border-radius:10px;padding:12px;font-weight:700;cursor:pointer;font-family:inherit;">Close</button>'
+    +'</div></div>';
+  wrap.addEventListener('click', function(e){ if(e.target===wrap) _closeCredit(); });
+  document.body.appendChild(wrap);
 }
 
 function daysBetween(dateStr1, dateStr2) {
@@ -1691,7 +1757,7 @@ function daysBetween(dateStr1, dateStr2) {
 function getCreditStatus(order) {
   // Returns: {daysElapsed, dueDate, daysOverdue, status, stopOrder}
   // status: 'ok' | 'warning' | 'due' | 'overdue' | 'stop'
-  const cfg = getCreditConfig(order.customerCategory);
+  const cfg = getCreditConfig(order.customerCategory, order.customerName);
   if(cfg.days === 0) return {daysElapsed:0, dueDate:order.date, daysOverdue:0, status:'cash', stopOrder:false};
   const daysElapsed = daysBetween(order.date, TODAY_KEY);
   const daysOverdue = Math.max(0, daysElapsed - cfg.days);
@@ -3633,7 +3699,7 @@ function renderCustomerList(q='') {
   if(!custs.length) { container.innerHTML='<div class="empty-state"><div class="empty-icon">🏢</div><p>No clients found</p></div>'; return; }
   container.innerHTML = custs.map(c=>{
     const bal = parseFloat(c.balance)||0;
-    const cfg = getCreditConfig(c.category||'');
+    const cfg = getCreditConfig(c.category||'', c.name);
     return `<div style="background:var(--surface);border-radius:12px;padding:12px 14px;margin-bottom:8px;border:1.5px solid var(--border);cursor:pointer;display:flex;align-items:center;gap:10px;" onclick="openClientDetail('${c.id}')">
       <div style="flex:1;min-width:0;">
         <div style="font-size:14px;font-weight:800;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${c.name}</div>
@@ -3685,7 +3751,7 @@ async function openClientDetail(id) {
   document.getElementById('clients-detail-panel').style.display = 'block';
   document.getElementById('clients-detail-panel').scrollTop = 0;
   document.getElementById('client-detail-name').textContent = c.name;
-  const cfg = getCreditConfig(c.category||'');
+  const cfg = getCreditConfig(c.category||'', c.name);
   document.getElementById('client-detail-sub').textContent = (c.category||'') + (cfg.days>0?' · Credit: '+cfg.label:'');
 
   document.getElementById('client-info-card').innerHTML = `
@@ -3928,11 +3994,13 @@ function renderDues() {
     return bWorst-aWorst;
   });
 
-  if(custEntries.length) {
-    custEntries.forEach(([_key,cg])=>{
+  const _dq = ((document.getElementById('dues-search')||{}).value||'').trim().toLowerCase();
+  const custEntriesR = _dq ? custEntries.filter(function(e){ return (e[1].name||'').toLowerCase().indexOf(_dq)>=0; }) : custEntries;
+  if(custEntriesR.length) {
+    custEntriesR.forEach(([_key,cg])=>{
       const custId = cg.custId || _key;   // real customer id for the action buttons
       const totalOwed = (cg.orders.reduce((s,o)=>s+((o.total||0)-(o.payment?.amount||0)),0)) + (cg.openBal||0);
-      const cfg = getCreditConfig(cg.cat);
+      const cfg = getCreditConfig(cg.cat, cg.name);
       const isBlocked = cg.orders.some(o=>getCreditStatus(o).stopOrder);
       const hasOverdue = cg.orders.some(o=>{const cs=getCreditStatus(o);return cs.status==='overdue'||cs.status==='due';});
       const hasWarning = cg.orders.some(o=>getCreditStatus(o).status==='warning');
@@ -3943,7 +4011,7 @@ function renderDues() {
         +'<div class="card-head">'
           +'<div>'
             +'<div style="font-weight:700;font-size:14px;">'+cg.name+'</div>'
-            +'<div style="font-size:11px;color:var(--muted);">'+cg.cat+' · Credit: '+cfg.label+'</div>'
+            +'<div style="font-size:11px;color:var(--muted);">'+cg.cat+' · Credit: '+cfg.label+' <span onclick="editCredit(\''+encodeURIComponent(cg.name)+'\',\''+cg.cat+'\')" style="color:var(--blue);cursor:pointer;font-weight:700;white-space:nowrap;">&#9998; edit</span></div>'
           +'</div>'
           +'<div style="text-align:right;">'
             +'<div style="font-size:18px;font-weight:700;color:var(--red);">₹'+totalOwed.toLocaleString('en-IN')+'</div>'
@@ -3992,7 +4060,9 @@ function renderDues() {
     });
   }
 
-  if(!html) html = '<div class="empty-state"><div class="empty-icon">🎉</div><p>No outstanding dues!</p></div>';
+  if(!html) html = _dq
+    ? '<div class="empty-state"><div class="empty-icon">🔍</div><p>No client matches &ldquo;'+_dq+'&rdquo;</p></div>'
+    : '<div class="empty-state"><div class="empty-icon">🎉</div><p>No outstanding dues!</p></div>';
   list.innerHTML = html;
 }
 
@@ -4366,7 +4436,7 @@ function sendClientReminder(lang, custId) {
   const alerts = getCustomerCreditAlerts(custId);
   const balance = parseFloat(cust.balance)||0;
   const totalOwed = alerts.length ? alerts.reduce((s,x)=>s+((x.order.total||0)-(x.order.payment?.amount||0)),0) : balance;
-  const cfg = getCreditConfig(cust.category);
+  const cfg = getCreditConfig(cust.category, cust.name);
   const upiId=(localStorage.getItem('gf_upi_id')||DEFAULT_UPI).trim();
   const lines = alerts.length
     ? alerts.map(function(x){ var o=(x.order.total||0)-((x.order.payment&&x.order.payment.amount)||0); return lang==='mr'
