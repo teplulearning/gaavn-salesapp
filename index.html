@@ -258,7 +258,7 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
     <div class="top-bar-left">
       <span class="logo">🐄 GF</span>
       <span class="role-badge" id="role-badge">SALES</span>
-      <span style="font-size:9px;color:var(--muted);margin-left:4px;" id="build-stamp">v138</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:4px;" id="build-stamp">v139</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <span class="date-chip" id="today-chip"></span>
@@ -2294,6 +2294,7 @@ function orderCardHTML(o) {
       </div>
     </div>
     <div class="order-body${bodyOpen}" id="obody-${o.id}">${orderBodyHTML(o)}</div>
+    ${o.status!=='draft' ? `<div style="padding:8px 12px;border-top:1px solid var(--border);text-align:right;"><button onclick="event.stopPropagation();generateInvoice('${o.id}')" style="background:var(--blue);color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;">🧾 Invoice${(_invMap()[o.id]?' ✓':'')}</button></div>` : ''}
   </div>`;
 }
 
@@ -4064,6 +4065,136 @@ function renderDues() {
     ? '<div class="empty-state"><div class="empty-icon">🔍</div><p>No client matches &ldquo;'+_dq+'&rdquo;</p></div>'
     : '<div class="empty-state"><div class="empty-icon">🎉</div><p>No outstanding dues!</p></div>';
   list.innerHTML = html;
+}
+
+// ═══ PER-ORDER INVOICE ════════════════════════════════════════════════
+function _invFY(dateStr){
+  var d = dateStr ? new Date(dateStr+'T00:00:00') : new Date();
+  if(isNaN(d.getTime())) d=new Date();
+  var y=d.getFullYear(), m=d.getMonth();
+  var start=(m>=3)?y:y-1;               // FY starts 1 April
+  return (String(start).slice(-2))+'-'+(String(start+1).slice(-2));
+}
+function _invMap(){ try{ return JSON.parse(localStorage.getItem('gf_invoices')||'{}'); }catch(e){ return {}; } }
+function _invMapSave(m){ try{ localStorage.setItem('gf_invoices', JSON.stringify(m)); }catch(e){} }
+function assignInvoiceNo(orderId, dateStr){
+  var m=_invMap();
+  if(m[orderId]) return m[orderId];
+  var fy=_invFY(dateStr);
+  var ck='gf_inv_ctr_'+fy.replace('-','');
+  var n=(parseInt(localStorage.getItem(ck),10)||0)+1;
+  localStorage.setItem(ck, String(n));
+  var no='GF/'+fy+'/'+('0000'+n).slice(-4);
+  m[orderId]=no; _invMapSave(m);
+  return no;
+}
+function _closeInv(){ var e=document.getElementById('inv-ov'); if(e) e.remove(); }
+function generateInvoice(orderId){
+  var o=(STATE.orders||[]).find(function(x){return x.id===orderId;});
+  if(!o){ if(typeof showToast==='function') showToast('Order not found'); return; }
+  window._invCtx={orderId:orderId};
+  var existing=_invMap()[orderId];
+  _closeInv();
+  var wrap=document.createElement('div'); wrap.id='inv-ov';
+  wrap.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:99999;display:flex;align-items:center;justify-content:center;padding:18px;';
+  wrap.innerHTML='<div style="background:#fff;border-radius:16px;padding:20px;max-width:430px;width:100%;font-family:inherit;box-shadow:0 12px 40px rgba(0,0,0,.3);">'
+    +'<div style="font-size:16px;font-weight:800;margin-bottom:2px;color:#1c1c1c;">Generate Invoice</div>'
+    +'<div style="font-size:13px;color:#777;margin-bottom:6px;">'+o.customerName+' &middot; #'+o.id+' &middot; ₹'+((o.total||0).toLocaleString('en-IN'))+'</div>'
+    +(existing
+       ? '<div style="font-size:12px;color:#196F3D;margin-bottom:12px;">Already issued as <b>'+existing+'</b> — this number will be reused.</div>'
+       : '<div style="font-size:12px;color:#999;margin-bottom:12px;">A new invoice number will be assigned on generation.</div>')
+    +'<div style="font-size:12px;font-weight:700;margin-bottom:8px;">Choose type:</div>'
+    +'<div style="display:flex;flex-direction:column;gap:8px;">'
+      +'<button onclick="_makeInvoice(false)" style="padding:13px;border:1.5px solid #ddd;background:#fff;border-radius:10px;font-weight:700;font-size:14px;cursor:pointer;font-family:inherit;text-align:left;">\U0001F4C4 Bill of Supply<br><span style="color:#999;font-weight:400;font-size:11px;">No GST — for exempt fresh dairy</span></button>'
+      +'<button onclick="_makeInvoice(true)" style="padding:13px;border:1.5px solid #ddd;background:#fff;border-radius:10px;font-weight:700;font-size:14px;cursor:pointer;font-family:inherit;text-align:left;">\U0001F9FE GST Tax Invoice<br><span style="color:#999;font-weight:400;font-size:11px;">Shows GSTIN + CGST/SGST</span></button>'
+    +'</div>'
+    +'<button onclick="_closeInv()" style="margin-top:12px;width:100%;background:#fff;border:1.5px solid #ddd;border-radius:10px;padding:11px;font-weight:700;cursor:pointer;font-family:inherit;">Cancel</button>'
+    +'</div>';
+  wrap.addEventListener('click', function(e){ if(e.target===wrap) _closeInv(); });
+  document.body.appendChild(wrap);
+}
+function _makeInvoice(withGST){
+  var ctx=window._invCtx||{}; var o=(STATE.orders||[]).find(function(x){return x.id===ctx.orderId;});
+  if(!o) return;
+  var gstRate=0;
+  if(withGST){
+    var r=prompt('GST rate % for this invoice (0 for exempt, 5, 12, 18):','5');
+    if(r===null) return;
+    gstRate=parseFloat(r)||0;
+  }
+  _closeInv();
+  var invNo=assignInvoiceNo(o.id, o.date);
+  try{ buildInvoicePDF(o, invNo, withGST, gstRate); }
+  catch(e){ if(typeof showToast==='function') showToast('Invoice error: '+(e.message||e)); console.error(e); }
+}
+function buildInvoicePDF(o, invNo, withGST, gstRate){
+  var jsPDF=window.jspdf.jsPDF;
+  var doc=new jsPDF({orientation:'portrait',unit:'mm',format:'a4'});
+  var pageW=doc.internal.pageSize.getWidth(); var margin=14;
+  doc.setFontSize(13); doc.setFont('helvetica','bold');
+  doc.text('Teplu Learning Pvt Ltd', margin, 16);
+  doc.setFontSize(7.5); doc.setFont('helvetica','normal');
+  doc.text('Panvadi Village, Saswad, Purandhar taluka, Dist. Pune', margin, 21);
+  doc.text('Ph: 9830910069  |  Email: contact@gaavn.com', margin, 25);
+  doc.text('GSTIN: 27AAHCT4313K1Z7  |  State: 27-Maharashtra', margin, 29);
+  doc.text('FSSAI License No: 11524998000303', margin, 33);
+  doc.setDrawColor(200,131,10); doc.setLineWidth(0.6); doc.line(margin,36,pageW-margin,36);
+  doc.setFontSize(13); doc.setFont('helvetica','bold');
+  doc.text(withGST?'TAX INVOICE':'BILL OF SUPPLY', pageW/2, 43, {align:'center'});
+  var cfg=(typeof getCreditConfig==='function')?getCreditConfig(o.customerCategory,o.customerName):{days:0,label:'Cash & Carry'};
+  var invDate=o.date?new Date(o.date+'T00:00:00'):new Date();
+  var dueD=new Date(invDate.getTime()); dueD.setDate(dueD.getDate()+(cfg.days||0));
+  var fmt=function(d){ return d.toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}); };
+  doc.setFontSize(9); doc.setFont('helvetica','normal');
+  doc.text('Invoice No: '+invNo, margin, 51);
+  doc.text('Invoice Date: '+fmt(invDate), margin, 56);
+  doc.text('Order Ref: #'+o.id, pageW-margin, 51, {align:'right'});
+  doc.text('Credit: '+(cfg.label||((cfg.days||0)+' days'))+'  |  Due: '+fmt(dueD), pageW-margin, 56, {align:'right'});
+  doc.setFont('helvetica','bold'); doc.text('Bill To:', margin, 64);
+  doc.setFont('helvetica','normal'); doc.text(String(o.customerName||''), margin, 69);
+  var by=69;
+  if(o.customerPhone){ by+=5; doc.text('Ph: '+o.customerPhone, margin, by); }
+  if(o.customerCategory){ by+=5; doc.text(String(o.customerCategory), margin, by); }
+  var items=(o.items||[]).filter(function(it){ return (parseFloat(it.qty)||0)!==0 || (parseFloat(it.amount)||0)!==0; });
+  var body=items.map(function(it,idx){
+    var qty=parseFloat(it.qty)||0, rate=parseFloat(it.rate)||0, amt=(it.amount!=null?parseFloat(it.amount):qty*rate)||0;
+    return [String(idx+1),(it.name||it.product||''),qty.toLocaleString('en-IN'),'Rs.'+rate.toLocaleString('en-IN'),'Rs.'+amt.toLocaleString('en-IN',{maximumFractionDigits:2})];
+  });
+  var subtotal=items.reduce(function(s,it){ var q=parseFloat(it.qty)||0,r=parseFloat(it.rate)||0; return s+((it.amount!=null?parseFloat(it.amount):q*r)||0); },0);
+  doc.autoTable({
+    startY: by+6, margin:{left:margin,right:margin},
+    head:[['#','Item','Qty','Rate','Amount']],
+    body: body.length?body:[['','No items','','','']],
+    headStyles:{fillColor:[200,131,10],textColor:255,fontSize:9,fontStyle:'bold'},
+    bodyStyles:{fontSize:9},
+    columnStyles:{0:{cellWidth:10},1:{cellWidth:'auto'},2:{cellWidth:22,halign:'right'},3:{cellWidth:30,halign:'right'},4:{cellWidth:34,halign:'right'}}
+  });
+  var y=doc.lastAutoTable.finalY+7; var rightX=pageW-margin;
+  doc.setFontSize(9);
+  function line(lbl,val,bold){ doc.setFont('helvetica',bold?'bold':'normal'); doc.text(lbl,rightX-56,y); doc.text(val,rightX,y,{align:'right'}); y+=5.5; }
+  var grand=subtotal;
+  if(withGST && gstRate>0){
+    line('Subtotal','Rs.'+subtotal.toLocaleString('en-IN',{maximumFractionDigits:2}));
+    var tax=subtotal*gstRate/100, half=tax/2;
+    line('CGST @'+(gstRate/2)+'%','Rs.'+half.toLocaleString('en-IN',{maximumFractionDigits:2}));
+    line('SGST @'+(gstRate/2)+'%','Rs.'+half.toLocaleString('en-IN',{maximumFractionDigits:2}));
+    grand=subtotal+tax;
+  } else if(withGST){
+    line('Subtotal','Rs.'+subtotal.toLocaleString('en-IN',{maximumFractionDigits:2}));
+    line('GST','Nil (exempt)');
+  }
+  line('Grand Total','Rs.'+grand.toLocaleString('en-IN',{maximumFractionDigits:2}), true);
+  var paid=parseFloat((o.payment&&o.payment.amount)||o.paymentAmount||0)||0;
+  line('Amount Paid','Rs.'+paid.toLocaleString('en-IN',{maximumFractionDigits:2}));
+  line('Balance Due','Rs.'+(grand-paid).toLocaleString('en-IN',{maximumFractionDigits:2}), true);
+  y+=6; doc.setFontSize(7.5); doc.setFont('helvetica','italic'); doc.setTextColor(120);
+  doc.text(withGST?'This is a computer-generated tax invoice.':'This is a computer-generated bill of supply. Fresh dairy is exempt from GST.', margin, y);
+  y+=4; doc.text('Payment terms: '+(cfg.label||((cfg.days||0)+' days'))+'. Goods once sold are not returnable.', margin, y);
+  doc.setTextColor(0);
+  var fname='Invoice_'+invNo.replace(/[\/]/g,'-')+'_'+String(o.customerName||'').replace(/[^a-zA-Z0-9]/g,'').slice(0,14)+'.pdf';
+  doc.save(fname);
+  if(typeof showToast==='function') showToast('\U0001F9FE Invoice '+invNo+' generated');
+  if(typeof renderOrdersList==='function') renderOrdersList();
 }
 
 async function sendStatement(custId) {
