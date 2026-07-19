@@ -260,7 +260,7 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
     <div class="top-bar-left">
       <span class="logo">🐄 GF</span>
       <span class="role-badge" id="role-badge">SALES</span>
-      <span style="font-size:9px;color:var(--muted);margin-left:4px;" id="build-stamp">v141</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:4px;" id="build-stamp">v142</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <span class="date-chip" id="today-chip"></span>
@@ -1822,6 +1822,42 @@ function getCustomerCreditAlerts(custId) {
     .sort((a,b) => a.order.date.localeCompare(b.order.date));
 }
 const LS_ORDERS = 'gf_orders_' + TODAY_KEY;
+
+// ── v142 DELETED-ORDER TOMBSTONES ────────────────────────────────────
+// A deleted order ID is remembered here so no sync path can resurrect it.
+const LS_DELETED = 'gf_deleted_orders';
+function _deletedMap(){ try{ return JSON.parse(localStorage.getItem(LS_DELETED)||'{}'); }catch(e){ return {}; } }
+function _deletedSave(m){ try{ localStorage.setItem(LS_DELETED, JSON.stringify(m)); }catch(e){} }
+function isOrderDeleted(id){ if(id===undefined||id===null||id==='') return false; return !!_deletedMap()[String(id)]; }
+function markOrderDeleted(orderId, orderDate, sheetOk){
+  const m=_deletedMap();
+  const cutoff=Date.now()-60*24*3600*1000; // prune confirmed tombstones older than 60 days
+  Object.keys(m).forEach(k=>{ if((m[k].ts||0)<cutoff && m[k].sheetOk) delete m[k]; });
+  m[String(orderId)]={date:orderDate||TODAY_KEY, ts:Date.now(), sheetOk:!!sheetOk};
+  _deletedSave(m);
+  // purge EVERY local copy, whatever date key it is stored under
+  try{
+    for(let i=localStorage.length-1;i>=0;i--){
+      const k=localStorage.key(i);
+      if(!k||k.indexOf('gf_orders_')!==0) continue;
+      let arr=[]; try{ arr=JSON.parse(localStorage.getItem(k)||'[]'); }catch(e){}
+      if((arr||[]).some(o=>o&&o.id===orderId)) localStorage.setItem(k, JSON.stringify(arr.filter(o=>o&&o.id!==orderId)));
+    }
+  }catch(e){}
+}
+function _markSheetDeleteDone(orderId){ const m=_deletedMap(); if(m[String(orderId)]){ m[String(orderId)].sheetOk=true; _deletedSave(m); } }
+async function retryPendingSheetDeletes(){
+  const url=(typeof getSheetUrl==='function'?getSheetUrl():'')||'';
+  if(!url||!navigator.onLine) return;
+  const m=_deletedMap();
+  for(const id of Object.keys(m)){
+    if(m[id].sheetOk) continue;
+    try{
+      const r=await fetch(url+'?'+new URLSearchParams({action:'deleteOrder',orderId:id,date:m[id].date||TODAY_KEY}).toString(),{cache:'no-store'});
+      if(r.ok) _markSheetDeleteDone(id);
+    }catch(e){}
+  }
+}
 const DEFAULT_UPI = 'Q848318837@ybl'; // Gaavn PhonePe merchant VPA
 const GAAVN_QR_DATAURL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAa4AAAGuAQAAAADgjt83AAADSUlEQVR4nO2cUY7cIAyGP5dIfUykHmCOwt6s6s2So+wBKpHHlYjcB3BIZt62085GmCcy4dMEyTL2b0CUT7Tt22cocMwxxxxzrG9sk9om+3WZNoFVhEUGrFfbaz7SsRdiqGpGVVV1HlV1HjNEe6w9oLytg/Ml5ubYk7Gl+IhNYB2oPaheJaagFJ8zvfAjHfsyWExB9dcUVH6mTXQmqLyNH/Jv/s2xS2DD3bPEOUNMoIuAxPchs0zpLmG+xNwcexZWrSSaFegyJWCdUMbfgy63D4F1yEBZdl7wkY59CawkL2/lp01YbvkwRufxo6Q8IjK87CMdexlW05vaMjqPmdYjakY1BT2Pu8TcHHsWZhYBwKhaQhJNwZLgMdckeB/iVtIdVnxJMxAYM6oJgKCWBFOTH/clXWKmqiUAwlFVO7RkK9NciUvMzbFnYcVKWs901rrOWFxio6Nrrz1ituJQF5ZiEVG1LDaHEHYG6nrkVtIZVn1JTFjkkYK24KQVeGqE4tFrj9gx3phH3R1K2It/e1hL2CMUt5K+sF0bOSXB5jIO/uVQInYr6Q07Kmh7jqMzoVkEliKr6kxwK+kPO/sSW1Pmtro0lSQFG+JW0hl28iVtTanGwEFuq3mPxyUdYgdVrQUi9cXuPGYwpS25lXSIHRV6dhltBkwbeZDu3Ur6xTYhpn1H41j1WHlbRfTXBMT37ypyK8nytebm2F9i+86BTPEWJb1J0Co6dWRTU9yXdIhtwjJRvAVRPwTMVGAVsbwHy4kvNDfHnoHt1b5THQegRSPVyVga5L6kO+whx7kLYWOp47Q41vWSDrEHvaQIsE2FHS3/PYj4biWdYcezfUexNXN3ys/0WPclHWKnvWq7t2inPecWx0LbO32JuTn2LGygBK6jAmyDsoYsMW3lhcAmutzyoLDZ4IvMzbFnYu3OgaD1JPA6nIvFUJJlVr9zoEPsfOeAbSiZaXsbz1Ue31/SI/a4J9qCVLOXcD4i7NFrh9i9lZQWbV+9PepBc3Mr6R6rm19LXLLra+tQUmS/v6RP7HznQFBYBV0mYHkLGdYf5YIbALFE5xpzc+xZ2OHUVqnZtGikCGptB2yqJT9fcbrDxO97dcwxxxxz7L9gfwCziaA5umMLRwAAAABJRU5ErkJggg=='; // embedded static UPI QR (works offline)
 const LS_URL    = 'gf_sheet_url';
@@ -2139,6 +2175,20 @@ function initApp() {
   }
   // Load today's orders from localStorage
   STATE.orders = JSON.parse(localStorage.getItem(LS_ORDERS)||'[]');
+  // v142 CLEANUP: purge malformed orders created by the v141 sync bug
+  const _isJunkOrder = o => !o || !o.id || String(o.id).trim()==='' || String(o.id)==='undefined' || String(o.id).indexOf('TOTAL:')===0 || isOrderDeleted(o.id);
+  if(STATE.orders.some(_isJunkOrder)) {
+    STATE.orders = STATE.orders.filter(o=>!_isJunkOrder(o));
+    localStorage.setItem(LS_ORDERS, JSON.stringify(STATE.orders));
+  }
+  try {
+    for(let i=localStorage.length-1;i>=0;i--){
+      const k=localStorage.key(i);
+      if(!k || k.indexOf('gf_orders_')!==0) continue;
+      let arr=[]; try{ arr=JSON.parse(localStorage.getItem(k)||'[]'); }catch(e){}
+      if((arr||[]).some(_isJunkOrder)) localStorage.setItem(k, JSON.stringify(arr.filter(o=>!_isJunkOrder(o))));
+    }
+  }catch(e){}
   // Load payment ledger
   STATE.payments = JSON.parse(localStorage.getItem(LS_PAYMENTS)||'[]');
   // Load ALL past orders for sales/owner so they can view and edit history
@@ -2230,6 +2280,10 @@ function saveOrders() {
       ? Object.assign({}, o, {status:'paid', payment: ex.payment||o.payment})
       : o;
   });
+
+  // v142 FIX: this merge used to resurrect deleted orders from stale
+  // localStorage copies under other date keys. Drop tombstoned IDs.
+  Object.keys(allOrders).forEach(id => { if(isOrderDeleted(id)) delete allOrders[id]; });
 
   // Group merged orders by date and write back
   const byDate = {};
@@ -3320,21 +3374,19 @@ async function executeDeleteOrder(orderId, orderDate) {
   // 1. Remove from STATE.orders
   STATE.orders = STATE.orders.filter(o => o.id !== orderId);
 
-  // 2. Remove from localStorage for that date
-  const dateKey = LS_PREFIX + (orderDate || TODAY_KEY);
-  try {
-    const stored = JSON.parse(localStorage.getItem(dateKey)||'[]');
-    const filtered = stored.filter(o => o.id !== orderId);
-    localStorage.setItem(dateKey, JSON.stringify(filtered));
-    if(orderDate === TODAY_KEY) localStorage.setItem(LS_ORDERS, JSON.stringify(filtered));
-  } catch(e) {}
+  // 2. v142 FIX: tombstone the ID and purge EVERY local copy (all date keys).
+  // v141 only cleaned one date key, and the Sheet delete was fire-and-forget
+  // with no retry — so a failed/slow delete let the next auto-sync pull the
+  // order straight back from the Sheet ("deleted order reappears" bug).
+  markOrderDeleted(orderId, orderDate||TODAY_KEY, false);
 
   // 3. Delete from Google Sheet if URL is set
   const url = getSheetUrl();
   if(url) {
     try {
       const params = new URLSearchParams({ action: 'deleteOrder', orderId, date: orderDate||TODAY_KEY });
-      await fetch(url + '?' + params.toString());
+      const r = await fetch(url + '?' + params.toString(), {cache:'no-store'});
+      if(r.ok) _markSheetDeleteDone(orderId); // else autoSync retries the delete later
     } catch(e) {}
     // Rebuild day total after deletion
     try {
@@ -4875,6 +4927,9 @@ async function pushAllCustomersToSheet() {
 async function syncOneOrder(orderId, orderObj) {
   const url=getSheetUrl(); if(!url) return false;
   const order=orderObj||STATE.orders.find(o=>o.id===orderId); if(!order) return false;
+  // v142 FIX: block malformed orders (prevents "undefined" junk rows in the Sheet)
+  if(!order.id || String(order.id).trim()==='' || String(order.id)==='undefined') return false;
+  if(isOrderDeleted(order.id)) return false; // v142: deleted orders must never reach the Sheet
   const orderDate = (order.date && order.date !== 'undefined') ? order.date : TODAY_KEY;
   if(!order.date || order.date === 'undefined') { order.date = orderDate; saveOrders(); }
   const params=new URLSearchParams({
@@ -5536,6 +5591,15 @@ function getAppsScriptCode() {
     '// ── LOG ORDER (append-only — fast, safe, no sheet corruption) ────────',
     'function logOrder(p) {',
     '  var ss = SpreadsheetApp.openById(SS_ID);',
+    '  var oid = String(p.orderId||"").trim();',
+    '  if(!oid || oid==="undefined") return jsonOut({status:"skipped", reason:"invalid orderId"});',
+    '  var delSh=ss.getSheetByName("Deleted_Orders");',
+    '  if(delSh && delSh.getLastRow()>0){',
+    '    var delIds=delSh.getRange(1,1,delSh.getLastRow(),1).getValues();',
+    '    for(var di=0; di<delIds.length; di++){',
+    '      if(String(delIds[di][0]).trim()===oid) return jsonOut({status:"skipped", reason:"order was deleted"});',
+    '    }',
+    '  }',
     '  var rawDate = String(p.date||"").trim();',
     '  if(!rawDate||rawDate==="undefined") rawDate = Utilities.formatDate(new Date(),Session.getScriptTimeZone(),"yyyy-MM-dd");',
     '  var shName = "Orders_" + getMonthTag(rawDate);',
@@ -5741,6 +5805,11 @@ function getAppsScriptCode() {
     '      deleted++;',
     '    }',
     '  }',
+    '  // v142: remember deleted IDs so a stale device cannot re-log this order',
+    '  try{',
+    '    var dsh=ss.getSheetByName("Deleted_Orders")||ss.insertSheet("Deleted_Orders");',
+    '    dsh.appendRow([orderId, rawDate, new Date()]);',
+    '  }catch(ex){}',
     '  return jsonOut({status:"ok", deleted:deleted, orderId:orderId});',
     '}',
     '',
@@ -5941,7 +6010,7 @@ function getAppsScriptCode() {
     '  var dateOrderIds={};',
     '  data.slice(1).forEach(function(row){',
     '    var id=String(row[0]||"").trim();',
-    '    if(!id) return;',
+    '    if(!id || id==="undefined") return;',
     '    if(id.indexOf("TOTAL:")===0) return;',
     '    if(id.indexOf("RESUBMIT:")===0) return;',
     '    var dt=normDateCell(row[1],tz);',
@@ -5950,7 +6019,7 @@ function getAppsScriptCode() {
     '  if(Object.keys(dateOrderIds).length===0) return jsonOut({orders:[],date:p.date,count:0});',
     '  var orders=data.slice(1).filter(function(row){',
     '    var id=String(row[0]||"").trim();',
-    '    return id&&id.indexOf("TOTAL:")!==0&&id.indexOf("RESUBMIT:")!==0&&dateOrderIds[id];',
+    '    return id&&id!=="undefined"&&id.indexOf("TOTAL:")!==0&&id.indexOf("RESUBMIT:")!==0&&dateOrderIds[id];',
     '  }).map(function(row){',
     '    var obj={}; headers.forEach(function(h,i){obj[h]=row[i]!==undefined?row[i]:"";});',
     '    return obj;',
@@ -5969,7 +6038,7 @@ function getAppsScriptCode() {
     '  var headers=data[0], tz=Session.getScriptTimeZone();',
     '  var orders=data.slice(1).filter(function(row){',
     '    var id=String(row[0]||"").trim();',
-    '    return id && id.indexOf("TOTAL:")!==0 && id.indexOf("RESUBMIT:")!==0;',
+    '    return id && id!=="undefined" && id.indexOf("TOTAL:")!==0 && id.indexOf("RESUBMIT:")!==0;',
     '  }).map(function(row){',
     '    var obj={}; headers.forEach(function(h,i){obj[h]=row[i]!==undefined?row[i]:"";});',
     '    obj._date=normDateCell(row[1],tz);',
@@ -7510,7 +7579,7 @@ async function fetchHistoryDate() {
     const orders = orderSeq.map(id=>orderMap[id]).filter(o=>o.id);
 
     // Cache to localStorage
-    cacheOrdersForDate(date, orders);
+    cacheOrdersForDate(date, orders.filter(o=>!isOrderDeleted(o.id)));
 
     statusEl.textContent = `✓ ${orders.length} orders loaded for ${date}`;
     statusEl.style.color = 'var(--green,#2E7D32)';
@@ -7593,7 +7662,7 @@ async function fetchHistoryMonth() {
     const byDate={};
     rows.forEach(row=>{ const dt=normDate(row); if(!dt) return; (byDate[dt]=byDate[dt]||[]).push(row); });
     let totalOrders=0, dateCount=0;
-    Object.keys(byDate).forEach(dt=>{ const ords=buildOrders(byDate[dt], dt); if(ords.length){ cacheOrdersForDate(dt, ords); totalOrders+=ords.length; dateCount++; } });
+    Object.keys(byDate).forEach(dt=>{ const ords=buildOrders(byDate[dt], dt).filter(o=>!isOrderDeleted(o.id)); if(ords.length){ cacheOrdersForDate(dt, ords); totalOrders+=ords.length; dateCount++; } });
     statusEl.textContent='\u2713 '+totalOrders+' orders across '+dateCount+' day(s) loaded';
     statusEl.style.color='var(--green,#2E7D32)';
     setTimeout(()=>{ closeModal('modal-hist-fetch'); renderHistory(); showToast('\u2713 Loaded '+totalOrders+' orders for '+month); }, 900);
@@ -7899,7 +7968,7 @@ function loadPastDuesForDelivery() {
       const past = JSON.parse(localStorage.getItem(key)||'[]');
       past.forEach(o => {
         // Include: due, partial (need collection), delivered (pending finalisation)
-        if((o.status==='due'||o.status==='partial'||o.status==='delivered') && !todayIds.has(o.id)) {
+        if((o.status==='due'||o.status==='partial'||o.status==='delivered') && !todayIds.has(o.id) && !isOrderDeleted(o.id)) {
           STATE.orders.push(o);
           todayIds.add(o.id);
           added++;
@@ -8732,6 +8801,7 @@ async function pollOrdersFromSheet() {
       // Apps Script returns rows as objects with column headers as keys
       const orderId = String(row['Order ID']||'').trim();
       if(!orderId) return;
+      if(isOrderDeleted(orderId)) return; // v142: deleted on this device — never resurrect
       let itemsArr = [];
       try { itemsArr = JSON.parse(row['Items Raw']||'[]'); } catch(e) {
         // Items stored as text "2 kg Paneer @₹260" — parse back
@@ -8751,7 +8821,7 @@ async function pollOrdersFromSheet() {
         customerPhone: '',
         status: String(row['Status']||'confirmed'),
         items: itemsArr,
-        total: parseFloat(row['Total (Rs)']||0)||parseFloat(row['Total']||0)||0,
+        total: parseFloat(row['Order Total (Rs)']||0)||parseFloat(row['Total (Rs)']||0)||parseFloat(row['Total']||0)||0,
         notes: String(row['Notes']||''),
         modNotes: String(row['Mod Notes']||''),
         payment: {mode:String(row['Payment Mode']||''),amount:parseFloat(row['Payment Amt']||0)||0,received:false},
@@ -8828,13 +8898,13 @@ function _startApp() {
 // connectivity returns, and shows a live status pill.
 function getPendingOrders(){
   const seen={}, out=[];
-  (STATE.orders||[]).forEach(function(o){ if(o && o.synced!==true){ out.push(o); seen[o.id]=true; }});
+  (STATE.orders||[]).forEach(function(o){ if(o && o.synced!==true && !isOrderDeleted(o.id)){ out.push(o); seen[o.id]=true; }});
   try{
     for(let i=0;i<localStorage.length;i++){
       const k=localStorage.key(i);
       if(!k || k.indexOf('gf_orders_')!==0) continue;
       let arr=[]; try{ arr=JSON.parse(localStorage.getItem(k)||'[]'); }catch(e){}
-      (arr||[]).forEach(function(o){ if(o && o.synced!==true && !seen[o.id]){ out.push(o); seen[o.id]=true; }});
+      (arr||[]).forEach(function(o){ if(o && o.synced!==true && !seen[o.id] && !isOrderDeleted(o.id)){ out.push(o); seen[o.id]=true; }});
     }
   }catch(e){}
   return out;
@@ -8870,6 +8940,7 @@ async function autoSyncPending(silent){
   if(!navigator.onLine){ if(!silent) showToast('📴 Offline — will sync when back online'); updateOnlineIndicator(); return; }
   const url=(typeof getSheetUrl==='function'?getSheetUrl():'')||'';
   if(!url){ if(!silent) showToast('⚠ Set Sheet URL in Setup first'); return; }
+  try{ await retryPendingSheetDeletes(); }catch(e){}  // v142: retry sheet deletes that failed earlier
   const pend=getPendingOrders();
   if(!pend.length){ if(!silent) showToast('✓ All orders already synced'); updateOnlineIndicator(); return; }
   _autoSyncing=true;
@@ -8977,8 +9048,41 @@ async function syncOrdersFromSheet() {
     const res = await fetch(url + '?action=getOrders&date=' + TODAY_KEY, {cache:'no-store'});
     const data = await res.json();
     if(data.orders && Array.isArray(data.orders)) {
-      const existingIds = new Set(STATE.orders.map(o=>o.id));
-      data.orders.forEach(o => { if(!existingIds.has(o.id)) STATE.orders.push(o); });
+      // v142 FIX: getOrders returns RAW sheet rows keyed by column headers
+      // ('Order ID', 'Customer', ...). v141 pushed them into STATE.orders
+      // unmapped, so cards rendered as "#undefined / undefined / \u20B90" and
+      // autoSyncPending then wrote them back to the Sheet as junk rows.
+      const existingIds = new Set(STATE.orders.map(o=>String(o.id)));
+      const map={}, seq=[];
+      data.orders.forEach(row => {
+        const oid = String(row['Order ID']||'').trim();
+        if(!oid || oid==='undefined' || existingIds.has(oid) || isOrderDeleted(oid)) return;
+        if(!map[oid]) {
+          let dt = String(row['Date']||'');
+          if(dt.indexOf('T')>0){ try{ const d=new Date(dt); if(!isNaN(d)) dt=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }catch(e){} }
+          map[oid] = { id:oid, date:(dt||TODAY_KEY).slice(0,10),
+            customerName:String(row['Customer']||''), customerCategory:String(row['Category']||''),
+            customerArea:String(row['Area']||''), customerPhone:'',
+            status:String(row['Status']||'confirmed'),
+            total:parseFloat(row['Order Total (Rs)']||row['Total (Rs)']||row['Total']||0)||0,
+            items:[], notes:String(row['Notes']||''), modNotes:String(row['Mod Notes']||''),
+            payment:{mode:String(row['Payment Mode']||''), amount:parseFloat(row['Payment Amt']||0)||0, received:!!(row['Payment Mode']&&row['Payment Mode']!=='pending')},
+            createdBy:String(row['Created By']||''), synced:true, fromSheet:true };
+          seq.push(oid);
+        }
+        const prod = String(row['Product']||'').trim();
+        if(prod && prod!=='(no items)' && !map[oid].items.some(i=>i.name===prod)) {
+          map[oid].items.push({name:prod, qty:parseFloat(row['Qty'])||0, unit:String(row['Unit']||''), rate:parseFloat(row['Rate (Rs)'])||0, amount:parseFloat(row['Amount (Rs)'])||0});
+        }
+      });
+      let added=0;
+      seq.forEach(oid => {
+        const od=map[oid];
+        const cust=STATE.customers.find(c=>c.name.toLowerCase()===od.customerName.toLowerCase());
+        if(cust) od.customerPhone=cust.phone||'';
+        STATE.orders.push(od); added++;
+      });
+      if(added) saveOrders();
       if(typeof renderOrdersList==='function') renderOrdersList();
       if(typeof renderDashboard==='function') renderDashboard();
     }
