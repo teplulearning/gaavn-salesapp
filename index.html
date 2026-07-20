@@ -260,7 +260,7 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
     <div class="top-bar-left">
       <span class="logo">🐄 GF</span>
       <span class="role-badge" id="role-badge">SALES</span>
-      <span style="font-size:9px;color:var(--muted);margin-left:4px;" id="build-stamp">v143</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:4px;" id="build-stamp">v144</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <span class="date-chip" id="today-chip"></span>
@@ -445,6 +445,7 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
   <div class="screen" id="screen-dues">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
       <div class="page-title">Payment Dues</div>
+      <button onclick="showMorningReminders(true)" style="background:var(--amber);color:#fff;border:none;border-radius:8px;padding:7px 10px;font-size:12px;font-weight:700;cursor:pointer;margin-right:6px;">⏰ Reminders</button>
       <button onclick="downloadDuesExcel()" style="background:#1D6F42;color:#fff;border:none;border-radius:8px;padding:7px 10px;font-size:12px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif;margin-right:6px;">📊 Excel</button><button onclick="downloadDuesPDF()" style="background:var(--blue);color:#fff;border:none;border-radius:8px;padding:7px 10px;font-size:12px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif;">📄 PDF</button>
     </div>
     <div class="page-sub">FIFO credit tracking · alerts · stop orders</div>
@@ -1792,8 +1793,12 @@ function getCreditStatus(order) {
 // ── FIFO PAYMENT ALLOCATION ───────────────────────────────────────────
 function allocatePaymentFIFO(custId, amountReceived) {
   // Get all unpaid/partial orders for this customer, oldest first (FIFO)
+  // v144: also match by customer name — sheet-synced orders carry no customerId,
+  // so payments never settled them and stale dues kept generating reminders
+  const _pc = STATE.customers.find(c=>c.id===custId);
+  const _pcn = _pc ? String(_pc.name||'').trim().toLowerCase() : '';
   const unpaidOrders = STATE.orders
-    .filter(o => o.customerId===custId && (o.status==='due'||o.status==='partial'||o.status==='confirmed'||o.status==='delivered'))
+    .filter(o => (o.customerId===custId || (_pcn && String(o.customerName||'').trim().toLowerCase()===_pcn)) && (o.status==='due'||o.status==='partial'||o.status==='confirmed'||o.status==='delivered'))
     .filter(o => (o.total||0) > (o.payment?.amount||0))
     .sort((a,b) => a.date.localeCompare(b.date)); // oldest first = FIFO
 
@@ -4690,25 +4695,38 @@ const LS_MREM_SHOWN='gf_mrem_shown_'+TODAY_KEY;
 const LS_MREM_DISMISS='gf_mrem_dismiss_'+TODAY_KEY;
 function _mremDismissed(){ try{ return JSON.parse(localStorage.getItem(LS_MREM_DISMISS)||'[]'); }catch(e){ return []; } }
 function buildMorningReminders(){
-  // Customers with unpaid orders whose credit due-date falls today..+2 days
-  const out=[], dism=new Set(_mremDismissed());
+  // Customers with unpaid orders whose credit due-date falls today..+2 days.
+  // v144: single indexing pass over orders (was O(customers × orders) — janky on phones)
+  const dism=new Set(_mremDismissed());
+  const byName={}, byId={};
+  (STATE.orders||[]).forEach(function(o){
+    if(!(o.status==='due'||o.status==='partial'||o.status==='confirmed'||o.status==='delivered')) return;
+    const outAmt=(o.total||0)-((o.payment&&o.payment.amount)||0);
+    if(outAmt<=0) return;
+    const nm=String(o.customerName||'').trim().toLowerCase();
+    if(nm){ (byName[nm]=byName[nm]||[]).push(o); }
+    if(o.customerId){ (byId[o.customerId]=byId[o.customerId]||[]).push(o); }
+  });
+  const out=[];
   (STATE.customers||[]).forEach(function(c){
     if(dism.has(c.id)) return;
     const cn=String(c.name||'').trim().toLowerCase();
+    const seen=new Set(), ors=[];
+    (byName[cn]||[]).concat(byId[c.id]||[]).forEach(function(o){
+      const k=o.id||(o.date+'|'+o.total);
+      if(seen.has(k)) return; seen.add(k); ors.push(o);
+    });
+    if(!ors.length) return;
     let total=0, count=0, nearest=999, dueDateStr='';
-    (STATE.orders||[]).forEach(function(o){
-      if(!(o.status==='due'||o.status==='partial'||o.status==='confirmed'||o.status==='delivered')) return;
-      if(!(o.customerId===c.id || String(o.customerName||'').trim().toLowerCase()===cn)) return;
-      const outAmt=(o.total||0)-((o.payment&&o.payment.amount)||0);
-      if(outAmt<=0) return;
+    ors.forEach(function(o){
       const cs=getCreditStatus(o);
       if(cs.status==='cash') return;
       const daysToDue=(cs.creditDays||0)-cs.daysElapsed;   // 0 = due today
       if(daysToDue<0||daysToDue>2) return;                 // only next-2-days window
-      total+=outAmt; count++;
+      total+=(o.total||0)-((o.payment&&o.payment.amount)||0); count++;
       if(daysToDue<nearest){ nearest=daysToDue; dueDateStr=cs.dueDate; }
     });
-    if(count>0 && (c.phone||'').trim()) out.push({cust:c,total:total,count:count,daysToDue:nearest,dueDate:dueDateStr});
+    if(count>0) out.push({cust:c,total:total,count:count,daysToDue:nearest,dueDate:dueDateStr});
   });
   return out.sort(function(a,b){ return a.daysToDue-b.daysToDue || b.total-a.total; });
 }
@@ -4734,13 +4752,18 @@ function renderMorningRemindList(){
   }).join('');
   return list.length;
 }
+let _mremRetried=false;
 function showMorningReminders(force){
   if(!force){
     if(STATE.role!=='sales' && STATE.role!=='owner') return;
     if(localStorage.getItem(LS_MREM_SHOWN)) return;      // once per day
   }
   const n=renderMorningRemindList();
-  if(!force && n===0) { localStorage.setItem(LS_MREM_SHOWN,'1'); return; }
+  if(!force && n===0){
+    // v144: sheet sync may not have landed yet — try once more before skipping today
+    if(!_mremRetried){ _mremRetried=true; setTimeout(function(){ showMorningReminders(false); }, 9000); return; }
+    localStorage.setItem(LS_MREM_SHOWN,'1'); return;
+  }
   document.getElementById('modal-morning-remind').classList.add('open');
   localStorage.setItem(LS_MREM_SHOWN,'1');
 }
