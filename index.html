@@ -260,7 +260,7 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
     <div class="top-bar-left">
       <span class="logo">🐄 GF</span>
       <span class="role-badge" id="role-badge">SALES</span>
-      <span style="font-size:9px;color:var(--muted);margin-left:4px;" id="build-stamp">v147</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:4px;" id="build-stamp">v148</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <span class="date-chip" id="today-chip"></span>
@@ -5188,6 +5188,13 @@ function saveUrl() {
   if(keyEl) localStorage.setItem('gf_api_key', keyEl.value.trim());
   updateSheetDot();
   showToast(url?'✓ URL saved — Share link ready below':'URL cleared');
+  // v148 FIX: first-run flow — pull customers & today's orders immediately after
+  // the URL is saved (previously the sync only ran at app load, so a fresh device
+  // that saved the URL later showed 0 clients until the next reload)
+  if(url){
+    setTimeout(function(){ try{ syncCustomersFromSheet(); }catch(e){} }, 400);
+    setTimeout(function(){ try{ syncOrdersFromSheet(); }catch(e){} }, 1500);
+  }
   // Restart poll if delivery
   if(url && STATE.role==='delivery') { stopDeliveryPoll(); startDeliveryPoll(); }
   // Re-render setup so share link section appears immediately
