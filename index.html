@@ -260,7 +260,7 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
     <div class="top-bar-left">
       <span class="logo">🐄 GF</span>
       <span class="role-badge" id="role-badge">SALES</span>
-      <span style="font-size:9px;color:var(--muted);margin-left:4px;" id="build-stamp">v144</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:4px;" id="build-stamp">v147</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <span class="date-chip" id="today-chip"></span>
@@ -499,6 +499,7 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
     <div class="setup-card">
       <div class="section-label" style="margin-top:0;">Step 2 — Paste your Web App URL</div>
       <input class="config-input" type="url" id="gs_url" placeholder="https://script.google.com/macros/s/YOUR_SCRIPT_ID/exec">
+      <input class="config-input" type="text" id="gs_key" placeholder="Access code (from owner — leave blank if not set)" style="margin-top:8px;" autocomplete="off">
       <div class="btn-row" style="margin-top:10px;">
         <button class="btn btn-secondary" onclick="saveUrl()">💾 Save URL</button>
         <button class="btn btn-success" onclick="testConnection()">🔌 Test Connection</button>
@@ -1256,10 +1257,11 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
 <script>
 // ── PRODUCT CATALOGUE ───────────────────────────────────────────────
 const PRODUCTS = [
-  {id:'paneer', name:'Paneer',        unit:'kg',   stdRate:260, emoji:'🧀', hsn:'0406', gstRate:0},
-  {id:'pl',     name:'Paneer Laadi',  unit:'ladi', stdRate:260, emoji:'🧱', isLaadi:true, rateFromPaneer:true, hsn:'0406', gstRate:0},
+  {id:'paneer', name:'Med Fat Paneer',      unit:'kg',   stdRate:260, emoji:'🧀', hsn:'0406', gstRate:0},
+  {id:'pl',     name:'Med Fat Paneer Ladi', unit:'ladi', stdRate:260, emoji:'🧱', isLaadi:true, rateFromPaneer:true, rateFrom:'paneer', hsn:'0406', gstRate:0},
   {id:'mp',     name:'Malai Paneer',  unit:'kg',   stdRate:280, emoji:'🧀', altUnit:'pack', altRate:70, hsn:'0406', gstRate:0},
-  {id:'lp',     name:'Lite Paneer',   unit:'kg',   stdRate:240, emoji:'🥗', hsn:'0406', gstRate:0},
+  {id:'lp',     name:'Low Fat Paneer',      unit:'kg',   stdRate:240, emoji:'🥗', hsn:'0406', gstRate:0},
+  {id:'lpl',    name:'Low Fat Paneer Ladi', unit:'ladi', stdRate:240, emoji:'🧱', isLaadi:true, rateFromPaneer:true, rateFrom:'lp', hsn:'0406', gstRate:0},
   {id:'lc',     name:'Lite Curd',     unit:'jar',  stdRate:270, emoji:'🥛', altUnit:'kg', altRate:60, jarToKg:1, hsn:'0406', gstRate:0},
   {id:'ghee',   name:'Ghee',          unit:'unit', stdRate:650, emoji:'🫙', hsn:'0405', gstRate:12},
   {id:'cream',  name:'Cream',         unit:'unit', stdRate:300, emoji:'🍦', hsn:'0401', gstRate:0},
@@ -1276,398 +1278,11 @@ const PRODUCTS = [
 
 // ── CUSTOMERS MASTER LIST ───────────────────────────────────────────
 const CUSTOMERS_MASTER = [
-  {id:"rc1",name:"AABA LOLE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{ghee:590.0},balance:0},
-  {id:"rc2",name:"AADITI BHISE PLANT SALE",category:"HORECA",phone:'',area:'',pricing:{lc:100.0},balance:0},
-  {id:"rc3",name:"AANAND BHISE PLANT SALE",category:"Distributor -Retail",phone:'',area:'',pricing:{paneer:280.0, lc:100.0, ghee:700.0},balance:0},
-  {id:"rc4",name:"AANAND KADAM",category:"Retail",phone:'',area:'',pricing:{ch:50.0},balance:0},
-  {id:"rc5",name:"AARAMBH HOTEL JEJURI",category:"HORECA",phone:'',area:'',pricing:{ch:22.0, sl:23.0},balance:0},
-  {id:"rc6",name:"AASHA PLANT SALE",category:"Retail",phone:'',area:'',pricing:{ghee:700.0},balance:0},
-  {id:"rc7",name:"AATITHI HOTEL KOTHURD",category:"HORECA",phone:'',area:'',pricing:{mixl:23.0},balance:0},
-  {id:"rc8",name:"Aatithi pure Veg,  Kothrud",category:"HORECA",phone:'',area:'',pricing:{ch:23.0, mixl:23.0},balance:0},
-  {id:"rc9",name:"ADINATH SUPER MARKET VEER",category:"Retail",phone:'',area:'',pricing:{mixl:23.0},balance:0},
-  {id:"rc10",name:"ADITYA BHISE PLANT SALE",category:"HORECA",phone:'',area:'',pricing:{lc:100.0},balance:0},
-  {id:"rc11",name:"ADITYA HOTEL KIKVI",category:"HORECA",phone:'',area:'',pricing:{paneer:250.0, lc:60.0, stk:240.0, sl:23.0},balance:0},
-  {id:"rc12",name:"ADITYA MILK PARLOR KAPURHOLE",category:"Distributor -HORECA",phone:'9322580712',area:'',pricing:{paneer:230.0, lc:100.0, ghee:590.0, stk:240.0, ch:35.0},balance:1732},
-  {id:"rc13",name:"AKSHAY BHISE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{ghee:600.0, cmk:240.0, sl:30.0},balance:0},
-  {id:"rc14",name:"Akshay Kanchan Urali Kanchan",category:"HORECA",phone:'',area:'',pricing:{paneer:70.0, ch:20.0, sl:20.0},balance:0},
-  {id:"rc15",name:"AKSHAY MISAL BHIWADI",category:"HORECA",phone:'',area:'',pricing:{lc:60.0},balance:0},
-  {id:"rc16",name:"AKSHAY MISAL JEJURI",category:"HORECA",phone:'',area:'',pricing:{paneer:70.0, ch:40.0, ml:23.0, mixl:23.0},balance:0},
-  {id:"rc17",name:"AKSHAY REVLEKAR DHOTRE",category:"Retail",phone:'',area:'',pricing:{cmk:230.0},balance:0},
-  {id:"rc18",name:"AKSHAY VALGUDE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{ghee:590.0},balance:0},
-  {id:"rc19",name:"Ambica Mini Market, jejuri",category:"Retail",phone:'9975744031',area:'',pricing:{paneer:250.0},balance:4725},
-  {id:"rc20",name:"AMOL JADHAV SHIRVEL",category:"HORECA",phone:'',area:'',pricing:{paneer:260.0, lc:60.0, cmk:230.0, ch:35.0, sl:17.0, ml:23.0, mixl:17.0},balance:0},
-  {id:"rc21",name:"AMOL PATIL PLANT SALE",category:"Retail",phone:'',area:'',pricing:{ghee:700.0},balance:0},
-  {id:"rc22",name:"AMOLE BHISE PLANT SALE",category:"HORECA",phone:'',area:'',pricing:{paneer:280.0, cmk:280.0},balance:0},
-  {id:"rc23",name:"AMOZONE",category:"HORECA",phone:'',area:'',pricing:{paneer:70.0},balance:0},
-  {id:"rc24",name:"ANIKET LOLE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{paneer:90.0},balance:0},
-  {id:"rc25",name:"ANIKET PLANT SALE",category:"HORECA",phone:'',area:'',pricing:{lc:100.0, sl:90.0},balance:0},
-  {id:"rc26",name:"ANKITA PATHARE PLANT SALE",category:"HORECA",phone:'',area:'',pricing:{paneer:280.0},balance:0},
-  {id:"rc27",name:"ANKUSH BHISE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{sl:30.0},balance:0},
-  {id:"rc28",name:"Anvi tea stall,  Bhugaon",category:"HORECA",phone:'',area:'',pricing:{ch:23.0, sl:23.0, ml:23.0},balance:0},
-  {id:"rc29",name:"APNA BAZAR SASWAD",category:"Retail",phone:'',area:'',pricing:{paneer:70.0, ch:22.0},balance:0},
-  {id:"rc30",name:"APPA PLANT SALE",category:"Retail",phone:'',area:'',pricing:{paneer:280.0, lc:100.0, ghee:700.0, sl:30.0},balance:0},
-  {id:"rc31",name:"ARAMBH HOTEL JEJURI",category:"Retail",phone:'',area:'',pricing:{ch:22.0},balance:0},
-  {id:"rc32",name:"ARAVH BHISE PLANT SALE",category:"HORECA",phone:'',area:'',pricing:{ml:30.0},balance:0},
-  {id:"rc33",name:"ARCHANA BHISE",category:"Retail",phone:'',area:'',pricing:{ghee:700.0},balance:0},
-  {id:"rc34",name:"ARCHNA LOLE PLANT SALE",category:"HORECA",phone:'',area:'',pricing:{ghee:600.0},balance:0},
-  {id:"rc35",name:"Arjun Badade",category:"Retail",phone:'',area:'',pricing:{ghee:600.0, cmk:240.0},balance:0},
-  {id:"rc36",name:"ARUN BHISE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{ghee:700.0},balance:0},
-  {id:"rc37",name:"ARVIND BHISE SUPE",category:"Distributor -Retail",phone:'',area:'',pricing:{paneer:260.0, cmk:230.0, mixl:23.0},balance:0},
-  {id:"rc38",name:"ARYAN PLANT SALE",category:"Retail",phone:'',area:'',pricing:{lc:100.0},balance:0},
-  {id:"rc39",name:"ASHA BHISE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{paneer:280.0, sl:23.0},balance:0},
-  {id:"rc40",name:"ASHIRVAD HOTEL MOLVI",category:"HORECA",phone:'',area:'',pricing:{paneer:260.0},balance:0},
-  {id:"rc41",name:"ASHIRWAD HOTEL KIKVI",category:"HORECA",phone:'7875505255',area:'',pricing:{paneer:260.0, lc:60.0, ghee:590.0, stk:240.0, ml:23.0, mixl:22.0},balance:2676},
-  {id:"rc42",name:"ASHOK JATIYA LOLE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{paneer:280.0, ghee:700.0},balance:0},
-  {id:"rc43",name:"ASHOKA HOTEL JEJURI",category:"HORECA",phone:'',area:'',pricing:{paneer:260.0, lc:300.0, ghee:600.0, ch:22.0, sl:23.0},balance:0},
-  {id:"rc44",name:"Asian pharmacy,  Bhugaon",category:"Retail",phone:'',area:'',pricing:{ch:23.0},balance:0},
-  {id:"rc45",name:"ASMITA PLANT SALE",category:"Retail",phone:'',area:'',pricing:{paneer:280.0, ghee:700.0, sl:30.0},balance:0},
-  {id:"rc46",name:"ASMITA WADE WALA",category:"HORECA",phone:'',area:'',pricing:{paneer:250.0, lc:65.0, ghee:590.0, ch:22.0, sl:23.0, mixl:23.0},balance:0},
-  {id:"rc47",name:"ASWAD MISAL BHIWADI NARYANPUR ROAD",category:"HORECA",phone:'',area:'',pricing:{paneer:260.0, lc:270.0, ghee:590.0, cmk:240.0, stk:240.0, ch:40.0, sl:17.0, mixl:23.0},balance:0},
-  {id:"rc48",name:"AVINASH LOLE",category:"Retail",phone:'',area:'',pricing:{sl:30.0},balance:0},
-  {id:"rc49",name:"BAADE",category:"HORECA",phone:'',area:'',pricing:{ghee:590.0},balance:0},
-  {id:"rc50",name:"Babalu Sir MMF",category:"Distributor -HORECA",phone:'',area:'',pricing:{ghee:750.0},balance:0},
-  {id:"rc51",name:"BABBAN LOLE PL,ANT SALE",category:"HORECA",phone:'',area:'',pricing:{paneer:280.0},balance:0},
-  {id:"rc52",name:"BABLI PLANT SALE",category:"HORECA",phone:'',area:'',pricing:{paneer:280.0, sl:30.0, ml:30.0},balance:0},
-  {id:"rc53",name:"BABLU SIR PUNE",category:"Retail",phone:'',area:'',pricing:{ghee:590.0},balance:0},
-  {id:"rc54",name:"BABU",category:"Retail",phone:'',area:'',pricing:{ch:50.0},balance:0},
-  {id:"rc55",name:"Babu Jainak Bhivadi",category:"Retail",phone:'',area:'',pricing:{ch:23.0},balance:0},
-  {id:"rc56",name:"BADHAI SWEET",category:"Retail",phone:'',area:'',pricing:{paneer:70.0, cmk:240.0, stk:230.0, ml:23.0, mixl:23.0},balance:0},
-  {id:"rc57",name:"BADU TATIYA PLANT SALE",category:"Retail",phone:'',area:'',pricing:{lc:100.0},balance:0},
-  {id:"rc58",name:"BAGI",category:"Retail",phone:'',area:'',pricing:{lc:60.0, ch:50.0, sl:30.0, ml:30.0},balance:0},
-  {id:"rc59",name:"BAJRANG LOLE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{cmk:280.0},balance:0},
-  {id:"rc60",name:"BALAJI KINARA STORE YEOLEWADI",category:"Retail",phone:'',area:'',pricing:{ch:22.0},balance:0},
-  {id:"rc61",name:"BALMIKI PLANT SALE",category:"Retail",phone:'',area:'',pricing:{lc:100.0},balance:0},
-  {id:"rc62",name:"BASABAI",category:"Retail",phone:'',area:'',pricing:{paneer:280.0},balance:0},
-  {id:"rc63",name:"BHAGESRI",category:"Retail",phone:'',area:'',pricing:{paneer:230.0},balance:0},
-  {id:"rc64",name:"BHAIRAV HOTEL BOPDEV",category:"HORECA",phone:'',area:'',pricing:{lc:60.0},balance:0},
-  {id:"rc65",name:"BHAIRVNATH HOTEL BHIWADI",category:"HORECA",phone:'',area:'',pricing:{paneer:260.0, lc:67.0, stk:240.0},balance:0},
-  {id:"rc66",name:"BHAIYA LOLE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{paneer:280.0, ghee:700.0},balance:0},
-  {id:"rc67",name:"BHANDARI SAMSUNG JEJURI",category:"Retail",phone:'',area:'',pricing:{paneer:240.0, ghee:600.0, stk:230.0, ch:22.0, ml:30.0, mixl:23.0},balance:0},
-  {id:"rc68",name:"Bhavani Super market, Bhugaon",category:"Retail",phone:'',area:'',pricing:{ch:23.0},balance:0},
-  {id:"rc69",name:"BHOMIKA PLANT SALE",category:"Retail",phone:'',area:'',pricing:{ml:30.0},balance:0},
-  {id:"rc70",name:"BIKANER SWEET  BHUGAON",category:"Retail",phone:'',area:'',pricing:{ch:22.0},balance:0},
-  {id:"rc71",name:"CHAMUNDA SWEETS JEJURI",category:"Retail",phone:'9657100927',area:'',pricing:{paneer:250.0, ghee:590.0, ch:40.0, sl:23.0, ml:23.0, mixl:23.0},balance:7213},
-  {id:"rc72",name:"CHANDRKANT JI",category:"Retail",phone:'',area:'',pricing:{paneer:70.0, ch:22.0, mixl:23.0},balance:0},
-  {id:"rc73",name:"CHETAN KONDE KELAWADE",category:"HORECA",phone:'7758030300',area:'',pricing:{paneer:240.0, lc:60.0, ghee:590.0, stk:250.0, ch:40.0, sl:23.0, ml:22.0, mixl:22.0},balance:4140},
-  {id:"rc74",name:"DADA BORKER",category:"Retail",phone:'',area:'',pricing:{paneer:260.0},balance:0},
-  {id:"rc75",name:"DADA LOLE",category:"Retail",phone:'',area:'',pricing:{ch:40.0},balance:0},
-  {id:"rc76",name:"DADA THOPE PLANT SALE",category:"HORECA",phone:'',area:'',pricing:{ghee:700.0, stk:700.0},balance:0},
-  {id:"rc77",name:"datt tea stall, Jejuri",category:"Retail",phone:'',area:'',pricing:{ghee:350.0},balance:0},
-  {id:"rc78",name:"DATTA  LOLE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{ghee:700.0},balance:0},
-  {id:"rc79",name:"DATTA CORNER NARYANPUR",category:"HORECA",phone:'7057938903',area:'',pricing:{paneer:260.0, lc:300.0, stk:240.0, ch:40.0},balance:3770},
-  {id:"rc80",name:"DATTA FARSAN",category:"HORECA",phone:'',area:'',pricing:{paneer:260.0, lc:60.0, ghee:700.0, cmk:250.0, stk:240.0, ch:22.0, sl:23.0, ml:23.0, mixl:23.0},balance:0},
-  {id:"rc81",name:"DATTA KADAM PLANT SALE",category:"Retail",phone:'',area:'',pricing:{ghee:700.0},balance:0},
-  {id:"rc82",name:"DATTA KAPRE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{paneer:280.0, ch:50.0},balance:0},
-  {id:"rc83",name:"DATTATRE LOLE",category:"Retail",phone:'',area:'',pricing:{ch:50.0, ml:23.0},balance:0},
-  {id:"rc84",name:"Dava point Bhugaon",category:"Retail",phone:'',area:'',pricing:{ch:23.0},balance:0},
-  {id:"rc85",name:"DEEPAK BHISE",category:"Retail",phone:'',area:'',pricing:{ch:50.0, sl:30.0},balance:0},
-  {id:"rc86",name:"DEEPAK LOLE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{ghee:700.0, ch:30.0, sl:30.0},balance:0},
-  {id:"rc87",name:"DELHI DARBAR HOTEL",category:"HORECA",phone:'',area:'',pricing:{paneer:260.0, lc:60.0, ghee:590.0, ch:35.0, sl:23.0},balance:0},
-  {id:"rc88",name:"DEVA LOLE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{paneer:250.0},balance:0},
-  {id:"rc89",name:"DHANGARWADA",category:"Retail",phone:'',area:'',pricing:{paneer:250.0},balance:0},
-  {id:"rc90",name:"DHANJAY LOLE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{lc:100.0},balance:0},
-  {id:"rc91",name:"DHANSHREE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{ghee:600.0},balance:0},
-  {id:"rc92",name:"Dhumal gas agency",category:"Retail",phone:'',area:'',pricing:{ghee:720.0},balance:0},
-  {id:"rc93",name:"Digambar",category:"Retail",phone:'',area:'',pricing:{lc:270.0},balance:0},
-  {id:"rc94",name:"DILIP LOLE",category:"Retail",phone:'',area:'',pricing:{ghee:700.0, sl:30.0},balance:0},
-  {id:"rc95",name:"DILIP LOLE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{ghee:700.0},balance:0},
-  {id:"rc96",name:"DIWAL",category:"Retail",phone:'',area:'',pricing:{sl:30.0},balance:0},
-  {id:"rc97",name:"Dorabjees Camp",category:"Retail",phone:'',area:'',pricing:{paneer:105.0},balance:0},
-  {id:"rc98",name:"DORABJEES CAMP PUNE",category:"Retail",phone:'',area:'',pricing:{paneer:70.0},balance:0},
-  {id:"rc99",name:"DORABJEES KOREGAON PARK",category:"Retail",phone:'',area:'',pricing:{paneer:70.0},balance:0},
-  {id:"rc100",name:"DORABJEES MARRIOTT PUNE",category:"Retail",phone:'',area:'',pricing:{paneer:70.0},balance:0},
-  {id:"rc101",name:"Dorabjees Marriott SB Road",category:"Retail",phone:'9607996810',area:'',pricing:{paneer:105.0},balance:3416},
-  {id:"rc102",name:"DORABJEES NIIBM KONDWA",category:"Retail",phone:'',area:'',pricing:{paneer:70.0, ghee:590.0},balance:0},
-  {id:"rc103",name:"DORABJEES PAVILLON",category:"Retail",phone:'',area:'',pricing:{paneer:68.0},balance:0},
-  {id:"rc104",name:"DORABJEES SB ROAD",category:"Retail",phone:'',area:'',pricing:{paneer:70.0},balance:0},
-  {id:"rc105",name:"Dorabjees Viman Nagar",category:"Retail",phone:'',area:'',pricing:{paneer:105.0},balance:0},
-  {id:"rc106",name:"DURGA LUNCH HOME",category:"HORECA",phone:'9822429256',area:'',pricing:{paneer:260.0, ch:40.0, mixl:23.0},balance:832},
-  {id:"rc107",name:"EFFOTEL SAROLA",category:"HORECA",phone:'',area:'',pricing:{paneer:70.0, lc:60.0, ghee:590.0},balance:0},
-  {id:"rc108",name:"FOOD JUNCTION",category:"Retail",phone:'',area:'',pricing:{paneer:70.0},balance:0},
-  {id:"rc109",name:"FREEZEWAY FOODS LLP KHADIMACHINE",category:"HORECA",phone:'',area:'',pricing:{lc:60.0, ghee:590.0},balance:0},
-  {id:"rc110",name:"GANESH KAMTHE",category:"Retail",phone:'',area:'',pricing:{paneer:280.0, ghee:600.0, cmk:300.0, ch:40.0},balance:0},
-  {id:"rc111",name:"GANESH KAMTHE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{paneer:280.0, ghee:700.0, sl:30.0},balance:0},
-  {id:"rc112",name:"GANESH SIR HADPSAR",category:"Retail",phone:'',area:'',pricing:{paneer:250.0},balance:0},
-  {id:"rc113",name:"GANESH VELDHARE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{ghee:700.0},balance:0},
-  {id:"rc114",name:"GANGU BAI",category:"Retail",phone:'',area:'',pricing:{ghee:700.0},balance:0},
-  {id:"rc115",name:"GANJRAJ RESTORENT YEOLEWADI",category:"HORECA",phone:'',area:'',pricing:{ch:22.0},balance:0},
-  {id:"rc116",name:"GARVA HOTEL MAYUR",category:"HORECA",phone:'',area:'',pricing:{lc:60.0},balance:0},
-  {id:"rc117",name:"GAVKIN BAI",category:"Retail",phone:'',area:'',pricing:{lc:100.0, sl:30.0},balance:0},
-  {id:"rc118",name:"GOKUL BHISE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{paneer:280.0},balance:0},
-  {id:"rc119",name:"GOPI PROVIJANAL STORE YEOLEWADI",category:"Retail",phone:'',area:'',pricing:{lc:100.0, ch:40.0, mixl:23.0},balance:0},
-  {id:"rc120",name:"GOVIND SWEET",category:"Retail",phone:'',area:'',pricing:{paneer:260.0, ghee:590.0, cmk:230.0, ch:40.0, ml:23.0},balance:0},
-  {id:"rc121",name:"GRAMSEVAK BAHU SAHAB PLANT SALE",category:"Retail",phone:'',area:'',pricing:{paneer:70.0},balance:0},
-  {id:"rc122",name:"GRAND MALHAR SASWAD",category:"HORECA",phone:'',area:'',pricing:{lc:60.0},balance:0},
-  {id:"rc123",name:"GULAB BHISE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{paneer:260.0, lc:100.0, ml:30.0},balance:0},
-  {id:"rc124",name:"GURVA BHISE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{ml:30.0},balance:0},
-  {id:"rc125",name:"HADPSAR DISTRIBUTER",category:"HORECA",phone:'',area:'',pricing:{paneer:70.0, ml:23.0},balance:0},
-  {id:"rc126",name:"HARI OM MEDICAL YEOLEWADI",category:"Retail",phone:'',area:'',pricing:{ch:40.0},balance:0},
-  {id:"rc127",name:"HARIBHAU LOLE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{paneer:70.0, lc:100.0, ghee:600.0, ch:22.0, sl:22.0, mixl:22.0},balance:0},
-  {id:"rc128",name:"HARSH KAIFE SINHGAD COLLEGE YEOLEWADI",category:"Retail",phone:'',area:'',pricing:{paneer:250.0, ch:22.0, mixl:23.0},balance:0},
-  {id:"rc129",name:"HOTEL AVINASH JEJURI",category:"HORECA",phone:'',area:'',pricing:{paneer:250.0, ch:23.0, sl:23.0, ml:23.0, mixl:23.0},balance:0},
-  {id:"rc130",name:"Hotel Delhi Darbar , shirval",category:"HORECA",phone:'9011786725',area:'',pricing:{lc:60.0},balance:1112},
-  {id:"rc131",name:"HOTEL GARVA SASWAD",category:"HORECA",phone:'',area:'',pricing:{paneer:80.0, lc:60.0, ghee:700.0, cmk:230.0, ch:30.0, sl:23.0},balance:0},
-  {id:"rc132",name:"HOTEL HARSHRAJ (KIKVI)",category:"HORECA",phone:'7875505255',area:'',pricing:{paneer:240.0, lc:60.0, stk:240.0},balance:1728},
-  {id:"rc133",name:"HOTEL JAGDAMBA SASWAD",category:"HORECA",phone:'',area:'',pricing:{paneer:260.0, lc:60.0, ghee:590.0, sl:23.0, mixl:23.0},balance:0},
-  {id:"rc134",name:"HOTEL KURSHNA KIKVI",category:"HORECA",phone:'8888868788',area:'',pricing:{paneer:250.0, lc:60.0, ghee:590.0, cmk:230.0, stk:240.0, ch:35.0, sl:23.0},balance:4545},
-  {id:"rc135",name:"Hotel Maharaja Jejuri",category:"HORECA",phone:'',area:'',pricing:{paneer:260.0},balance:0},
-  {id:"rc136",name:"HOTEL MANKAR DOSA",category:"HORECA",phone:'',area:'',pricing:{paneer:250.0, lc:60.0, ghee:590.0, cmk:230.0, stk:230.0, ch:40.0, mixl:22.0},balance:0},
-  {id:"rc137",name:"HOTEL NISARG SHINDEWADI",category:"HORECA",phone:'9970726647',area:'',pricing:{paneer:260.0, lc:270.0, ghee:620.0, stk:240.0, ch:40.0, sl:23.0, ml:23.0, mixl:22.0},balance:2624},
-  {id:"rc138",name:"Hotel Ramkrishna, Khedshivapur",category:"HORECA",phone:'9689238006',area:'',pricing:{paneer:260.0, lc:270.0, ghee:590.0, cmk:230.0, stk:250.0, ch:40.0, sl:23.0, ml:22.0, mixl:23.0},balance:31070},
-  {id:"rc139",name:"HOTEL SADGURU KIKVI",category:"HORECA",phone:'',area:'',pricing:{paneer:260.0, lc:270.0, ghee:590.0, stk:240.0, ch:35.0, sl:17.0, ml:17.0, mixl:23.0},balance:0},
-  {id:"rc140",name:"HOTEL SADGURU SAROLA",category:"HORECA",phone:'',area:'',pricing:{paneer:260.0, lc:60.0, stk:240.0, mixl:23.0},balance:0},
-  {id:"rc141",name:"HOTEL TAHITI BOPDEV GHAT",category:"HORECA",phone:'7074492647',area:'',pricing:{paneer:260.0, lc:300.0, ghee:720.0, cmk:230.0, stk:240.0, ch:40.0, sl:30.0, ml:30.0},balance:9850},
-  {id:"rc142",name:"Hotel Trupati pure Veg",category:"HORECA",phone:'',area:'',pricing:{paneer:260.0, lc:270.0, ch:40.0},balance:0},
-  {id:"rc143",name:"HOTEL VEDANT (KIKVI)",category:"HORECA",phone:'',area:'',pricing:{paneer:250.0},balance:0},
-  {id:"rc144",name:"HOTEL VITTHAL",category:"HORECA",phone:'',area:'',pricing:{lc:55.0},balance:0},
-  {id:"rc145",name:"HUNMANT LOLE",category:"Retail",phone:'',area:'',pricing:{ch:40.0},balance:0},
-  {id:"rc146",name:"HUNMANT LOLE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{ghee:700.0},balance:0},
-  {id:"rc147",name:"INAMKE SIR PLANT SALE",category:"Retail",phone:'',area:'',pricing:{paneer:280.0, ch:60.0},balance:0},
-  {id:"rc148",name:"INGALE DAIRY VEER",category:"Distributor -Retail",phone:'9922567770',area:'',pricing:{paneer:240.0, lc:60.0, ghee:620.0, cmk:230.0, stk:240.0, ch:23.0, sl:23.0, ml:22.0},balance:0},
-  {id:"rc149",name:"JABHLE MADAM PLANT SALE",category:"Retail",phone:'',area:'',pricing:{ghee:700.0},balance:0},
-  {id:"rc150",name:"JADHAV BHELWALE",category:"Retail",phone:'',area:'',pricing:{ch:40.0, ml:23.0, mixl:23.0},balance:0},
-  {id:"rc151",name:"Jadhav juice center, jejuri",category:"Retail",phone:'',area:'',pricing:{ch:23.0, sl:23.0},balance:0},
-  {id:"rc152",name:"JADHAV PLANT SALE",category:"Retail",phone:'',area:'',pricing:{paneer:280.0},balance:0},
-  {id:"rc153",name:"JAGDAMBA HOTEL KHEDSHIVAPUR",category:"HORECA",phone:'',area:'',pricing:{paneer:220.0},balance:0},
-  {id:"rc154",name:"JAGESHWARI ICECREAM VEER",category:"Retail",phone:'',area:'',pricing:{ch:22.0, sl:23.0, mixl:23.0},balance:0},
-  {id:"rc155",name:"Jagtap supe kulfi",category:"HORECA",phone:'',area:'',pricing:{cmk:250.0},balance:0},
-  {id:"rc156",name:"Jalinder Konde Varve",category:"Distributor -Retail",phone:'',area:'',pricing:{paneer:240.0},balance:0},
-  {id:"rc157",name:"JAMBHALE MADAM PLANT SALE",category:"Retail",phone:'',area:'',pricing:{paneer:280.0, lc:100.0, ghee:700.0},balance:0},
-  {id:"rc158",name:"JANKI MADAM",category:"Retail",phone:'',area:'',pricing:{ch:50.0},balance:0},
-  {id:"rc159",name:"JASLOK SWEET NANDED PHATA",category:"Retail",phone:'',area:'',pricing:{ch:22.0, ml:23.0},balance:0},
-  {id:"rc160",name:"JATIBA PLANT SALE",category:"Retail",phone:'',area:'',pricing:{ghee:700.0, sl:30.0},balance:0},
-  {id:"rc161",name:"JAY BHAWANI BIRYANI KHEDESHIVPUR",category:"HORECA",phone:'',area:'',pricing:{paneer:260.0, ghee:590.0, sl:23.0},balance:0},
-  {id:"rc162",name:"JAY SHANKAR HOTEL JEJURI",category:"HORECA",phone:'',area:'',pricing:{ch:23.0, sl:23.0, ml:23.0},balance:0},
-  {id:"rc163",name:"JEEVAN BHISE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{lc:100.0, ghee:700.0},balance:0},
-  {id:"rc164",name:"KALE SIR PLANT SALE",category:"Retail",phone:'',area:'',pricing:{paneer:280.0, ghee:700.0},balance:0},
-  {id:"rc165",name:"KAMESH PLANT SALE",category:"Retail",phone:'',area:'',pricing:{lc:100.0, ghee:700.0},balance:0},
-  {id:"rc166",name:"KAMLAKAR HADPSAR",category:"Distributor -Retail",phone:'',area:'',pricing:{paneer:70.0, ch:40.0, sl:30.0},balance:0},
-  {id:"rc167",name:"KAMSHE SIR",category:"Retail",phone:'',area:'',pricing:{paneer:280.0},balance:0},
-  {id:"rc168",name:"KAMTHE SIR PLANT SALE",category:"Retail",phone:'',area:'',pricing:{paneer:280.0, ghee:700.0},balance:0},
-  {id:"rc169",name:"KANIFNATH HOTEL HADKO SASWAD.",category:"Retail",phone:'',area:'',pricing:{ch:22.0},balance:0},
-  {id:"rc170",name:"kankariya sir Pune",category:"Retail",phone:'',area:'',pricing:{paneer:280.0},balance:0},
-  {id:"rc171",name:"KANTABAI LOLE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{sl:30.0, ml:30.0},balance:0},
-  {id:"rc172",name:"KARAN",category:"Retail",phone:'',area:'',pricing:{lc:100.0, ch:50.0, sl:30.0},balance:0},
-  {id:"rc173",name:"KARAN LOLE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{paneer:280.0, lc:100.0, cmk:280.0},balance:0},
-  {id:"rc174",name:"KATKAR SUPE",category:"Retail",phone:'',area:'',pricing:{paneer:260.0},balance:0},
-  {id:"rc175",name:"KATKE DAIRY SASWAD",category:"HORECA",phone:'',area:'',pricing:{paneer:260.0},balance:0},
-  {id:"rc176",name:"KIRAN KAMSHEY",category:"Retail",phone:'',area:'',pricing:{lc:100.0, ghee:590.0},balance:0},
-  {id:"rc177",name:"KIRAN LOLE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{sl:30.0},balance:0},
-  {id:"rc178",name:"KIRTI",category:"Retail",phone:'',area:'',pricing:{sl:30.0},balance:0},
-  {id:"rc179",name:"KJ COLLEGE CANTEEN YEOLEWADI",category:"Retail",phone:'',area:'',pricing:{ch:22.0, sl:22.0, ml:22.0, mixl:23.0},balance:0},
-  {id:"rc180",name:"KULDEEP LOLE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{paneer:280.0, ml:30.0},balance:0},
-  {id:"rc181",name:"KUMBHKAR PLANT SALE",category:"Retail",phone:'',area:'',pricing:{ghee:700.0},balance:0},
-  {id:"rc182",name:"KUNAL LOLE PLANT LOLE",category:"Retail",phone:'',area:'',pricing:{paneer:280.0},balance:0},
-  {id:"rc183",name:"KUNJEER MADAM PLANT SALE",category:"Retail",phone:'',area:'',pricing:{paneer:70.0, ghee:700.0},balance:0},
-  {id:"rc184",name:"KURSHNA HOTEL NEERA",category:"HORECA",phone:'',area:'',pricing:{paneer:260.0},balance:0},
-  {id:"rc185",name:"KURSHNALEELA HOTEL SHINDEWADI",category:"HORECA",phone:'',area:'',pricing:{paneer:260.0, lc:60.0, ghee:590.0, cmk:230.0, stk:280.0, ch:40.0, sl:23.0, ml:23.0, mixl:22.0},balance:0},
-  {id:"rc186",name:"LAHU BHISE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{lc:100.0, ghee:700.0},balance:0},
-  {id:"rc187",name:"LAKHAN BHISE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{paneer:280.0, lc:100.0},balance:0},
-  {id:"rc188",name:"LATA LOLE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{paneer:280.0},balance:0},
-  {id:"rc189",name:"laxmi kirana store, Saswad",category:"Retail",phone:'',area:'',pricing:{ch:23.0},balance:0},
-  {id:"rc190",name:"LAXMI SUPER MARKET BHUGAON",category:"Retail",phone:'',area:'',pricing:{paneer:70.0, ghee:700.0},balance:0},
-  {id:"rc191",name:"laxmi sweets jejuri",category:"Retail",phone:'',area:'',pricing:{paneer:260.0},balance:0},
-  {id:"rc192",name:"LOLE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{paneer:280.0, ghee:700.0, cmk:250.0, stk:280.0, ch:50.0, ml:30.0},balance:0},
-  {id:"rc193",name:"LONKAR WADA MISAL",category:"Retail",phone:'',area:'',pricing:{ch:22.0, sl:23.0},balance:0},
-  {id:"rc194",name:"LUCKEY",category:"Retail",phone:'',area:'',pricing:{lc:100.0, ch:35.0, sl:23.0},balance:0},
-  {id:"rc195",name:"MAGAR BAKERY SASWAD",category:"Retail",phone:'',area:'',pricing:{paneer:70.0, ch:23.0},balance:0},
-  {id:"rc196",name:"Mahabarachi Misal, Jejuri road",category:"HORECA",phone:'',area:'',pricing:{lc:270.0},balance:0},
-  {id:"rc197",name:"MAHADEV SWEET KOTHURD",category:"Retail",phone:'',area:'',pricing:{sl:23.0},balance:0},
-  {id:"rc198",name:"MAHADIK AGENCIES PHALTAN",category:"Distributor -Retail",phone:'9860677788',area:'',pricing:{paneer:230.0, ch:22.0, sl:23.0},balance:0},
-  {id:"rc199",name:"Mahalaxmi Misal, Hadpsar road Saswad",category:"HORECA",phone:'',area:'',pricing:{ch:22.0},balance:0},
-  {id:"rc200",name:"MAHESH PLANT SALE",category:"Retail",phone:'',area:'',pricing:{sl:120.0},balance:0},
-  {id:"rc201",name:"MAI HOTEL SASWAD",category:"HORECA",phone:'',area:'',pricing:{stk:230.0, ch:40.0},balance:0},
-  {id:"rc202",name:"MAMI PLANT SALE",category:"Retail",phone:'',area:'',pricing:{paneer:280.0, ghee:700.0},balance:0},
-  {id:"rc203",name:"Mangal Murti Sweets, Dhyari",category:"Retail",phone:'',area:'',pricing:{lc:300.0, ch:23.0},balance:0},
-  {id:"rc204",name:"MANGAL SWEET JEJURI",category:"HORECA",phone:'',area:'',pricing:{paneer:240.0, cmk:230.0, stk:240.0, ch:22.0, sl:23.0},balance:0},
-  {id:"rc205",name:"MANGLE BHISE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{ghee:700.0},balance:0},
-  {id:"rc206",name:"MANGLE KOKERE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{ghee:700.0},balance:0},
-  {id:"rc207",name:"MANISH JASYAL PUNE",category:"HORECA",phone:'',area:'',pricing:{ghee:590.0},balance:0},
-  {id:"rc208",name:"MANISHA GHODEKE",category:"Retail",phone:'',area:'',pricing:{paneer:280.0, lc:60.0, sl:23.0},balance:0},
-  {id:"rc209",name:"MANISHA HARPOLE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{paneer:240.0, lc:100.0, ghee:590.0},balance:0},
-  {id:"rc210",name:"MANKAR DOSA BHIVARI BOPDEV",category:"HORECA",phone:'',area:'',pricing:{paneer:260.0, lc:60.0, ghee:600.0, stk:240.0, mixl:22.0},balance:0},
-  {id:"rc211",name:"MANKAR DOSA JEJURI",category:"HORECA",phone:'7721991944',area:'',pricing:{paneer:250.0, sl:23.0},balance:1010},
-  {id:"rc212",name:"MANOJ DIGHE",category:"Retail",phone:'',area:'',pricing:{ghee:590.0},balance:0},
-  {id:"rc213",name:"MARUTI AGRO PRODUCT KHADIMACHINE",category:"Distributor -Retail",phone:'',area:'',pricing:{paneer:260.0},balance:0},
-  {id:"rc214",name:"MATEHSWARI SWEET JEJURI",category:"HORECA",phone:'',area:'',pricing:{paneer:250.0},balance:0},
-  {id:"rc215",name:"MAUALI BHISE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{ghee:700.0},balance:0},
-  {id:"rc216",name:"MAYURESH SUPER MARKET JEJURI",category:"Retail",phone:'',area:'',pricing:{paneer:70.0, sl:23.0},balance:0},
-  {id:"rc217",name:"MBA Amruttulya, Yeolewadi",category:"Retail",phone:'',area:'',pricing:{sl:22.0, ml:22.0, mixl:22.0},balance:0},
-  {id:"rc218",name:"MD dosa Bhugaon",category:"HORECA",phone:'',area:'',pricing:{ch:23.0},balance:0},
-  {id:"rc219",name:"MEGH MALHAR DAIRY SASWAD",category:"HORECA",phone:'',area:'',pricing:{cmk:230.0},balance:0},
-  {id:"rc220",name:"MEGHA MAM",category:"Retail",phone:'',area:'',pricing:{paneer:80.0, ghee:590.0, cmk:280.0, stk:240.0, ch:30.0, sl:30.0, ml:30.0, mixl:23.0},balance:0},
-  {id:"rc221",name:"Meghamalhaar dairy Jejuri",category:"Distributor -Retail",phone:'',area:'',pricing:{paneer:240.0},balance:0},
-  {id:"rc222",name:"Misal katta,bhiwadi",category:"HORECA",phone:'9657850952',area:'',pricing:{paneer:260.0, lc:270.0, stk:240.0, ch:40.0, sl:17.0, ml:30.0, mixl:23.0},balance:1540},
-  {id:"rc223",name:"MITHAS SWEET SASWAD",category:"Retail",phone:'',area:'',pricing:{stk:230.0, ch:40.0},balance:0},
-  {id:"rc224",name:"MITHAI PALACE",category:"Retail",phone:'',area:'',pricing:{ch:22.0},balance:0},
-  {id:"rc225",name:"Mithai palace, Dhyari",category:"Retail",phone:'',area:'',pricing:{lc:300.0, ch:23.0},balance:0},
-  {id:"rc226",name:"MITHAL BHISE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{ch:60.0},balance:0},
-  {id:"rc227",name:"MMF PUNE",category:"Distributor -Retail",phone:'',area:'',pricing:{ghee:750.0, ch:30.0},balance:0},
-  {id:"rc228",name:"MONIKA KAMTHE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{paneer:280.0},balance:0},
-  {id:"rc229",name:"MONYA PLANT SALE",category:"Retail",phone:'',area:'',pricing:{paneer:280.0},balance:0},
-  {id:"rc230",name:"Morya Misal, Hadpsar road Saswad",category:"HORECA",phone:'',area:'',pricing:{lc:270.0, ch:22.0},balance:0},
-  {id:"rc231",name:"MUKATAI STEEL",category:"HORECA",phone:'',area:'',pricing:{paneer:240.0, ghee:600.0},balance:0},
-  {id:"rc232",name:"NAJBAHU LOLE",category:"Retail",phone:'',area:'',pricing:{ml:30.0},balance:0},
-  {id:"rc233",name:"NANA LOLE",category:"Retail",phone:'',area:'',pricing:{ch:23.0},balance:0},
-  {id:"rc234",name:"NANDA BHISE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{ghee:700.0},balance:0},
-  {id:"rc235",name:"Nandekar",category:"Retail",phone:'',area:'',pricing:{paneer:300.0, ghee:700.0},balance:0},
-  {id:"rc236",name:"NARAYAN LOLE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{paneer:280.0, ghee:700.0},balance:0},
-  {id:"rc237",name:"NARENDRA HARIBHAU OPT. PLANT SALE",category:"Retail",phone:'',area:'',pricing:{paneer:260.0, ghee:700.0},balance:0},
-  {id:"rc238",name:"NARYAN LOLE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{ghee:700.0},balance:0},
-  {id:"rc239",name:"NARYAN PEDHA KHEDSHIVAPUR",category:"Retail",phone:'',area:'',pricing:{paneer:220.0, stk:240.0},balance:0},
-  {id:"rc240",name:"Navnath Bhise Khadimachine yeolewadi",category:"Retail",phone:'',area:'',pricing:{paneer:270.0},balance:0},
-  {id:"rc241",name:"NAVNATH BHISE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{paneer:280.0, ghee:600.0},balance:0},
-  {id:"rc242",name:"NAVNATH JADHAV PLANT SALE",category:"Retail",phone:'',area:'',pricing:{lc:100.0, sl:30.0},balance:0},
-  {id:"rc243",name:"NAVNATH TEA HOUSE SASWAD",category:"Retail",phone:'',area:'',pricing:{ghee:590.0, ch:40.0},balance:0},
-  {id:"rc244",name:"NEW BADHAI SWEET SASWAD",category:"Retail",phone:'',area:'',pricing:{paneer:70.0, cmk:230.0, mixl:23.0},balance:0},
-  {id:"rc245",name:"New Golden bakery, Dhyari",category:"Retail",phone:'',area:'',pricing:{mixl:23.0},balance:0},
-  {id:"rc246",name:"New Magar Bakery, Saswad",category:"Retail",phone:'',area:'',pricing:{ch:23.0},balance:0},
-  {id:"rc247",name:"NEW MATESHWARI SWEETS JEJURI",category:"HORECA",phone:'9766105016',area:'',pricing:{mixl:23.0},balance:1561},
-  {id:"rc248",name:"NH4 HOTEL KHEDSHIVAPUR",category:"HORECA",phone:'',area:'',pricing:{paneer:260.0, ghee:700.0, ch:30.0},balance:0},
-  {id:"rc249",name:"NIBM DORABJEES",category:"Retail",phone:'8390900849',area:'',pricing:{paneer:68.0},balance:1610},
-  {id:"rc250",name:"NIKAM SIR PUNE",category:"Retail",phone:'',area:'',pricing:{ghee:750.0},balance:0},
-  {id:"rc251",name:"NOBEL LAB SASWAD",category:"Retail",phone:'',area:'',pricing:{ch:40.0, mixl:23.0},balance:0},
-  {id:"rc252",name:"Om sai Kirana Saswad",category:"Retail",phone:'',area:'',pricing:{ch:23.0},balance:0},
-  {id:"rc253",name:"omkar chavan",category:"Retail",phone:'',area:'',pricing:{paneer:260.0, lc:60.0, ghee:600.0, cmk:240.0, ch:15.0, ml:30.0},balance:0},
-  {id:"rc254",name:"OMKAR CHAVAN PLANT SALE",category:"Retail",phone:'',area:'',pricing:{ghee:600.0},balance:0},
-  {id:"rc255",name:"Omkar Konde Nasrapur",category:"Distributor -Retail",phone:'7756827090',area:'',pricing:{paneer:240.0, stk:235.0, ch:20.0},balance:10967},
-  {id:"rc256",name:"OSKARWADI BOPDEV GHAT",category:"HORECA",phone:'',area:'',pricing:{paneer:260.0, lc:60.0, ghee:590.0, cmk:230.0, ch:22.0, sl:23.0, ml:23.0},balance:0},
-  {id:"rc257",name:"OSKARWADI MISAL KONDAWA BRANCH",category:"HORECA",phone:'',area:'',pricing:{paneer:260.0, lc:60.0, ghee:590.0, ch:22.0, ml:23.0, mixl:23.0},balance:0},
-  {id:"rc258",name:"PALAVI PLANT SALE",category:"Retail",phone:'',area:'',pricing:{paneer:280.0, lc:100.0, ch:50.0},balance:0},
-  {id:"rc259",name:"PANGARE SHITAL DAIRY  DIVALI",category:"HORECA",phone:'',area:'',pricing:{paneer:220.0},balance:0},
-  {id:"rc260",name:"PAPPU BHISE PLANT SALE.",category:"Retail",phone:'',area:'',pricing:{paneer:280.0, lc:100.0, ghee:700.0, sl:30.0},balance:0},
-  {id:"rc261",name:"PAPPU KAMTHE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{paneer:280.0, ghee:700.0, ml:30.0},balance:0},
-  {id:"rc262",name:"PAPPU KONDE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{paneer:280.0},balance:0},
-  {id:"rc263",name:"PARAG PUNE",category:"HORECA",phone:'',area:'',pricing:{ghee:700.0},balance:0},
-  {id:"rc264",name:"PAWAR PLANT SALE",category:"Retail",phone:'',area:'',pricing:{paneer:280.0},balance:0},
-  {id:"rc265",name:"POOJA LOLE",category:"Retail",phone:'',area:'',pricing:{paneer:280.0, sl:30.0},balance:0},
-  {id:"rc266",name:"PRASHANT PLANT SALE",category:"Retail",phone:'',area:'',pricing:{lc:100.0, ghee:700.0, sl:30.0},balance:0},
-  {id:"rc267",name:"PRATAP LOLE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{ghee:700.0},balance:0},
-  {id:"rc268",name:"PRATEMESH LOLE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{paneer:280.0, ghee:600.0},balance:0},
-  {id:"rc269",name:"PRATIK LOLE PLANT LOLE",category:"Retail",phone:'',area:'',pricing:{lc:100.0, ghee:700.0, sl:30.0},balance:0},
-  {id:"rc270",name:"PUNE ROUTE",category:"Retail",phone:'',area:'',pricing:{paneer:260.0, ghee:370.0, cmk:70.0, stk:230.0, ch:22.0, mixl:23.0},balance:0},
-  {id:"rc271",name:"PUNE STALL",category:"Retail",phone:'',area:'',pricing:{paneer:70.0, lc:60.0, ch:30.0, sl:23.0},balance:0},
-  {id:"rc272",name:"PURNDHAR MILK SASWAD",category:"Retail",phone:'',area:'',pricing:{ch:22.0, sl:22.0},balance:0},
-  {id:"rc273",name:"RAJ PLANT SALE",category:"Retail",phone:'',area:'',pricing:{ml:90.0},balance:0},
-  {id:"rc274",name:"RAJARAM SWEET NEAR GRAND MALHAR SASWAD",category:"HORECA",phone:'',area:'',pricing:{paneer:70.0, lc:60.0},balance:0},
-  {id:"rc275",name:"RAJENDRA BHISE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{ghee:700.0},balance:0},
-  {id:"rc276",name:"RAJLAXMI SUPER MARKET YEOLEWADI",category:"Retail",phone:'',area:'',pricing:{ch:23.0},balance:0},
-  {id:"rc277",name:"RAJMURDA HOTEL SHIRVAL",category:"HORECA",phone:'9175495051',area:'',pricing:{paneer:230.0, lc:67.0, ghee:590.0, cmk:230.0, stk:240.0, ch:35.0, sl:17.0, ml:23.0, mixl:23.0},balance:4310},
-  {id:"rc278",name:"RAJTORAN MISAL KAPURHOLE",category:"HORECA",phone:'',area:'',pricing:{paneer:240.0, lc:60.0, stk:240.0, ch:40.0, sl:23.0},balance:0},
-  {id:"rc279",name:"RAMANAND HOTEL MANJARI",category:"HORECA",phone:'',area:'',pricing:{lc:60.0, stk:240.0},balance:0},
-  {id:"rc280",name:"RAMDAS SHINDE",category:"Retail",phone:'',area:'',pricing:{paneer:260.0, lc:60.0, ghee:590.0},balance:0},
-  {id:"rc281",name:"RAMESH DIWAR PLANT SALE",category:"Retail",phone:'',area:'',pricing:{lc:100.0},balance:0},
-  {id:"rc282",name:"RANJHNA JADAHV",category:"Retail",phone:'',area:'',pricing:{paneer:280.0},balance:0},
-  {id:"rc283",name:"RATNABHAI BHISE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{paneer:280.0, lc:100.0},balance:0},
-  {id:"rc284",name:"REAL HOTEL KAPURHOLE",category:"HORECA",phone:'',area:'',pricing:{lc:60.0, ch:23.0, sl:23.0, ml:23.0},balance:0},
-  {id:"rc285",name:"RISHIKESH BHISE",category:"Retail",phone:'',area:'',pricing:{ch:50.0},balance:0},
-  {id:"rc286",name:"ROHIT BHISE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{ch:50.0},balance:0},
-  {id:"rc287",name:"Rohit Vadewale,  Khedshivapur Toll naka",category:"Retail",phone:'',area:'',pricing:{paneer:75.0, ch:40.0},balance:0},
-  {id:"rc288",name:"ROLEX BAKERY YELOWADI",category:"Retail",phone:'',area:'',pricing:{paneer:75.0, ghee:590.0, ch:23.0, mixl:23.0},balance:0},
-  {id:"rc289",name:"RUSHI SIR PUNE",category:"Retail",phone:'',area:'',pricing:{paneer:280.0},balance:0},
-  {id:"rc290",name:"RUTIK LOLE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{ghee:700.0, sl:30.0, ml:30.0},balance:0},
-  {id:"rc291",name:"SABROOP LOLE",category:"Retail",phone:'',area:'',pricing:{cmk:280.0},balance:0},
-  {id:"rc292",name:"Sachin Gayakwad Megh malhaar dairy",category:"HORECA",phone:'7066953159',area:'',pricing:{cream:310.0},balance:1040},
-  {id:"rc293",name:"Sadguru Hotel Kapurhole",category:"HORECA",phone:'',area:'',pricing:{lc:270.0},balance:0},
-  {id:"rc294",name:"SADHNA PLANT SALE",category:"Retail",phone:'',area:'',pricing:{paneer:280.0, lc:100.0, ghee:700.0, cmk:280.0},balance:0},
-  {id:"rc295",name:"Sagar Bhosale Khandala",category:"Distributor -Retail",phone:'',area:'',pricing:{ch:20.0},balance:0},
-  {id:"rc296",name:"SAGAR KAUDLE JEJURI",category:"Distributor -Retail",phone:'9922138531',area:'',pricing:{paneer:250.0, lc:100.0, ghee:590.0, stk:240.0, ch:50.0, sl:23.0, ml:22.0},balance:8994},
-  {id:"rc297",name:"SAHIL PLANT SALE",category:"Retail",phone:'',area:'',pricing:{lc:100.0, ghee:700.0, sl:30.0},balance:0},
-  {id:"rc298",name:"Saiba Amruttulya, Saswad",category:"Retail",phone:'',area:'',pricing:{lc:300.0, ch:23.0},balance:0},
-  {id:"rc299",name:"SAIRAJ SUPER MARKET KAPURHOLE",category:"Retail",phone:'',area:'',pricing:{paneer:70.0, cream:220.0, stk:240.0, ch:22.0, sl:240.0},balance:0},
-  {id:"rc300",name:"SAMARTH SWEET DHYARI",category:"Retail",phone:'',area:'',pricing:{ch:22.0},balance:0},
-  {id:"rc301",name:"SAMBHAJI LOLE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{paneer:280.0, lc:100.0},balance:0},
-  {id:"rc302",name:"SAMPTH JI PLANT SALE",category:"Retail",phone:'',area:'',pricing:{ghee:700.0},balance:0},
-  {id:"rc303",name:"Samrat sweets, Dhyari",category:"Retail",phone:'',area:'',pricing:{ch:23.0},balance:0},
-  {id:"rc304",name:"SAMSUNG BHANDARI JEJURI",category:"Retail",phone:'',area:'',pricing:{paneer:260.0, ghee:590.0},balance:0},
-  {id:"rc305",name:"SANDEEP BHISE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{ghee:700.0},balance:0},
-  {id:"rc306",name:"Sandeep Dhotre Shirval",category:"Distributor -HORECA",phone:'9881385621',area:'',pricing:{paneer:235.0, lc:60.0, ghee:590.0, cmk:230.0, stk:240.0, sl:17.0, ml:17.0},balance:125603},
-  {id:"rc307",name:"SANDEEP PANGARE",category:"Retail",phone:'',area:'',pricing:{paneer:250.0},balance:0},
-  {id:"rc308",name:"SANGEETA JADHAV PLANT SALE",category:"Retail",phone:'',area:'',pricing:{paneer:280.0, lc:100.0, ghee:700.0},balance:0},
-  {id:"rc309",name:"SANGAMESHWAR CAFE YEOLEWADI",category:"Retail",phone:'8180872230',area:'',pricing:{paneer:70.0, lc:60.0, ch:22.0, ml:30.0, mixl:23.0},balance:638},
-  {id:"rc310",name:"SANJAY SIR",category:"Retail",phone:'',area:'',pricing:{paneer:80.0, lc:60.0, ghee:600.0, cmk:230.0, ch:25.0, sl:30.0, ml:30.0, mixl:23.0},balance:0},
-  {id:"rc311",name:"santakrupa dairy Saswad",category:"HORECA",phone:'',area:'',pricing:{paneer:260.0},balance:0},
-  {id:"rc312",name:"SANTOROM LOLE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{ghee:700.0, sl:30.0},balance:0},
-  {id:"rc313",name:"SANTOSH HOTEL",category:"HORECA",phone:'',area:'',pricing:{paneer:70.0, ch:23.0, sl:23.0, ml:23.0, mixl:23.0},balance:0},
-  {id:"rc314",name:"SANTOSH WAHATUL SAMBHIJINAGAR",category:"Retail",phone:'',area:'',pricing:{cmk:230.0},balance:0},
-  {id:"rc315",name:"SARIKA LOLE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{paneer:280.0},balance:0},
-  {id:"rc316",name:"SARTHK PLANT SALE",category:"Retail",phone:'',area:'',pricing:{ch:50.0},balance:0},
-  {id:"rc317",name:"SAVLARAM CHAUDHARI HIVRE SASWAD",category:"HORECA",phone:'',area:'',pricing:{paneer:260.0, cmk:220.0, ch:40.0},balance:0},
-  {id:"rc318",name:"SHABBIR PLANT SALE",category:"Retail",phone:'',area:'',pricing:{paneer:280.0, ml:30.0},balance:0},
-  {id:"rc319",name:"SHAILESH RAUT SASWAD",category:"HORECA",phone:'',area:'',pricing:{paneer:70.0, lc:100.0, cmk:230.0, ml:30.0},balance:0},
-  {id:"rc320",name:"SHANTANU KHARAT PLANT SALE",category:"Retail",phone:'',area:'',pricing:{ghee:700.0, sl:30.0},balance:0},
-  {id:"rc321",name:"SHARDHNA LOLE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{sl:30.0},balance:0},
-  {id:"rc322",name:"Sheetal Dairy ,Divali",category:"Distributor -Retail",phone:'',area:'',pricing:{paneer:220.0},balance:0},
-  {id:"rc323",name:"SHINDE CATTLE FEED BARAMATI",category:"Retail",phone:'',area:'',pricing:{cmk:230.0},balance:0},
-  {id:"rc324",name:"SHINDE SISTER PLANT SALE.",category:"Retail",phone:'',area:'',pricing:{ghee:700.0},balance:0},
-  {id:"rc325",name:"SHINMALHAR GARAGE HIVARE",category:"Retail",phone:'',area:'',pricing:{ch:22.0},balance:0},
-  {id:"rc326",name:"SHITAL BHISE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{paneer:280.0, lc:100.0, ghee:700.0},balance:0},
-  {id:"rc327",name:"SHIVE SHAMBHOO HOTEL BHIVADI",category:"HORECA",phone:'',area:'',pricing:{paneer:260.0, lc:60.0, ghee:700.0, ch:40.0, sl:22.0, ml:30.0},balance:0},
-  {id:"rc328",name:"SHIVRAJ VITA",category:"Retail",phone:'',area:'',pricing:{cmk:230.0},balance:0},
-  {id:"rc329",name:"SHIVSHAMBHO VADAPAV KHADI",category:"HORECA",phone:'',area:'',pricing:{ch:40.0},balance:0},
-  {id:"rc330",name:"SHIVSHAMBHOO GARIGE HIVRE",category:"Retail",phone:'',area:'',pricing:{ch:22.0},balance:0},
-  {id:"rc331",name:"SHIVSHAMBHOO KIRANA STORE SASWAD",category:"Retail",phone:'',area:'',pricing:{paneer:70.0, ghee:590.0, cmk:230.0, ch:23.0, sl:23.0, mixl:23.0},balance:0},
-  {id:"rc332",name:"SHIVSHAMBHOO MISAL BHIVADI",category:"Retail",phone:'',area:'',pricing:{paneer:260.0, lc:270.0},balance:0},
-  {id:"rc333",name:"SHIVSHAMBHOO MISAL KHADIMACHINE",category:"Retail",phone:'',area:'',pricing:{ch:40.0},balance:0},
-  {id:"rc334",name:"SHRAVANI LOLE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{paneer:280.0, lc:100.0},balance:0},
-  {id:"rc335",name:"SHREYASI LOLE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{paneer:280.0},balance:0},
-  {id:"rc336",name:"SHRI BHISE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{paneer:280.0},balance:0},
-  {id:"rc337",name:"SHRI MAGAR BAKERY SASWAD",category:"Retail",phone:'',area:'',pricing:{ch:22.0},balance:0},
-  {id:"rc338",name:"Shri ram sweets, Bhugaon",category:"Retail",phone:'',area:'',pricing:{ch:23.0},balance:0},
-  {id:"rc339",name:"Shri swami dairy Bhivari",category:"Retail",phone:'',area:'',pricing:{paneer:260.0, mixl:23.0},balance:0},
-  {id:"rc340",name:"SHRI SWAMI HOTEL JEJURI",category:"Retail",phone:'',area:'',pricing:{ghee:590.0, ch:23.0, sl:23.0, mixl:23.0},balance:0},
-  {id:"rc341",name:"SHRI SWAMI SAMARTH COMUNICATION SUPE",category:"Retail",phone:'',area:'',pricing:{mixl:23.0},balance:0},
-  {id:"rc342",name:"SHRI SWAMI SAMRTH SWEET SASWAD",category:"Retail",phone:'',area:'',pricing:{ch:22.0, sl:22.0, mixl:23.0},balance:0},
-  {id:"rc343",name:"SHRI SWEET AND BAKERS MOREGAON",category:"Retail",phone:'',area:'',pricing:{paneer:70.0},balance:0},
-  {id:"rc344",name:"SHRI VITHAL HOTEL JEJURI",category:"HORECA",phone:'',area:'',pricing:{lc:100.0, ch:22.0, sl:30.0},balance:0},
-  {id:"rc345",name:"SHRINATH BAKERY WAGHAPUR",category:"HORECA",phone:'',area:'',pricing:{cmk:230.0},balance:0},
-  {id:"rc346",name:"SHRINATH DAIRY YEOLEWADI",category:"Retail",phone:'9370669605',area:'',pricing:{paneer:70.0, lc:60.0},balance:2530},
-  {id:"rc347",name:"SHRINATH HOTEL VEER",category:"Retail",phone:'9552849680',area:'',pricing:{paneer:70.0, ghee:590.0, ch:23.0, sl:24.0, mixl:23.0},balance:1587},
-  {id:"rc348",name:"shrinath kirana Store Saswad",category:"Retail",phone:'',area:'',pricing:{ch:23.0},balance:0},
-  {id:"rc349",name:"SHRINATH MISAL",category:"Retail",phone:'',area:'',pricing:{paneer:250.0, mixl:23.0},balance:0},
-  {id:"rc350",name:"shriram sweets Bhugaon",category:"Retail",phone:'',area:'',pricing:{ch:23.0},balance:0},
-  {id:"rc351",name:"SHRISHA HOTEL VEER",category:"Retail",phone:'',area:'',pricing:{ch:22.0},balance:0},
-  {id:"rc352",name:"SHUBHAM PAWAR PLANT SALE",category:"Retail",phone:'',area:'',pricing:{paneer:280.0},balance:0},
-  {id:"rc353",name:"SHUBHAM PLANT SALE",category:"Retail",phone:'',area:'',pricing:{paneer:280.0, ghee:600.0},balance:0},
-  {id:"rc354",name:"SHULKE GAS",category:"Retail",phone:'',area:'',pricing:{paneer:280.0, ghee:700.0},balance:0},
-  {id:"rc355",name:"SHUSHMA TAI",category:"Retail",phone:'',area:'',pricing:{ghee:700.0},balance:0},
-  {id:"rc356",name:"SINGHAD COLLEGE CANTEEN",category:"Retail",phone:'',area:'',pricing:{mixl:23.0},balance:0},
-  {id:"rc357",name:"SIYA BHISE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{sl:30.0},balance:0},
-  {id:"rc358",name:"SOMNATH BHISE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{ch:50.0},balance:0},
-  {id:"rc359",name:"SOMNATH KUMARKAR",category:"Retail",phone:'',area:'',pricing:{ghee:700.0},balance:0},
-  {id:"rc360",name:"SOMNATH PLANT SALE",category:"Retail",phone:'',area:'',pricing:{paneer:280.0, sl:30.0},balance:0},
-  {id:"rc361",name:"SONALI ANDI VIKRI KENDRA SASWAD",category:"Retail",phone:'',area:'',pricing:{paneer:250.0, ghee:650.0, ch:20.0, sl:21.0},balance:0},
-  {id:"rc362",name:"SONALI JADHAV PLANT SALE",category:"Retail",phone:'',area:'',pricing:{paneer:280.0, lc:100.0, ghee:700.0},balance:0},
-  {id:"rc363",name:"SONALI TAI PLANT SALE",category:"Retail",phone:'',area:'',pricing:{lc:100.0},balance:0},
-  {id:"rc364",name:"SOPAN LOLE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{paneer:280.0},balance:0},
-  {id:"rc365",name:"STP VAIBHAV SIR PLANT SALE",category:"Distributor -Retail",phone:'',area:'',pricing:{ghee:700.0},balance:0},
-  {id:"rc366",name:"SUDABAI PLANT SALE",category:"Retail",phone:'',area:'',pricing:{ghee:700.0},balance:0},
-  {id:"rc367",name:"SUJATA PLANT SALE",category:"Retail",phone:'',area:'',pricing:{paneer:280.0, ghee:590.0},balance:0},
-  {id:"rc368",name:"SUNIL GADE KAPURHOLE",category:"HORECA",phone:'',area:'',pricing:{paneer:260.0},balance:0},
-  {id:"rc369",name:"SUPE BHISE",category:"Retail",phone:'',area:'',pricing:{lc:100.0},balance:0},
-  {id:"rc370",name:"SURAJ DISTRIBUTAR DHYARI",category:"Distributor -Retail",phone:'8484815307',area:'',pricing:{paneer:230.0, ch:30.0},balance:1860},
-  {id:"rc371",name:"SUREKHA BHISE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{lc:100.0},balance:0},
-  {id:"rc372",name:"SURYA HOTEL KIKVI",category:"HORECA",phone:'',area:'',pricing:{paneer:260.0, lc:300.0},balance:0},
-  {id:"rc373",name:"SWAMI BAKERY SASWAD",category:"Retail",phone:'9096922679',area:'',pricing:{paneer:70.0, cmk:230.0, stk:240.0, ch:40.0, ml:23.0},balance:5997},
-  {id:"rc374",name:"SWAMI SAMRTH DAIRY",category:"Retail",phone:'',area:'',pricing:{paneer:260.0, ghee:590.0, cmk:230.0, ch:30.0, ml:22.0, mixl:22.0},balance:0},
-  {id:"rc375",name:"swaraj Hotel and misal, Jejuri Road",category:"HORECA",phone:'',area:'',pricing:{ch:23.0, sl:23.0},balance:0},
-  {id:"rc376",name:"TANMAI BHISE",category:"Retail",phone:'',area:'',pricing:{paneer:70.0, ml:30.0},balance:0},
-  {id:"rc377",name:"TEJAS PLANT SALE",category:"Retail",phone:'',area:'',pricing:{paneer:280.0, cmk:280.0},balance:0},
-  {id:"rc378",name:"Tiranga Hotel,  Kikvi",category:"HORECA",phone:'',area:'',pricing:{ch:23.0, sl:23.0},balance:0},
-  {id:"rc379",name:"Tirumala Trading",category:"Distributor -Retail",phone:'',area:'',pricing:{cream:284.0},balance:0},
-  {id:"rc380",name:"UDAPI CAF\u00c9 NARAYANPUR",category:"Retail",phone:'',area:'',pricing:{lc:60.0},balance:0},
-  {id:"rc381",name:"UMESH SIR PUNE",category:"Retail",phone:'',area:'',pricing:{paneer:280.0},balance:0},
-  {id:"rc382",name:"VAISHALI BHISE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{paneer:280.0, ghee:700.0},balance:0},
-  {id:"rc383",name:"VAISHNAVI WORKER PLANT SALE",category:"Retail",phone:'',area:'',pricing:{ml:30.0},balance:0},
-  {id:"rc384",name:"VANDHANA BHISE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{paneer:280.0, ghee:700.0, cmk:300.0},balance:0},
-  {id:"rc385",name:"VASANT BHISE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{ghee:700.0},balance:0},
-  {id:"rc386",name:"VEGAS HOTEL SAROLA",category:"HORECA",phone:'',area:'',pricing:{paneer:260.0, lc:300.0, ghee:590.0, cmk:230.0, stk:240.0, ch:35.0, sl:30.0, ml:23.0},balance:0},
-  {id:"rc387",name:"VIDHYA LOLE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{paneer:280.0, lc:100.0},balance:0},
-  {id:"rc388",name:"VIRAJ LOLE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{paneer:280.0},balance:0},
-  {id:"rc389",name:"VISHAL HOTEL JEJURI",category:"HORECA",phone:'',area:'',pricing:{paneer:240.0},balance:0},
-  {id:"rc390",name:"VISKHA PLANT SALE",category:"Retail",phone:'',area:'',pricing:{ml:30.0},balance:0},
-  {id:"rc391",name:"YOGESH BNAGAR SIR PLANT SALE",category:"Retail",phone:'',area:'',pricing:{paneer:280.0, ghee:700.0, cmk:300.0},balance:0},
-  {id:"rc392",name:"YOGIRAJ LOLE PLANT SALE",category:"Retail",phone:'',area:'',pricing:{paneer:280.0},balance:0}
+  // v146 (public-hosting safe): the customer master is NO LONGER embedded in
+  // this file. Customers load from the Google Sheet on first sync and are
+  // cached on the device (localStorage) for offline use. Run 'Push all
+  // customers to sheet' from an owner device BEFORE first rollout so the
+  // Customers tab is complete.
 ];
 
 // ── STATE ───────────────────────────────────────────────────────────
@@ -1899,7 +1514,7 @@ const CAT_BG = {
 // ── PIN AUTHENTICATION ────────────────────────────────────────────────
 const LS_PINS = 'gf_pins';
 const LS_ROLE = 'gf_last_role';
-const DEFAULT_SHEET_URL = 'https://script.google.com/macros/s/AKfycbwNAn6_OXoTRRwm8Dg6TyU0T746OSYIQejMNS41zgky-i9brq9YyjXIBjvw8P-cu1pWMw/exec';
+const DEFAULT_SHEET_URL = '';  // v146: never hardcode the script URL in the hosted file
 const LS_PRODUCT_GST = 'gf_product_gst'; // HSN + GST rate overrides per product
 
 // Load saved HSN/GST overrides into PRODUCTS array
@@ -2069,6 +1684,9 @@ function enterApp(role) {
     h<12?'Good morning 🌅':h<17?'Good afternoon ☀️':'Good evening 🌙';
   buildNav(role);
   initApp();
+  if(!getSheetUrl()){
+    setTimeout(function(){ showScreen('setup'); showToast('⚙ First-time setup: paste the Sheet URL & access code (or open the owner\'s share link)'); }, 600);
+  }
   setTimeout(function(){ try{ showMorningReminders(false); }catch(e){} }, 2500);  // v143 morning popup
 }
 
@@ -2229,9 +1847,9 @@ function initApp() {
   // One-time migration: if this device still has an OLD deployment URL saved,
   // replace it with the current DEFAULT_SHEET_URL (new deployment).
   try {
-    const _OLD_URLS = ['https://script.google.com/macros/s/AKfycbzG4dWqlpBVMc62UHkFHA-dvELmsnV7vt1i4XTEYvI7CEPHzcEcTGb05PizeyNg7sW4fQ/exec'];
+    const _OLD_URLS = [];  // v146: no URLs in the hosted file
     const _cur = localStorage.getItem(LS_URL);
-    if(_cur && _OLD_URLS.indexOf(_cur) !== -1) {
+    if(_cur && _OLD_URLS.indexOf(_cur) !== -1 && DEFAULT_SHEET_URL) {
       localStorage.setItem(LS_URL, DEFAULT_SHEET_URL);
       STATE.sheetUrl = DEFAULT_SHEET_URL;
     }
@@ -2239,11 +1857,14 @@ function initApp() {
   // Load saved sheet URL — check URL params first (allows pre-configuration via link)
   const urlParams = new URLSearchParams(window.location.search);
   const paramUrl  = urlParams.get('sheetUrl') || urlParams.get('sheet');
+  const paramKey  = urlParams.get('key');                    // v146: access code via link
+  if(paramKey) localStorage.setItem('gf_api_key', paramKey);
   if(paramUrl && paramUrl.startsWith('https://script.google.com')) {
     // Save to localStorage so future sessions remember it
     localStorage.setItem(LS_URL, paramUrl);
     STATE.sheetUrl = paramUrl;
     console.log('Sheet URL loaded from URL param and saved');
+    if(history.replaceState) try{ history.replaceState(null,'',window.location.pathname); }catch(e){}  // hide secrets from address bar
   } else {
     const _savedUrl = localStorage.getItem(LS_URL);
     STATE.sheetUrl = _savedUrl || DEFAULT_SHEET_URL;
@@ -2953,10 +2574,12 @@ function clearCustomer() {
 
 function getRate(pid) {
   const c = STATE.selectedCustomer;
-  // Paneer Laadi defaults to the customer's Paneer rate (can be overridden per order)
-  if(pid==='pl') {
-    if(c?.pricing?.paneer) return c.pricing.paneer;
-    return PRODUCTS.find(p=>p.id==='paneer')?.stdRate || 260;
+  // v147: any Laadi defaults to its base paneer's customer rate (overridable per order)
+  const _ld = PRODUCTS.find(p=>p.id===pid);
+  if(_ld && _ld.isLaadi) {
+    const _base = _ld.rateFrom || 'paneer';
+    if(c?.pricing?.[_base]) return c.pricing[_base];
+    return PRODUCTS.find(p=>p.id===_base)?.stdRate || _ld.stdRate || 260;
   }
   // Lite Curd: pricing.lc = jar rate, pricing.lc_kg = kg rate
   // Legacy data: lc <= 150 was stored as a kg rate, lc > 150 is a jar rate
@@ -2999,7 +2622,9 @@ function renderProductList() {
     // ── Paneer Laadi: ladis + est. weight + editable rate ──────────────
     if(p.isLaadi) {
       const ladiQty   = STATE.cart[p.id]?.qty||0;
-      const paneerRate = getRate('paneer');
+      const baseId    = p.rateFrom || 'paneer';
+      const baseName  = (PRODUCTS.find(x=>x.id===baseId)||{}).name || 'Paneer';
+      const paneerRate = getRate(baseId);
       const ladiRate  = STATE.cart[p.id]?.rate!=null ? STATE.cart[p.id].rate : paneerRate;
       const estKg     = STATE.cart[p.id]?.estKg||0;
       const estAmt    = (ladiQty>0 && estKg>0) ? Math.round(estKg*ladiRate) : 0;
@@ -3013,7 +2638,7 @@ function renderProductList() {
         ? '<div style="font-size:11px;color:var(--muted);margin-top:6px;">~'+(estKg/ladiQty).toFixed(1)+' kg per ladi</div>'
         : '';
       const rateLabel = rateMatchesPaneer
-        ? '\u20b9/kg <span style="font-weight:400;color:var(--muted);">(same as Paneer)</span>'
+        ? '\u20b9/kg <span style="font-weight:400;color:var(--muted);">(same as '+baseName+')</span>'
         : '\u20b9/kg <span style="color:var(--amber);">&#9998;</span>';
 
       return '<div class="card" style="margin-bottom:8px;border-color:'+borderColor+';">'
@@ -3027,20 +2652,20 @@ function renderProductList() {
             +'<div>'
               +'<div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Ladis</div>'
               +'<div style="display:flex;align-items:center;gap:3px;">'
-                +'<button class="qty-btn" onclick="updateCart(\'pl\',-1)" style="width:26px;height:26px;font-size:14px;">\u2212</button>'
-                +'<input type="number" id="qty-pl" value="'+(ladiQty||'')+'" min="0" step="1" placeholder="0"'
-                  +' oninput="setCartQty(\'pl\',this.value);updateLaadiEst(\'pl\')"'
-                  +' onblur="onCartQtyBlur(\'pl\',this.value)"'
+                +'<button class="qty-btn" onclick="updateCart(\''+p.id+'\',-1)" style="width:26px;height:26px;font-size:14px;">\u2212</button>'
+                +'<input type="number" id="qty-'+p.id+'" value="'+(ladiQty||'')+'" min="0" step="1" placeholder="0"'
+                  +' oninput="setCartQty(\''+p.id+'\',this.value);updateLaadiEst(\''+p.id+'\')"'
+                  +' onblur="onCartQtyBlur(\''+p.id+'\',this.value)"'
                   +' style="width:40px;text-align:center;font-size:16px;font-weight:700;color:'+qtyColor+';background:var(--cream);border:1.5px solid '+qtyBorder+';border-radius:8px;padding:3px;">'
-                +'<button class="qty-btn" onclick="updateCart(\'pl\',1)" style="width:26px;height:26px;font-size:14px;">+</button>'
+                +'<button class="qty-btn" onclick="updateCart(\''+p.id+'\',1)" style="width:26px;height:26px;font-size:14px;">+</button>'
               +'</div>'
             +'</div>'
             // Est. weight
             +'<div>'
               +'<div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Est. Wt</div>'
               +'<div style="display:flex;align-items:center;gap:3px;">'
-                +'<input type="number" id="estkg-pl" value="'+(estKg||'')+'" min="0" step="0.5" placeholder="kg"'
-                  +' oninput="updateLaadiEst(\'pl\')"'
+                +'<input type="number" id="estkg-'+p.id+'" value="'+(estKg||'')+'" min="0" step="0.5" placeholder="kg"'
+                  +' oninput="updateLaadiEst(\''+p.id+'\')"'
                   +' style="width:60px;text-align:center;font-size:14px;font-weight:700;color:var(--ink);background:var(--cream);border:1.5px solid var(--border);border-radius:8px;padding:4px 3px;">'
                 +'<span style="font-size:11px;color:var(--muted);">kg</span>'
               +'</div>'
@@ -3048,14 +2673,14 @@ function renderProductList() {
             // Rate
             +'<div>'
               +'<div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">'+rateLabel+'</div>'
-              +'<input type="number" id="rate-pl" value="'+ladiRate+'" min="0" step="1"'
-                +' oninput="setCartRate(\'pl\',this.value);updateLaadiEst(\'pl\')"'
+              +'<input type="number" id="rate-'+p.id+'" value="'+ladiRate+'" min="0" step="1"'
+                +' oninput="setCartRate(\''+p.id+'\',this.value);updateLaadiEst(\''+p.id+'\')"'
                 +' style="width:62px;text-align:right;font-size:14px;font-weight:700;color:var(--amber);background:var(--cream);border:1.5px solid var(--amber);border-radius:8px;padding:4px 5px;">'
             +'</div>'
             // Est amount
             +'<div style="text-align:right;">'
               +'<div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Est. Amt</div>'
-              +'<div style="font-size:17px;font-weight:700;color:'+amtColor+';" id="lest-pl">'+estAmtLabel+'</div>'
+              +'<div style="font-size:17px;font-weight:700;color:'+amtColor+';" id="lest-'+p.id+'">'+estAmtLabel+'</div>'
             +'</div>'
           +'</div>'
           +perLadiNote
@@ -3133,6 +2758,21 @@ function setCartQty(pid, val) {
   updateOrderSummary();
 }
 
+// v147 FIX: updateLaadiEst was referenced by the laadi card but never defined —
+// est. weight typed by the salesperson was never saved and Est. Amt never updated.
+function updateLaadiEst(pid){
+  const kEl=document.getElementById('estkg-'+pid), rEl=document.getElementById('rate-'+pid),
+        qEl=document.getElementById('qty-'+pid),   aEl=document.getElementById('lest-'+pid);
+  if(!STATE.cart[pid]) STATE.cart[pid]={qty:0,rate:getRate(pid),unit:'ladi'};
+  const c=STATE.cart[pid];
+  if(qEl) c.qty=Math.max(0,parseFloat(qEl.value)||0);
+  if(kEl) c.estKg=Math.max(0,parseFloat(kEl.value)||0);
+  if(rEl){ const r=parseFloat(rEl.value); if(r>0) c.rate=r; }
+  const amt=(c.qty>0&&c.estKg>0&&c.rate>0)?Math.round(c.estKg*c.rate):0;
+  if(aEl) aEl.textContent=amt>0?('~\u20b9'+amt.toLocaleString('en-IN')):'\u2014';
+  updateOrderSummary();
+}
+
 function onCartQtyBlur(pid, val) {
   // When user leaves the qty field, clean up zero entries
   const qty = parseFloat(val)||0;
@@ -3176,7 +2816,7 @@ function updateOrderSummary() {
     const p=PRODUCTS.find(x=>x.id===pid);
     const isLaadi = p.isLaadi||false;
     const estKg = v.estKg||0;
-    const laadiRate = isLaadi ? (v.rate||getRate('paneer')) : v.rate;
+    const laadiRate = isLaadi ? (v.rate||getRate(p.id)) : v.rate;
     const estAmt = isLaadi && estKg>0 ? Math.round(estKg*laadiRate) : 0;
     return {product:pid,name:p.name,qty:v.qty,rate:v.rate,unit:v.unit||p.unit,
             amount:isLaadi?estAmt:v.qty*v.rate, isLaadi, estKg};
@@ -3211,7 +2851,7 @@ function submitOrder() {
   const items = Object.entries(STATE.cart).map(([pid,v])=>{
     const p=PRODUCTS.find(x=>x.id===pid);
     const isLaadi = p.isLaadi||false;
-    const rate = isLaadi ? getRate('pl') : v.rate; // laadi always uses paneer rate
+    const rate = isLaadi ? (v.rate || getRate(pid)) : v.rate; // v147: typed laadi rate wins, else base paneer rate
     const estKg = isLaadi ? (v.estKg||0) : 0;
     return {product:pid,name:p.name,qty:v.qty,rate:rate,unit:isLaadi?'ladi':p.unit,
             amount:isLaadi?(estKg*rate):v.qty*rate,
@@ -3311,11 +2951,13 @@ function saveCustomerRates(customer, cart) {
       customer.pricing[pid] = usedRate;
       changed = true;
     }
-    // Paneer Laadi uses paneer rate — sync that too
-    if(pid === 'pl') {
-      const paneerRate = parseFloat(v.rate);
-      if(paneerRate > 0 && customer.pricing['paneer'] !== paneerRate) {
-        customer.pricing['paneer'] = paneerRate;
+    // v147: a laadi's rate syncs to its base paneer's stored rate
+    const _pd = PRODUCTS.find(x=>x.id===pid);
+    if(_pd && _pd.isLaadi) {
+      const _bid = _pd.rateFrom || 'paneer';
+      const _bRate = parseFloat(v.rate);
+      if(_bRate > 0 && customer.pricing[_bid] !== _bRate) {
+        customer.pricing[_bid] = _bRate;
         changed = true;
       }
     }
@@ -4782,6 +4424,24 @@ function morningRemindSend(custId){
 
 function getSheetUrl() { return STATE.sheetUrl||localStorage.getItem(LS_URL)||''; }
 
+// ═══ v145: ACCESS-CODE LAYER ═══════════════════════════════════════
+// Appends &key=<code> to every request aimed at our Apps Script.
+// The code lives only in this device's localStorage (Setup screen) —
+// it is NOT in this file, so the file itself holds no secret.
+function _withKey(u){
+  try{
+    const key=localStorage.getItem('gf_api_key')||'';
+    if(!key||typeof u!=='string') return u;
+    if(u.indexOf('script.google.com')<0||u.indexOf('key=')>=0) return u;
+    return u+(u.indexOf('?')>=0?'&':'?')+'key='+encodeURIComponent(key);
+  }catch(e){ return u; }
+}
+const _origFetch=window.fetch.bind(window);
+window.fetch=function(input,init){
+  if(typeof input==='string') input=_withKey(input);
+  return _origFetch(input,init);
+};
+
 // Send a GET request that works from file:// (no-cors + img fallback)
 // ── RELIABLE SYNC: waits for Apps Script to confirm, retries on failure ──
 // Uses no-cors as last resort only — tries proper fetch first so we know if it worked
@@ -4806,7 +4466,7 @@ async function fireAndWait(fullUrl, retries=3) {
           await fetch(fullUrl, { method:'GET', mode:'no-cors', cache:'no-store' });
         } catch(e2) {
           const img = new Image();
-          img.src = fullUrl;
+          img.src = _withKey(fullUrl);
           await new Promise(r => setTimeout(r, 500));
         }
         return false; // could not confirm
@@ -4826,12 +4486,12 @@ function fireAndForget(fullUrl) {
         .catch(() => {
           const img = new Image();
           img.onload = img.onerror = () => resolve(true);
-          img.src = fullUrl;
+          img.src = _withKey(fullUrl);
         });
     } else {
       const img = new Image();
       img.onload = img.onerror = () => resolve(true);
-      img.src = fullUrl;
+      img.src = _withKey(fullUrl);
     }
   });
 }
@@ -5481,6 +5141,7 @@ async function runSettleOrders(){
 
 // ── SETUP SCREEN ─────────────────────────────────────────────────────
 function renderSetup() {
+  setTimeout(function(){ var k=document.getElementById('gs_key'); if(k) k.value=localStorage.getItem('gf_api_key')||''; },0);
   const savedUrl=localStorage.getItem(LS_URL)||'';
   document.getElementById('gs_url').value=savedUrl;
   try{ _updateLangButtons(); var _u=document.getElementById('upi-id-input'); if(_u) _u.value=localStorage.getItem('gf_upi_id')||DEFAULT_UPI; }catch(e){}
@@ -5507,7 +5168,8 @@ function renderSetup() {
     const effectiveUrl = savedUrl || DEFAULT_SHEET_URL;
     if(effectiveUrl) {
       const baseUrl = window.location.href.split('?')[0].split('#')[0];
-      const shareUrl = baseUrl + '?sheetUrl=' + encodeURIComponent(effectiveUrl);
+      const _key = localStorage.getItem('gf_api_key')||'';
+      const shareUrl = baseUrl + '?sheetUrl=' + encodeURIComponent(effectiveUrl) + (_key?('&key='+encodeURIComponent(_key)):'');
       document.getElementById('share-link-text').value = shareUrl;
       shareLinkDiv.style.display = 'block';
     } else {
@@ -5521,6 +5183,9 @@ function saveUrl() {
   if(url && !url.startsWith('https://script.google.com')) { showToast('Paste the full Apps Script URL'); return; }
   STATE.sheetUrl=url;
   localStorage.setItem(LS_URL,url);
+  // v145: per-device access code — stored locally, never in the app file
+  const keyEl=document.getElementById('gs_key');
+  if(keyEl) localStorage.setItem('gf_api_key', keyEl.value.trim());
   updateSheetDot();
   showToast(url?'✓ URL saved — Share link ready below':'URL cleared');
   // Restart poll if delivery
@@ -5645,8 +5310,15 @@ function getAppsScriptCode() {
     '',
     'var SS_ID = SpreadsheetApp.getActiveSpreadsheet().getId();',
     '',
+    '// ── v145 ACCESS CODE ── set your own long random code, then flip',
+    '// ENFORCE_KEY to true ONLY after every phone runs app v145+ with the code entered.',
+    'var APP_KEY = "CHANGE-ME-TO-A-LONG-RANDOM-CODE";',
+    'var ENFORCE_KEY = false;',
     'function doGet(e) {',
     '  try {',
+    '    if (ENFORCE_KEY && String((e && e.parameter && e.parameter.key) || "") !== APP_KEY) {',
+    '      return jsonOut({error:"unauthorized"});',
+    '    }',
     '    var a = e.parameter.action || "";',
     '    if (a === "ping")         return handlePing(e);',
     '    if (a === "logOrder")     return logOrder(e.parameter);',
