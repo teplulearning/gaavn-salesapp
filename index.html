@@ -260,7 +260,7 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
     <div class="top-bar-left">
       <span class="logo">🐄 GF</span>
       <span class="role-badge" id="role-badge">SALES</span>
-      <span style="font-size:9px;color:var(--muted);margin-left:4px;" id="build-stamp">v142</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:4px;" id="build-stamp">v143</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <span class="date-chip" id="today-chip"></span>
@@ -1055,6 +1055,19 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
   </div>
 </div>
 
+<!-- v143: MORNING PAYMENT REMINDERS POPUP -->
+<div class="modal-overlay" id="modal-morning-remind">
+  <div class="modal-sheet" style="max-height:82vh;display:flex;flex-direction:column;">
+    <div class="modal-handle"></div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+      <div class="modal-title" style="margin:0;">⏰ Payment Reminders</div>
+      <button onclick="closeMorningRemind()" style="background:none;border:none;font-size:24px;font-weight:700;color:var(--muted);cursor:pointer;line-height:1;padding:4px 8px;" title="Close">✕</button>
+    </div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">Clients with payments due in the next 2 days. If a client has already paid, tap ✕ on that row to skip — and update the payment in the app.</div>
+    <div id="morning-remind-list" style="overflow-y:auto;flex:1;"></div>
+  </div>
+</div>
+
 <!-- WHATSAPP COPY MODAL -->
 <div class="modal-overlay" id="modal-remind-lang">
   <div class="modal-sheet" style="text-align:center;">
@@ -1814,8 +1827,11 @@ function isCustomerBlocked(custId) {
 
 function getCustomerCreditAlerts(custId) {
   // Returns list of orders that need attention (warning/due/overdue/stop)
+  // v143: also match by customer name — sheet-synced orders have no customerId
+  const _c = STATE.customers.find(c=>c.id===custId);
+  const _cn = _c ? String(_c.name||'').trim().toLowerCase() : '';
   return STATE.orders
-    .filter(o => o.customerId===custId &&
+    .filter(o => (o.customerId===custId || (_cn && String(o.customerName||'').trim().toLowerCase()===_cn)) &&
       (o.status==='due'||o.status==='partial'||o.status==='confirmed'||o.status==='delivered'))
     .map(o => ({order:o, cs:getCreditStatus(o)}))
     .filter(x => x.cs.status !== 'ok' && x.cs.status !== 'cash')
@@ -2048,6 +2064,7 @@ function enterApp(role) {
     h<12?'Good morning 🌅':h<17?'Good afternoon ☀️':'Good evening 🌙';
   buildNav(role);
   initApp();
+  setTimeout(function(){ try{ showMorningReminders(false); }catch(e){} }, 2500);  // v143 morning popup
 }
 
 // Keep selectRole for backward compat (called by URL params etc.)
@@ -4657,9 +4674,9 @@ function sendClientReminder(lang, custId) {
       : ('\n\n\uD83D\uDCB3 Pay online — UPI ID: '+upiId+'\nTap to pay: '+upiLink)) : '';
   let msg;
   if(lang==='mr'){
-    msg='नमस्कार '+cust.name+',\n\nगावन फ्रेश कडून आपल्या थकित रकमेबाबत ही एक नम्र आठवण.\n\nथकित बिले:\n'+lines+'\n\nएकूण थकित रक्कम: \u20b9'+totalOwed.toLocaleString('en-IN')+'\n\nआपला उधारीचा कालावधी '+cfg.label+' आहे. कृपया लवकरात लवकर रक्कम भरावी.'+payLine+'\n\nधन्यवाद \uD83D\uDE4F\n\u2014 गावन फ्रेश';
+    msg='नमस्कार '+cust.name+',\n\nगावन फ्रेश कडून आपल्या थकित रकमेबाबत ही एक नम्र आठवण.\n\n'+(alerts.length?('थकित बिले ('+alerts.length+'):\n'+lines):lines)+'\n\nएकूण थकित रक्कम: \u20b9'+totalOwed.toLocaleString('en-IN')+'\n\nआपला उधारीचा कालावधी '+cfg.label+' आहे. कृपया लवकरात लवकर रक्कम भरावी.'+payLine+'\n\nधन्यवाद \uD83D\uDE4F\n\u2014 गावन फ्रेश';
   } else {
-    msg='Dear '+cust.name+',\n\nThis is a gentle reminder from Gaavn Fresh regarding your outstanding payment.\n\nPending Invoices:\n'+lines+'\n\nTotal Outstanding: \u20b9'+totalOwed.toLocaleString('en-IN')+'\n\nYour credit period is '+cfg.label+'. Kindly arrange payment at the earliest to continue receiving our products.'+payLine+'\n\nThank you \uD83D\uDE4F\n\u2014 Gaavn Fresh';
+    msg='Dear '+cust.name+',\n\nThis is a gentle reminder from Gaavn Fresh regarding your outstanding payment.\n\n'+(alerts.length?('Pending Invoices ('+alerts.length+'):\n'+lines):lines)+'\n\nTotal Outstanding: \u20b9'+totalOwed.toLocaleString('en-IN')+'\n\nYour credit period is '+cfg.label+'. Kindly arrange payment at the earliest to continue receiving our products.'+payLine+'\n\nThank you \uD83D\uDE4F\n\u2014 Gaavn Fresh';
   }
   const phone=(cust.phone||'').replace(/\D/g,'');
   const waUrl = phone ? 'https://wa.me/91'+phone+'?text='+encodeURIComponent(msg) : 'https://wa.me/?text='+encodeURIComponent(msg);
@@ -4667,6 +4684,78 @@ function sendClientReminder(lang, custId) {
   if(m) m.classList.remove('open');
 }
 
+
+// ═══ v143: MORNING PAYMENT REMINDERS ═══════════════════════════════
+const LS_MREM_SHOWN='gf_mrem_shown_'+TODAY_KEY;
+const LS_MREM_DISMISS='gf_mrem_dismiss_'+TODAY_KEY;
+function _mremDismissed(){ try{ return JSON.parse(localStorage.getItem(LS_MREM_DISMISS)||'[]'); }catch(e){ return []; } }
+function buildMorningReminders(){
+  // Customers with unpaid orders whose credit due-date falls today..+2 days
+  const out=[], dism=new Set(_mremDismissed());
+  (STATE.customers||[]).forEach(function(c){
+    if(dism.has(c.id)) return;
+    const cn=String(c.name||'').trim().toLowerCase();
+    let total=0, count=0, nearest=999, dueDateStr='';
+    (STATE.orders||[]).forEach(function(o){
+      if(!(o.status==='due'||o.status==='partial'||o.status==='confirmed'||o.status==='delivered')) return;
+      if(!(o.customerId===c.id || String(o.customerName||'').trim().toLowerCase()===cn)) return;
+      const outAmt=(o.total||0)-((o.payment&&o.payment.amount)||0);
+      if(outAmt<=0) return;
+      const cs=getCreditStatus(o);
+      if(cs.status==='cash') return;
+      const daysToDue=(cs.creditDays||0)-cs.daysElapsed;   // 0 = due today
+      if(daysToDue<0||daysToDue>2) return;                 // only next-2-days window
+      total+=outAmt; count++;
+      if(daysToDue<nearest){ nearest=daysToDue; dueDateStr=cs.dueDate; }
+    });
+    if(count>0 && (c.phone||'').trim()) out.push({cust:c,total:total,count:count,daysToDue:nearest,dueDate:dueDateStr});
+  });
+  return out.sort(function(a,b){ return a.daysToDue-b.daysToDue || b.total-a.total; });
+}
+function renderMorningRemindList(){
+  const list=buildMorningReminders();
+  const box=document.getElementById('morning-remind-list');
+  if(!box) return list.length;
+  if(!list.length){
+    box.innerHTML='<div style="text-align:center;padding:26px;color:var(--muted);font-size:13px;">✅ No payments falling due in the next 2 days.</div>';
+    return 0;
+  }
+  box.innerHTML=list.map(function(x){
+    const dueTxt=x.daysToDue===0?'due TODAY':(x.daysToDue===1?'due tomorrow':'due '+x.dueDate);
+    return '<div style="display:flex;align-items:center;gap:8px;border:1.5px solid var(--border);border-radius:12px;padding:10px 12px;margin-bottom:8px;background:#fff;">'
+      +'<div style="flex:1;min-width:0;">'
+      +'<div style="font-weight:700;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+x.cust.name+'</div>'
+      +'<div style="font-size:12px;color:'+(x.daysToDue===0?'var(--red)':'var(--amber)')+';font-weight:700;">₹'+x.total.toLocaleString('en-IN')
+      +' <span style="color:var(--muted);font-weight:400;">· '+x.count+' invoice'+(x.count>1?'s':'')+' · '+dueTxt+'</span></div>'
+      +'</div>'
+      +'<button ontouchstart="" onclick="morningRemindSend(\''+x.cust.id+'\')" style="background:#25D366;color:#fff;border:none;border-radius:8px;padding:8px 10px;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap;">💬 Remind</button>'
+      +'<button ontouchstart="" onclick="dismissMorningRow(\''+x.cust.id+'\')" title="Skip — data may be outdated" style="background:none;border:1.5px solid var(--border);border-radius:8px;color:var(--muted);font-size:15px;font-weight:700;cursor:pointer;padding:6px 10px;line-height:1;">✕</button>'
+      +'</div>';
+  }).join('');
+  return list.length;
+}
+function showMorningReminders(force){
+  if(!force){
+    if(STATE.role!=='sales' && STATE.role!=='owner') return;
+    if(localStorage.getItem(LS_MREM_SHOWN)) return;      // once per day
+  }
+  const n=renderMorningRemindList();
+  if(!force && n===0) { localStorage.setItem(LS_MREM_SHOWN,'1'); return; }
+  document.getElementById('modal-morning-remind').classList.add('open');
+  localStorage.setItem(LS_MREM_SHOWN,'1');
+}
+function closeMorningRemind(){ document.getElementById('modal-morning-remind').classList.remove('open'); }
+function dismissMorningRow(custId){
+  const d=_mremDismissed(); if(d.indexOf(custId)<0) d.push(custId);
+  localStorage.setItem(LS_MREM_DISMISS, JSON.stringify(d));
+  renderMorningRemindList();
+}
+function morningRemindSend(custId){
+  _remindCustId=custId;
+  const c=STATE.customers.find(function(x){return x.id===custId;});
+  var lc=document.getElementById('remind-lang-cust'); if(lc&&c) lc.textContent=c.name;
+  document.getElementById('modal-remind-lang').classList.add('open');
+}
 
 function getSheetUrl() { return STATE.sheetUrl||localStorage.getItem(LS_URL)||''; }
 
