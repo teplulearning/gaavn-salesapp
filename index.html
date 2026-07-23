@@ -260,7 +260,7 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
     <div class="top-bar-left">
       <span class="logo">🐄 GF</span>
       <span class="role-badge" id="role-badge">SALES</span>
-      <span style="font-size:9px;color:var(--muted);margin-left:4px;" id="build-stamp">v148</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:4px;" id="build-stamp">v149</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <span class="date-chip" id="today-chip"></span>
@@ -758,6 +758,7 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
           style="width:100%;background:var(--cream);border:1.5px solid var(--border);border-radius:8px;padding:9px 12px;font-family:'DM Sans',sans-serif;font-size:14px;color:var(--ink);">
       </div>
       <div id="hist-fetch-status" style="font-size:12px;color:var(--muted);min-height:18px;margin-bottom:8px;"></div>
+      <button class="btn btn-primary" onclick="fetchAllHistoryMonths()" style="width:100%;margin-bottom:8px;">☁ Load ALL Months (full history)</button>
       <button class="btn btn-primary" onclick="fetchHistoryMonth()" style="width:100%;margin-bottom:8px;background:#2E7D32;">🗓 Load Whole Month</button>
       <div class="btn-row">
         <button class="btn btn-secondary" onclick="closeModal('modal-hist-fetch')">Cancel</button>
@@ -1448,14 +1449,62 @@ function isCustomerBlocked(custId) {
 function getCustomerCreditAlerts(custId) {
   // Returns list of orders that need attention (warning/due/overdue/stop)
   // v143: also match by customer name — sheet-synced orders have no customerId
+  // v149: respect gf_cutover like the Dues screen does — pre-cutover unpaid
+  // orders are already folded into opening balances, so counting them here
+  // double-counted dues in reminder messages.
   const _c = STATE.customers.find(c=>c.id===custId);
   const _cn = _c ? String(_c.name||'').trim().toLowerCase() : '';
+  const _cutover = localStorage.getItem('gf_cutover') || '2026-07-05';
   return STATE.orders
-    .filter(o => (o.customerId===custId || (_cn && String(o.customerName||'').trim().toLowerCase()===_cn)) &&
+    .filter(o => (String(o.date||'') >= _cutover) &&
+      (o.customerId===custId || (_cn && String(o.customerName||'').trim().toLowerCase()===_cn)) &&
       (o.status==='due'||o.status==='partial'||o.status==='confirmed'||o.status==='delivered'))
     .map(o => ({order:o, cs:getCreditStatus(o)}))
     .filter(x => x.cs.status !== 'ok' && x.cs.status !== 'cash')
     .sort((a,b) => a.order.date.localeCompare(b.order.date));
+}
+
+// v149: normalized name key — collapses inner whitespace exactly like the
+// backend's norm(), so 'Priya  General' (sheet typo) matches 'Priya General'.
+function _nameKey(x){ return String(x||'').replace(/\s+/g,' ').trim().toLowerCase(); }
+
+// v149: ALL unpaid orders for a customer (any credit status, including 'cash').
+// getCustomerCreditAlerts() excludes cash-basis orders, so Cash & Carry clients
+// with unpaid invoices showed ₹0 in reminders and 'Clear' in client detail
+// even while the Dues screen correctly showed money owed.
+function getCustomerUnpaidOrders(custId) {
+  const _c = STATE.customers.find(c=>c.id===custId);
+  const _cn = _c ? _nameKey(_c.name) : '';
+  const _cutover = localStorage.getItem('gf_cutover') || '2026-07-05';
+  return (STATE.orders||[])
+    .filter(o => (String(o.date||'') >= _cutover) &&
+      (o.customerId===custId || (_cn && _nameKey(o.customerName)===_cn)) &&
+      (o.status==='due'||o.status==='partial'||o.status==='confirmed'||o.status==='delivered') &&
+      (o.total||0) > (o.payment?.amount||0))
+    .sort((a,b) => String(a.date||'').localeCompare(String(b.date||'')));
+}
+
+// v149: total outstanding = ledger/opening balance + unpaid order dues.
+// Same number the Dues screen computes - use it everywhere a balance is shown.
+function getCustomerOutstanding(custId) {
+  const _c = STATE.customers.find(c=>c.id===custId);
+  const bal = _c ? (parseFloat(_c.balance)||0) : 0;
+  const orderDue = getCustomerUnpaidOrders(custId)
+    .reduce((s,o)=>s+Math.max(0,(o.total||0)-(o.payment?.amount||0)),0);
+  return bal + orderDue;
+}
+
+// v149: resolve a customer from an id OR a name-key. Dues cards pass a
+// normalized name instead of an id when the underlying orders were synced
+// from the sheet (those carry no customerId) — every button that did
+// find(c=>c.id===custId) and returned silently was dead for such clients.
+function resolveCustomer(custId) {
+  let c = STATE.customers.find(x=>x.id===custId);
+  if(!c) {
+    const _k=_nameKey(custId);
+    c = STATE.customers.find(x=>_nameKey(x.name)===_k);
+  }
+  return c||null;
 }
 const LS_ORDERS = 'gf_orders_' + TODAY_KEY;
 
@@ -1779,12 +1828,12 @@ function showScreen(id) {
     if(id==='home')       { renderDashboard(); if(STATE.sheetUrl) syncOrdersFromSheet(); }
     if(id==='orders')     { renderOrdersList(); if(STATE.sheetUrl) syncOrdersFromSheet(); }
     if(id==='customers')  { closeClientDetail(); renderCustomerList(); document.getElementById('add-cust-btn-wrap').style.display=(STATE.role!=='delivery'?'block':'none'); }
-    if(id==='dues')       renderDues();
+    if(id==='dues')     { renderDues();    setTimeout(function(){ try{ autoSyncHistory(false); }catch(e){} }, 400); }
     if(id==='approvals')  renderApprovals();
     if(id==='new-order')  initNewOrder();
     if(id==='setup')      { renderSetup(); renderGSTMaster(); }
     if(id==='manage')     renderManageCustomers();
-    if(id==='history')    renderHistory();
+    if(id==='history')  { renderHistory(); setTimeout(function(){ try{ autoSyncHistory(false); }catch(e){} }, 400); }
     if(id==='payment-in') renderPaymentIn();
     try{ attachSearchClears(); }catch(e){}
   });
@@ -3431,14 +3480,29 @@ function renderCustomerList(q='') {
   if(q) custs = custs.filter(c=>c.name.toLowerCase().includes(q.toLowerCase())||
     (c.area||'').toLowerCase().includes(q.toLowerCase())||
     (c.category||'').toLowerCase().includes(q.toLowerCase()));
+  // v149: outstanding = ledger balance + unpaid order dues (was c.balance only,
+  // which showed '✓ Clear' for clients whose dues live in unpaid orders).
+  const _cutover = localStorage.getItem('gf_cutover') || '2026-07-05';
+  const _dueByName = {}, _dueById = {};
+  (STATE.orders||[]).forEach(o=>{
+    if(String(o.date||'') < _cutover) return;
+    if(!(o.status==='due'||o.status==='partial'||o.status==='confirmed'||o.status==='delivered')) return;
+    const out=(o.total||0)-(o.payment?.amount||0); if(out<=0) return;
+    const k=String(o.customerName||'').trim().toLowerCase();
+    if(k) _dueByName[k]=(_dueByName[k]||0)+out;
+    if(o.customerId && !k) _dueById[o.customerId]=(_dueById[o.customerId]||0)+out;
+  });
+  const _outstanding = c => (parseFloat(c.balance)||0)
+    + (_dueByName[String(c.name||'').trim().toLowerCase()]||0)
+    + (_dueById[c.id]||0);
   // Sort: customers with balance first
-  custs = [...custs].sort((a,b)=>(parseFloat(b.balance)||0)-(parseFloat(a.balance)||0));
+  custs = [...custs].sort((a,b)=>_outstanding(b)-_outstanding(a));
   const sub = document.getElementById('cust-page-sub');
   if(sub) sub.textContent = custs.length + ' clients' + (custFilterActive!=='all'?` · ${custFilterActive}`:'');
   const container = document.getElementById('customer-list-container');
   if(!custs.length) { container.innerHTML='<div class="empty-state"><div class="empty-icon">🏢</div><p>No clients found</p></div>'; return; }
   container.innerHTML = custs.map(c=>{
-    const bal = parseFloat(c.balance)||0;
+    const bal = _outstanding(c);   // v149: include unpaid order dues
     const cfg = getCreditConfig(c.category||'', c.name);
     return `<div style="background:var(--surface);border-radius:12px;padding:12px 14px;margin-bottom:8px;border:1.5px solid var(--border);cursor:pointer;display:flex;align-items:center;gap:10px;" onclick="openClientDetail('${c.id}')">
       <div style="flex:1;min-width:0;">
@@ -3502,7 +3566,10 @@ async function openClientDetail(id) {
       <div><div style="color:var(--muted);font-size:10px;">GSTIN</div><b>${c.gstin||'—'}</b></div>
     </div>`;
 
-  const bal = parseFloat(c.balance)||0;
+  // v149: was parseFloat(c.balance) only - ignored unpaid orders, so clients
+  // with order dues but zero ledger balance showed '✓ Clear' here while the
+  // Dues screen showed the real amount owed.
+  const bal = getCustomerOutstanding(id);
   document.getElementById('client-balance-card').innerHTML = `
     <div style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px;">
       <div style="min-width:0;">
@@ -3511,16 +3578,18 @@ async function openClientDetail(id) {
       </div>
       <div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0;">
         <button onclick="recordDuePayment('${c.id}')" style="background:var(--green);color:#fff;border:none;border-radius:8px;padding:8px 12px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;">💰 Record Payment</button>
-        ${c.phone?`<div style="display:flex;gap:6px;">
+        ${`<div style="display:flex;gap:6px;">
           <button ontouchstart="" onclick="sendClientReminder('en','${c.id}')" style="flex:1;background:#25D366;color:#fff;border:none;border-radius:8px;padding:8px 10px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;">📱 Eng</button>
           <button ontouchstart="" onclick="sendClientReminder('mr','${c.id}')" style="flex:1;background:#1A9F53;color:#fff;border:none;border-radius:8px;padding:8px 10px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;">📱 मराठी</button>
-        </div>`:''}
+        </div>`}
       </div>
     </div>`;
 
   document.getElementById('client-txn-list').innerHTML = '<div style="text-align:center;padding:20px;color:var(--muted);">Loading transactions...</div>';
 
-  let orders = STATE.orders.filter(o => o.customerId === id || o.customerName === c.name)
+  const _nmLc = (c.name||'').trim().toLowerCase();
+  let orders = STATE.orders.filter(o => o.customerId === id ||
+      String(o.customerName||'').trim().toLowerCase() === _nmLc)
     .sort((a,b) => (b.date||'').localeCompare(a.date||''));
 
   // Always fetch from sheet for complete item details
@@ -3532,9 +3601,16 @@ async function openClientDetail(id) {
       const data = await res.json();
       if (data.orders && data.orders.length) {
         const orderMap = {};
+        const _wc = (c.name||'').trim().toLowerCase();
         data.orders.forEach(row => {
           const oid = String(row['Order ID']||row['id']||'').trim();
           if(!oid||oid.startsWith('TOTAL')) return;
+          // v149: backend may return ALL customers' orders (it doesn't filter
+          // when no phone is passed) — keep only THIS customer's rows, same
+          // guard sendStatement() already has. Without this, a client with no
+          // phone number showed everyone's transactions here.
+          const _rc = String(row['Customer']||row['customerName']||'').trim().toLowerCase();
+          if(_wc && _rc && _rc !== _wc) return;
           if(!orderMap[oid]) orderMap[oid] = {
             id:oid, date:String(row['Date']||row['date']||''),
             customerName:String(row['Customer']||row['customerName']||c.name),
@@ -3710,7 +3786,7 @@ function renderDues() {
 
   // ── Group all unpaid orders by customer ───────────────────────────
   const byCust = {};
-  const _kf = n => (n||'').trim().toLowerCase();
+  const _kf = _nameKey;   // v149: collapses inner whitespace so sheet-typo names group correctly
   // real customer id resolved from the customer list, so action buttons still work
   const _idByName = {};
   (STATE.customers||[]).forEach(c=>{ if(c.name) _idByName[_kf(c.name)] = c.id; });
@@ -3789,10 +3865,11 @@ function renderDues() {
       const _safeId = encodeURIComponent(custId);
       html += '<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">';
       html += '<button ontouchstart="" data-cid="'+_safeId+'" onclick="recordDuePayment(decodeURIComponent(this.dataset.cid))" style="flex:1;padding:8px;background:var(--green);color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">&#128176; Record Payment</button>';
-      if(custPhone) {
-        html += '<button ontouchstart="" data-cid="'+_safeId+'" onclick="sendClientReminder(\'en\',decodeURIComponent(this.dataset.cid))" style="padding:8px 10px;background:#25D366;color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">&#128242; Eng</button>';
+      // v149: buttons no longer gated on custPhone — clients without a saved
+      // phone number had NO reminder buttons at all. With no number, WhatsApp
+      // opens a contact picker and the message is pre-filled.
+      html += '<button ontouchstart="" data-cid="'+_safeId+'" onclick="sendClientReminder(\'en\',decodeURIComponent(this.dataset.cid))" style="padding:8px 10px;background:#25D366;color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">&#128242; Eng</button>';
       html += '<button ontouchstart="" data-cid="'+_safeId+'" onclick="sendClientReminder(\'mr\',decodeURIComponent(this.dataset.cid))" style="padding:8px 10px;background:#1A9F53;color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">&#128242; मराठी</button>';
-      }
       html += '<button ontouchstart="" data-cid="'+_safeId+'" data-tp="internal" onclick="sendCreditWA(decodeURIComponent(this.dataset.cid),this.dataset.tp)" style="padding:8px 12px;background:var(--amber);color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">&#128203; Alert Sales</button>';
       html += '<button ontouchstart="" data-cid="'+_safeId+'" onclick="sendStatement(decodeURIComponent(this.dataset.cid))" style="padding:8px 12px;background:#1A527A;color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">&#128196; Bill</button>';
       html += '<button ontouchstart="" data-cid="'+_safeId+'" onclick="showPayQR(decodeURIComponent(this.dataset.cid))" style="padding:8px 12px;background:#5B2C8D;color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">&#128241; Pay QR</button>';
@@ -3939,8 +4016,9 @@ function buildInvoicePDF(o, invNo, withGST, gstRate){
 }
 
 async function sendStatement(custId) {
-  const cust = STATE.customers.find(c => c.id === custId);
-  if (!cust) return;
+  const cust = resolveCustomer(custId);   // v149: was silent return on name-key ids
+  if (!cust) { showToast('Customer not found — check client list'); return; }
+  custId = cust.id;
   showToast('Generating bill...', 4000);
 
   // Gather this customer's orders from LOCAL storage (all dates), so item
@@ -4201,8 +4279,8 @@ async function sendStatement(custId) {
 
 function recordDuePayment(custId) {
   // Open payment-in modal pre-filled for this customer
-  const cust = STATE.customers.find(c=>c.id===custId);
-  if(!cust) return;
+  const cust = resolveCustomer(custId);   // v149: was silent return on name-key ids
+  if(!cust) { showToast('Customer not found — check client list'); return; }
   document.getElementById('pi-cust-input').value = cust.name;
   document.getElementById('pi-cust-id').value    = cust.id;
   document.getElementById('pi-date').value       = TODAY_KEY;
@@ -4219,7 +4297,8 @@ async function shareQR(){
   var due=0;
   if(c){
     var opening=parseFloat(c.balance)||0;
-    var od=(STATE.orders||[]).filter(function(o){return (o.customerId===_qrCustId||o.customerName===name)&&(o.status==='due'||o.status==='partial'||((o.status==='confirmed'||o.status==='delivered')&&(o.total||0)>((o.payment&&o.payment.amount)||0)));}).reduce(function(s,o){return s+((o.total||0)-((o.payment&&o.payment.amount)||0));},0);
+    var _sn=String(name||'').trim().toLowerCase();
+    var od=(STATE.orders||[]).filter(function(o){return (o.customerId===_qrCustId||String(o.customerName||'').trim().toLowerCase()===_sn)&&(o.status==='due'||o.status==='partial'||((o.status==='confirmed'||o.status==='delivered')&&(o.total||0)>((o.payment&&o.payment.amount)||0)));}).reduce(function(s,o){return s+((o.total||0)-((o.payment&&o.payment.amount)||0));},0);
     due=Math.round((opening+od)*100)/100;
   }
   var upi=(localStorage.getItem('gf_upi_id')||DEFAULT_UPI).trim();
@@ -4239,11 +4318,12 @@ async function shareQR(){
 
 var _qrCustId=null;
 function showPayQR(custId){
-  _qrCustId=custId;
-  var c=STATE.customers.find(function(x){return x.id===custId;});
+  var c=resolveCustomer(custId);   // v149: was id-only lookup — dead for name-key ids
   if(!c){ showToast('Customer not found'); return; }
+  custId=c.id; _qrCustId=custId;
   var opening=parseFloat(c.balance)||0;
-  var orderDue=(STATE.orders||[]).filter(function(o){ return (o.customerId===custId||o.customerName===c.name) && (o.status==='due'||o.status==='partial'||((o.status==='confirmed'||o.status==='delivered')&&(o.total||0)>((o.payment&&o.payment.amount)||0))); }).reduce(function(s,o){return s+((o.total||0)-((o.payment&&o.payment.amount)||0));},0);
+  var _qn=String(c.name||'').trim().toLowerCase();
+  var orderDue=(STATE.orders||[]).filter(function(o){ return (o.customerId===custId||String(o.customerName||'').trim().toLowerCase()===_qn) && (o.status==='due'||o.status==='partial'||((o.status==='confirmed'||o.status==='delivered')&&(o.total||0)>((o.payment&&o.payment.amount)||0))); }).reduce(function(s,o){return s+((o.total||0)-((o.payment&&o.payment.amount)||0));},0);
   var due=Math.round((opening+orderDue)*100)/100;
   var upi=(localStorage.getItem('gf_upi_id')||DEFAULT_UPI).trim();
   var link='upi://pay?pa='+encodeURIComponent(upi)+'&pn='+encodeURIComponent('Teplu Learning Pvt Ltd')+(due>0?('&am='+due):'')+'&cu=INR&tn='+encodeURIComponent('Gaavn Fresh payment');
@@ -4281,20 +4361,30 @@ function _openExternal(url){
 }
 var _remindCustId=null;
 function sendCreditWA(custId, type) {
-  const cust = STATE.customers.find(c=>c.id===custId);
-  if(!cust) return;
+  // v149: resolve by normalized name if the id lookup misses (dues cards can
+  // pass a name-key when sheet-synced orders carry no customerId).
+  let cust = resolveCustomer(custId);
+  if(cust) custId = cust.id;
+  if(!cust) { showToast('Customer not found — check client list'); return; }
   const alerts = getCustomerCreditAlerts(custId);
   const balance = parseFloat(cust.balance)||0;
-  if(!alerts.length && balance <= 0) { showToast('No overdue orders for this customer'); return; }
+  // v149: include cash-basis unpaid orders — Cash & Carry clients with dues
+  // were blocked here with 'No overdue orders'.
+  const unpaidFB = alerts.length ? [] : getCustomerUnpaidOrders(custId);
+  const _fbDue = unpaidFB.reduce((s,o)=>s+((o.total||0)-(o.payment?.amount||0)),0);
+  if(!alerts.length && _fbDue <= 0 && balance <= 0) { showToast('No overdue orders for this customer'); return; }
   if(type==='client') {
     _remindCustId = custId;
     var lc=document.getElementById('remind-lang-cust'); if(lc) lc.textContent=cust.name;
     document.getElementById('modal-remind-lang').classList.add('open');
     return;
   }
-  const totalOwed = alerts.length ? alerts.reduce((s,x)=>s+((x.order.total||0)-(x.order.payment?.amount||0)),0) : balance;
+  const totalOwed = alerts.length ? alerts.reduce((s,x)=>s+((x.order.total||0)-(x.order.payment?.amount||0)),0) : (_fbDue + balance);
   const orderLines = alerts.length
     ? alerts.map(x=>{ const o=(x.order.total||0)-(x.order.payment?.amount||0); return '\u2022 Order #'+x.order.id+' dated '+x.order.date+' \u2014 \u20b9'+o.toLocaleString('en-IN')+' ('+x.cs.daysOverdue+'d overdue)'; }).join('\n')
+    : unpaidFB.length
+    ? unpaidFB.map(o=>{ const v=(o.total||0)-(o.payment?.amount||0); return '\u2022 Order #'+o.id+' dated '+o.date+' \u2014 \u20b9'+v.toLocaleString('en-IN'); }).join('\n')
+      + (balance>0 ? '\n\u2022 Outstanding balance: \u20b9'+balance.toLocaleString('en-IN') : '')
     : '\u2022 Outstanding balance: \u20b9'+balance.toLocaleString('en-IN');
   const blocked = alerts.some(x=>x.cs.stopOrder);
   const msg = '\uD83D\uDD34 PAYMENT ALERT \u2014 Gaavn Fresh\n\nCustomer: '+cust.name+'\nCategory: '+cust.category+(cust.phone?'\nPhone: '+cust.phone:'')+'\n\nOverdue Invoices:\n'+orderLines+'\n\nTotal Due: \u20b9'+totalOwed.toLocaleString('en-IN')+(blocked?'\n\n\u26a0 Payment significantly overdue \u2014 please prioritise collection.':'')+'\n\nPlease follow up for payment immediately.';
@@ -4304,16 +4394,30 @@ function sendCreditWA(custId, type) {
 function sendClientReminder(lang, custId) {
   custId = custId || _remindCustId;
   var m=document.getElementById('modal-remind-lang'); if(m) m.classList.remove('open');
-  const cust = STATE.customers.find(c=>c.id===custId); if(!cust) return;
+  // v149: dues cards can pass a name-key instead of a real id (orders synced
+  // from the sheet have no customerId) — silent return here meant the button
+  // did nothing. Resolve by normalized name as fallback and say so if missing.
+  let cust = resolveCustomer(custId);
+  if(cust) custId = cust.id;
+  if(!cust) { showToast('Customer not found — check client list'); return; }
   const alerts = getCustomerCreditAlerts(custId);
   const balance = parseFloat(cust.balance)||0;
-  const totalOwed = alerts.length ? alerts.reduce((s,x)=>s+((x.order.total||0)-(x.order.payment?.amount||0)),0) : balance;
+  // v149: alerts exclude cash-basis orders, so Cash & Carry clients got ₹0
+  // reminders. Fall back to ALL unpaid orders + ledger balance.
+  const unpaidFallback = alerts.length ? [] : getCustomerUnpaidOrders(custId);
+  const _fbDue = unpaidFallback.reduce((s,o)=>s+((o.total||0)-(o.payment?.amount||0)),0);
+  const totalOwed = alerts.length ? alerts.reduce((s,x)=>s+((x.order.total||0)-(x.order.payment?.amount||0)),0) : (_fbDue + balance);
   const cfg = getCreditConfig(cust.category, cust.name);
   const upiId=(localStorage.getItem('gf_upi_id')||DEFAULT_UPI).trim();
   const lines = alerts.length
     ? alerts.map(function(x){ var o=(x.order.total||0)-((x.order.payment&&x.order.payment.amount)||0); return lang==='mr'
         ? ('\u2022 बिल #'+x.order.id+' दिनांक '+x.order.date+' \u2014 \u20b9'+o.toLocaleString('en-IN'))
         : ('\u2022 Order #'+x.order.id+' dated '+x.order.date+' \u2014 \u20b9'+o.toLocaleString('en-IN')); }).join('\n')
+    : unpaidFallback.length
+    ? unpaidFallback.map(function(o){ var v=(o.total||0)-((o.payment&&o.payment.amount)||0); return lang==='mr'
+        ? ('\u2022 बिल #'+o.id+' दिनांक '+o.date+' \u2014 \u20b9'+v.toLocaleString('en-IN'))
+        : ('\u2022 Order #'+o.id+' dated '+o.date+' \u2014 \u20b9'+v.toLocaleString('en-IN')); }).join('\n')
+      + (balance>0 ? '\n'+(lang==='mr'?('\u2022 थकित शिल्लक: \u20b9'+balance.toLocaleString('en-IN')):('\u2022 Outstanding balance: \u20b9'+balance.toLocaleString('en-IN'))) : '')
     : (lang==='mr' ? ('\u2022 थकित शिल्लक: \u20b9'+balance.toLocaleString('en-IN')) : ('\u2022 Outstanding balance: \u20b9'+balance.toLocaleString('en-IN')));
   const upiLink='upi://pay?pa='+encodeURIComponent(upiId)+'&pn='+encodeURIComponent('Teplu Learning Pvt Ltd')+'&am='+totalOwed+'&cu=INR&tn='+encodeURIComponent('Gaavn Fresh payment');
   const payLine = upiId ? (lang==='mr'
@@ -6273,7 +6377,7 @@ function renderManageCustomers(q='') {
   const list = document.getElementById('manage-list');
   if(!custs.length){ list.innerHTML='<div class="empty-state"><div class="empty-icon">👥</div><p>No customers found</p></div>'; return; }
   list.innerHTML = custs.map(c=>{
-    const bal = c.balance||0;
+    const bal = getCustomerOutstanding(c.id);   // v149: was c.balance only — ignored order dues
     const balTag = bal>0
       ? `<span style="font-size:11px;font-weight:700;color:var(--red);">₹${bal.toLocaleString('en-IN')} due</span>`
       : `<span style="font-size:11px;color:var(--green);">✓ Clear</span>`;
@@ -6629,10 +6733,16 @@ function cacheOrdersForDate(date, orders) {
   const merged = [...existing];
   orders.forEach(o => {
     const idx = merged.findIndex(x => x.id === o.id);
-    if(idx >= 0) merged[idx] = {...merged[idx], ...o};
+    // v149: if the local copy has un-pushed edits (synced:false), keep it —
+    // it will be pushed UP by autoSyncPending; overwriting it with the sheet
+    // row would silently revert the edit.
+    if(idx >= 0) { if(merged[idx] && merged[idx].synced === false) return; merged[idx] = {...merged[idx], ...o}; }
     else merged.push(o);
   });
-  localStorage.setItem(key, JSON.stringify(merged));
+  // v149: quota errors here used to abort month-loads with a misleading
+  // 'check Sheet URL' message and silently truncate History totals.
+  try { localStorage.setItem(key, JSON.stringify(merged)); }
+  catch(e) { showToast('\u26a0 Phone storage full \u2014 could not cache '+date+'. History totals will be incomplete.'); }
 }
 
 // ── MANUAL LINE ITEMS FOR GST REPORT ─────────────────────────────────
@@ -7089,6 +7199,9 @@ function renderHistory() {
     <div style="background:var(--surface);border:1.5px solid var(--border);border-radius:20px;padding:4px 12px;font-size:11px;font-weight:600;color:var(--muted);">
       ${dates.length} days
     </div>
+    <div style="flex-basis:100%;font-size:10px;color:var(--muted);margin-top:2px;">
+      ☁ Auto-syncs with the Sheet when online${(function(){ try{ const t=parseInt(localStorage.getItem('gf_hist_autosync_ts'),10)||0; return t?(' · last sync '+new Date(t).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'})):''; }catch(e){ return ''; } })()} — tap <b>Sheet → Load ALL Months</b> to force a full reload.
+    </div>
   `;
 
   // Build date group cards
@@ -7390,15 +7503,11 @@ async function fetchHistoryDate() {
   }
 }
 
-async function fetchHistoryMonth() {
-  const dateVal = document.getElementById('hist-fetch-date').value;
-  if(!dateVal) { showToast('Pick any date in the month first'); return; }
-  const month = dateVal.slice(0,7);
+// v149: core month loader shared by single-month and load-all flows.
+// Fetches one month from the Sheet and caches each day locally.
+async function _loadMonthFromSheet(month, statusEl) {
   const url = getSheetUrl();
-  if(!url) { showToast('\u2699 Set Sheet URL in Setup first'); closeModal('modal-hist-fetch'); showScreen('setup'); return; }
-  const statusEl = document.getElementById('hist-fetch-status');
-  statusEl.style.color = 'var(--muted)';
-  statusEl.textContent = '\u23F3 Loading ' + month + ' from Sheet...';
+  if(!url) throw new Error('no-url');
 
   function normDate(row){
     var d = row._date || row['Date'] || '';
@@ -7432,35 +7541,78 @@ async function fetchHistoryMonth() {
     return seq.map(id=>map[id]).filter(o=>o.id);
   }
 
+  let rows = null;
   try {
-    let rows = null;
-    try {
-      const r = await fetch(url+'?action=getMonthOrders&month='+month, {cache:'no-store'});
-      const d = await r.json();
-      if(d && Array.isArray(d.orders) && !d.error) rows = d.orders;
-    } catch(e) {}
-    if(rows === null) {
-      rows = [];
-      const parts = month.split('-'); const yy=+parts[0], mm=+parts[1];
-      const days = new Date(yy, mm, 0).getDate();
-      for(let dd=1; dd<=days; dd++){
-        const ds = month+'-'+String(dd).padStart(2,'0');
-        statusEl.textContent = '\u23F3 '+ds+' ...';
-        try { const r=await fetch(url+'?action=getOrders&date='+ds,{cache:'no-store'}); const d=await r.json(); (d.orders||[]).forEach(o=>{ o._date=ds; rows.push(o); }); } catch(e){}
-      }
+    const r = await fetch(url+'?action=getMonthOrders&month='+month, {cache:'no-store'});
+    const d = await r.json();
+    if(d && Array.isArray(d.orders) && !d.error) rows = d.orders;
+  } catch(e) {}
+  if(rows === null) {
+    rows = [];
+    const parts = month.split('-'); const yy=+parts[0], mm=+parts[1];
+    const days = new Date(yy, mm, 0).getDate();
+    for(let dd=1; dd<=days; dd++){
+      const ds = month+'-'+String(dd).padStart(2,'0');
+      if(statusEl) statusEl.textContent = '\u23F3 '+ds+' ...';
+      try { const r=await fetch(url+'?action=getOrders&date='+ds,{cache:'no-store'}); const d=await r.json(); (d.orders||[]).forEach(o=>{ o._date=ds; rows.push(o); }); } catch(e){}
     }
-    if(!rows.length){ statusEl.textContent='\u26A0 No orders found for '+month+' in the Sheet.'; statusEl.style.color='var(--amber,#C8830A)'; return; }
-    const byDate={};
-    rows.forEach(row=>{ const dt=normDate(row); if(!dt) return; (byDate[dt]=byDate[dt]||[]).push(row); });
-    let totalOrders=0, dateCount=0;
-    Object.keys(byDate).forEach(dt=>{ const ords=buildOrders(byDate[dt], dt).filter(o=>!isOrderDeleted(o.id)); if(ords.length){ cacheOrdersForDate(dt, ords); totalOrders+=ords.length; dateCount++; } });
-    statusEl.textContent='\u2713 '+totalOrders+' orders across '+dateCount+' day(s) loaded';
+  }
+  const byDate={};
+  rows.forEach(row=>{ const dt=normDate(row); if(!dt) return; (byDate[dt]=byDate[dt]||[]).push(row); });
+  let totalOrders=0, dateCount=0;
+  Object.keys(byDate).forEach(dt=>{ const ords=buildOrders(byDate[dt], dt).filter(o=>!isOrderDeleted(o.id)); if(ords.length){ cacheOrdersForDate(dt, ords); totalOrders+=ords.length; dateCount++; } });
+  return {orders:totalOrders, days:dateCount};
+}
+
+async function fetchHistoryMonth() {
+  const dateVal = document.getElementById('hist-fetch-date').value;
+  if(!dateVal) { showToast('Pick any date in the month first'); return; }
+  const month = dateVal.slice(0,7);
+  const url = getSheetUrl();
+  if(!url) { showToast('\u2699 Set Sheet URL in Setup first'); closeModal('modal-hist-fetch'); showScreen('setup'); return; }
+  const statusEl = document.getElementById('hist-fetch-status');
+  statusEl.style.color = 'var(--muted)';
+  statusEl.textContent = '\u23F3 Loading ' + month + ' from Sheet...';
+  try {
+    const res = await _loadMonthFromSheet(month, statusEl);
+    if(!res.orders){ statusEl.textContent='\u26A0 No orders found for '+month+' in the Sheet.'; statusEl.style.color='var(--amber,#C8830A)'; return; }
+    statusEl.textContent='\u2713 '+res.orders+' orders across '+res.days+' day(s) loaded';
     statusEl.style.color='var(--green,#2E7D32)';
-    setTimeout(()=>{ closeModal('modal-hist-fetch'); renderHistory(); showToast('\u2713 Loaded '+totalOrders+' orders for '+month); }, 900);
+    setTimeout(()=>{ closeModal('modal-hist-fetch'); renderHistory(); showToast('\u2713 Loaded '+res.orders+' orders for '+month); }, 900);
   } catch(e) {
     statusEl.textContent='\u2717 Failed to load month — check Sheet URL in Setup';
     statusEl.style.color='var(--red,#C62828)';
   }
+}
+
+// v149: load EVERY month from the Sheet in one go. The History screen only
+// totals what is cached on THIS device, so orders placed from other phones
+// or in months never loaded here were missing from the summary — that is
+// why the total showed less than the Sheet's actuals.
+async function fetchAllHistoryMonths() {
+  const url = getSheetUrl();
+  if(!url) { showToast('\u2699 Set Sheet URL in Setup first'); closeModal('modal-hist-fetch'); showScreen('setup'); return; }
+  const statusEl = document.getElementById('hist-fetch-status');
+  statusEl.style.color = 'var(--muted)';
+  let m = new Date(); m.setDate(1);
+  let empty=0, months=0, orders=0;
+  // walk backwards month by month; stop after 3 consecutive empty months (max 36)
+  for(let i=0; i<36 && empty<3; i++){
+    const tag = m.getFullYear()+'-'+String(m.getMonth()+1).padStart(2,'0');
+    statusEl.textContent='\u23F3 Loading '+tag+' from Sheet...';
+    try {
+      const res = await _loadMonthFromSheet(tag, null);
+      if(res.orders>0){ orders+=res.orders; months++; empty=0; } else { empty++; }
+    } catch(e){ empty++; }
+    m.setMonth(m.getMonth()-1);
+  }
+  if(!orders){ statusEl.textContent='\u26A0 No orders found in the Sheet.'; statusEl.style.color='var(--amber,#C8830A)'; return; }
+  statusEl.textContent='\u2713 '+orders+' orders across '+months+' month(s) loaded';
+  statusEl.style.color='var(--green,#2E7D32)';
+  setTimeout(()=>{ closeModal('modal-hist-fetch');
+    const f=document.getElementById('hist-date-filter'); if(f) f.value='';
+    renderHistory(); showToast('\u2713 Full history loaded \u2014 totals now include all months');
+  }, 900);
 }
 
 
@@ -8742,9 +8894,92 @@ async function autoSyncPending(silent){
   updateOnlineIndicator();
   if(ok) showToast('✓ Synced '+ok+' order'+(ok>1?'s':'')+' to Sheet');
 }
-window.addEventListener('online', function(){ updateOnlineIndicator(); showToast('🟢 Back online — syncing pending orders...'); autoSyncPending(false); });
+// ── v149: AUTO-PULL HISTORY FROM THE SHEET ───────────────────────────
+// autoSyncPending (above) pushes this phone's orders UP. This pulls everyone
+// else's orders DOWN automatically whenever the phone is online, so History,
+// Dues and My Orders show the Sheet's actual data on every device — no manual
+// 'Load Month' needed.
+const LS_HIST_SYNCED  = 'gf_hist_synced_months';
+const LS_HIST_SYNC_TS = 'gf_hist_autosync_ts';
+function _histSyncedMap(){ try{ return JSON.parse(localStorage.getItem(LS_HIST_SYNCED)||'{}'); }catch(e){ return {}; } }
+function _histSyncedSave(m){ try{ localStorage.setItem(LS_HIST_SYNCED, JSON.stringify(m)); }catch(e){} }
+function _countCachedOrders(){
+  let n=0;
+  try{
+    for(let i=0;i<localStorage.length;i++){
+      const k=localStorage.key(i);
+      if(k && k.indexOf('gf_orders_')===0 && /^gf_orders_\d{4}-\d{2}-\d{2}$/.test(k)){
+        try{ n+=(JSON.parse(localStorage.getItem(k)||'[]')||[]).length; }catch(e){}
+      }
+    }
+  }catch(e){}
+  return n;
+}
+function _monthTagOf(d){ return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'); }
+let _histAutoSyncing=false;
+async function autoSyncHistory(force){
+  if(_histAutoSyncing) return;
+  if(!navigator.onLine) return;
+  const url=(typeof getSheetUrl==='function'?getSheetUrl():'')||'';
+  if(!url) return;
+  const last=parseInt(localStorage.getItem(LS_HIST_SYNC_TS),10)||0;
+  if(!force && Date.now()-last < 10*60*1000) return;   // at most every 10 min
+  _histAutoSyncing=true;
+  try{ localStorage.setItem(LS_HIST_SYNC_TS, String(Date.now())); }catch(e){}
+  const before=_countCachedOrders();
+  const synced=_histSyncedMap();
+  const now=new Date(), curTag=_monthTagOf(now);
+  try{
+    // current month: always refresh. previous month: refresh in the first
+    // 3 days of a new month or if never fully synced.
+    const plan=[curTag];
+    const prev=new Date(now); prev.setDate(1); prev.setMonth(prev.getMonth()-1);
+    const prevTag=_monthTagOf(prev);
+    if(now.getDate()<=3 || !synced[prevTag] || !synced[prevTag].final) plan.push(prevTag);
+    for(const tag of plan){
+      try{ const res=await _loadMonthFromSheet(tag, null);
+        synced[tag]={ts:Date.now(), orders:res.orders, final:(tag!==curTag)}; }catch(e){}
+    }
+    // older months: one-time backward walk, stop after 3 consecutive empty
+    let m=new Date(now); m.setDate(1); m.setMonth(m.getMonth()-2);
+    let empty=0;
+    for(let i=0;i<34 && empty<3;i++){
+      const tag=_monthTagOf(m);
+      if(synced[tag]){
+        // already checked before — known-empty months count toward the stop
+        // streak so repeat runs don't keep probing ever-older months
+        empty = (synced[tag].orders>0) ? 0 : empty+1;
+      } else {
+        try{ const res=await _loadMonthFromSheet(tag, null);
+          synced[tag]={ts:Date.now(), orders:res.orders, final:true};
+          empty = res.orders>0 ? 0 : empty+1;
+        }catch(e){ empty++; }
+      }
+      m.setMonth(m.getMonth()-1);
+    }
+  } finally {
+    _histSyncedSave(synced);
+    _histAutoSyncing=false;
+  }
+  const added=_countCachedOrders()-before;
+  if(added>0){
+    try{ saveOrders(); }catch(e){}   // fold pulled orders into STATE.orders
+    showToast('\u2601 '+added+' order'+(added>1?'s':'')+' pulled from Sheet');
+    try{
+      const h=document.getElementById('screen-history');
+      if(h && h.classList.contains('active') && typeof renderHistory==='function') renderHistory();
+      const d=document.getElementById('screen-dues');
+      if(d && d.classList.contains('active') && typeof renderDues==='function') renderDues();
+      if(typeof renderDashboard==='function') renderDashboard();
+    }catch(e){}
+  }
+}
+
+window.addEventListener('online', function(){ updateOnlineIndicator(); showToast('🟢 Back online — syncing pending orders...'); autoSyncPending(false); setTimeout(function(){ try{ autoSyncHistory(true); }catch(e){} }, 1500); });
 window.addEventListener('offline', function(){ updateOnlineIndicator(); showToast('📴 Offline — orders are saved on this device'); });
 setTimeout(function(){ try{ updateOnlineIndicator(); autoSyncPending(true); }catch(e){} }, 2500);
+setTimeout(function(){ try{ autoSyncHistory(false); }catch(e){} }, 5000);       // v149: pull on startup
+setInterval(function(){ try{ autoSyncHistory(false); }catch(e){} }, 15*60*1000); // v149: and every 15 min
 setInterval(function(){ try{ updateOnlineIndicator(); }catch(e){} }, 5000);
 
 if(document.readyState === 'loading') {
