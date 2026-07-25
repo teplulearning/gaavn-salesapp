@@ -32,7 +32,9 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
 .role-icon{font-size:28px;width:44px;text-align:center;}
 .role-info h3{font-size:16px;font-weight:600;margin-bottom:2px;}
 .role-info p{font-size:12px;color:var(--muted);}
-#app{display:none;max-width:480px;margin:0 auto;padding-bottom:80px;}
+html,body{overflow-x:hidden;max-width:100%;} /* v150: no sideways bleed on any page */
+#app{display:none;max-width:480px;margin:0 auto;padding-bottom:130px;overflow-x:hidden;} /* v150: was 80px — last rows hid under the bottom nav */
+.card,.screen *{min-width:0;} /* v150: let flex children shrink instead of pushing off-screen */
 .top-bar{background:var(--surface);border-bottom:1.5px solid var(--border);padding:12px 16px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100;}
 .top-bar-left{display:flex;align-items:center;gap:10px;}
 .top-bar .logo{font-family:Georgia,'Times New Roman',serif;font-size:18px;color:var(--amber);}
@@ -43,7 +45,7 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
 .notif-btn{position:relative;background:none;border:none;font-size:20px;cursor:pointer;padding:4px;}
 .notif-dot{position:absolute;top:2px;right:2px;width:8px;height:8px;background:var(--red);border-radius:50%;display:none;}
 .notif-dot.show{display:block;}
-.bottom-nav{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:480px;background:var(--surface);border-top:1.5px solid var(--border);display:flex;z-index:100;}
+.bottom-nav{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:480px;background:var(--surface);border-top:1.5px solid var(--border);display:flex;z-index:100;padding-bottom:env(safe-area-inset-bottom,0px);}
 .nav-btn{flex:1;padding:10px 4px 8px;background:none;border:none;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:2px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:10px;color:var(--muted);font-weight:500;transition:color 0.15s;}
 .nav-btn.active{color:var(--amber);}
 .nav-btn .nav-icon{font-size:20px;}
@@ -126,7 +128,9 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
 .section-label{font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin:16px 0 8px;}
 #toast{position:fixed;bottom:90px;left:50%;transform:translateX(-50%) translateY(20px);background:#1C1810;color:#fff;padding:10px 20px;border-radius:20px;font-size:13px;font-weight:500;opacity:0;transition:all 0.3s;z-index:999;white-space:nowrap;pointer-events:none;}
 #toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
-.modal-overlay{position:fixed;inset:0;background:rgba(28,24,16,0.5);z-index:200;display:none;align-items:flex-end;justify-content:center;}
+.modal-overlay{position:fixed;inset:0;background:rgba(28,24,16,0.5);z-index:700;display:none;align-items:flex-end;justify-content:center;}
+/* v150: was z-index:200 — the client detail panel is z-index:500, so any modal
+   opened from it (Record Payment etc.) rendered BEHIND/through the panel */
 .modal-overlay.open{display:flex;}
 .modal-sheet{background:var(--surface);border-radius:20px 20px 0 0;padding:20px 20px 32px;width:100%;max-width:480px;max-height:90vh;overflow-y:auto;}
 .modal-handle{width:36px;height:4px;background:var(--border);border-radius:2px;margin:0 auto 16px;}
@@ -260,7 +264,7 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
     <div class="top-bar-left">
       <span class="logo">🐄 GF</span>
       <span class="role-badge" id="role-badge">SALES</span>
-      <span style="font-size:9px;color:var(--muted);margin-left:4px;" id="build-stamp">v150</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:4px;" id="build-stamp">v151</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <span class="date-chip" id="today-chip"></span>
@@ -417,7 +421,7 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
     </div>
 
     <!-- Client Detail Panel (slides in on mobile) -->
-    <div id="clients-detail-panel" style="display:none;position:fixed;top:0;left:0;width:100%;max-width:100vw;height:100%;background:var(--bg);z-index:500;overflow-y:auto;overflow-x:hidden;box-sizing:border-box;padding-bottom:80px;-webkit-overflow-scrolling:touch;">
+    <div id="clients-detail-panel" style="display:none;position:fixed;top:0;left:0;width:100%;max-width:100vw;height:100%;background:var(--bg);z-index:500;overflow-y:auto;overflow-x:hidden;box-sizing:border-box;padding-bottom:150px;-webkit-overflow-scrolling:touch;">
       <div style="background:var(--surface);border-bottom:1.5px solid var(--border);padding:12px 16px;display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:10;">
         <button onclick="closeClientDetail()" style="background:none;border:none;font-size:20px;cursor:pointer;padding:0;">←</button>
         <div style="flex:1;">
@@ -798,9 +802,9 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
 
   <!-- ── SCREEN: PAYMENT IN ── -->
   <div class="screen" id="screen-payment-in">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;flex-wrap:wrap;gap:6px;">
       <div class="page-title">💳 Payments In</div>
-      <div style="display:flex;gap:6px;">
+      <div style="display:flex;gap:6px;flex-wrap:wrap;">
         <button onclick="openPaymentInForm()"
           style="background:var(--green);color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:12px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif;">+ Record</button>
         <button onclick="openPaymentUpload()"
@@ -1835,6 +1839,7 @@ function showScreen(id) {
     if(id==='home')       { renderDashboard(); if(STATE.sheetUrl) syncOrdersFromSheet(); }
     if(id==='orders')     { renderOrdersList(); if(STATE.sheetUrl) syncOrdersFromSheet(); }
     if(id==='customers')  { closeClientDetail(); renderCustomerList(); document.getElementById('add-cust-btn-wrap').style.display=(STATE.role!=='delivery'?'block':'none'); }
+    try{ resetZoom(); }catch(e){}   // v150: never carry stuck zoom across screens
     if(id==='dues')     { renderDues();    setTimeout(function(){ try{ autoSyncHistory(false); }catch(e){} }, 400); }
     if(id==='approvals')  renderApprovals();
     if(id==='new-order')  initNewOrder();
@@ -3538,6 +3543,21 @@ function closeClientDetail() {
 // fixed-position panel, which pushes the panel's right edge (buttons) off-screen
 // and looks "zoomed out". Snap the scale back to 1 without disabling the
 // search-input zoom the user likes: briefly lock maximum-scale, then restore it.
+// v150: run the zoom snap-back app-wide — after leaving any input box and on
+// every screen switch — so no page is left stuck zoomed-in with its right
+// edge (amounts, buttons) pushed off-screen.
+document.addEventListener('focusout', function(e){
+  try{
+    const t=e.target;
+    if(t && (t.tagName==='INPUT'||t.tagName==='TEXTAREA'||t.tagName==='SELECT')){
+      setTimeout(function(){
+        const a=document.activeElement;
+        if(!a || (a.tagName!=='INPUT'&&a.tagName!=='TEXTAREA'&&a.tagName!=='SELECT')) resetZoom();
+      }, 250);
+    }
+  }catch(err){}
+});
+
 function resetZoom() {
   try {
     if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
@@ -3548,6 +3568,17 @@ function resetZoom() {
       vp.setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=5.0');
     }, 350);
   } catch (e) {}
+}
+
+// v150: sheet Date cells arrive as ISO datetimes ('2026-07-24T18:30:00.000Z'
+// = local midnight). Raw use broke the display, shifted due dates by one day
+// in IST, and confused cutover comparisons. Normalise to local YYYY-MM-DD.
+function _normDayStr(d){
+  d=String(d||'');
+  if(d.indexOf('T')>0){
+    try{ const x=new Date(d); if(!isNaN(x)) return x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0')+'-'+String(x.getDate()).padStart(2,'0'); }catch(e){}
+  }
+  return d.slice(0,10);
 }
 
 async function openClientDetail(id) {
@@ -3616,7 +3647,7 @@ async function openClientDetail(id) {
           const _rc = String(row['Customer']||row['customerName']||'').trim().toLowerCase();
           if(_wc && _rc && _rc !== _wc) return;
           if(!orderMap[oid]) orderMap[oid] = {
-            id:oid, date:String(row['Date']||row['date']||''),
+            id:oid, date:_normDayStr(row['Date']||row['date']||''),
             customerName:String(row['Customer']||row['customerName']||c.name),
             total:parseFloat(row['Order Total (Rs)']||row['total']||0),
             paymentAmount:parseFloat(row['Payment Amt']||row['paymentAmount']||0),
@@ -3643,25 +3674,32 @@ async function openClientDetail(id) {
   }
 
   const creditDays = cfg.days||0;
-  const openBal = parseFloat(c.openingBalance||0)||0;
+  // v150: the running 'Receivable Balance' used c.openingBalance + EVERY
+  // fetched order (any date, incl. pre-cutover ones never marked paid), while
+  // TOTAL OUTSTANDING uses c.balance + post-cutover unpaid orders. The two
+  // never agreed. Now both use the same basis: ledger balance + orders since
+  // the cutover — the top of the running column equals TOTAL OUTSTANDING.
+  const _coDate = localStorage.getItem('gf_cutover') || '2026-07-05';
+  const openBal = parseFloat(c.balance)||0;
   let runBal = openBal;
   const txnRows = [];
 
   if(openBal > 0) {
     txnRows.push(`<div style="background:#FFF8E1;border-radius:10px;padding:10px 12px;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center;border:1.5px solid #FFD54F;">
-      <div style="font-size:12px;font-weight:700;color:var(--amber);">Opening Balance</div>
+      <div style="font-size:12px;font-weight:700;color:var(--amber);">Opening Balance <span style="font-weight:400;color:var(--muted);">(up to ${_coDate})</span></div>
       <div style="font-size:14px;font-weight:800;color:var(--amber);">₹${openBal.toLocaleString('en-IN')}</div>
     </div>`);
   }
+  txnRows.push(`<div style="font-size:10px;color:var(--muted);margin:0 2px 6px;">Showing invoices since ${_coDate} — older history is inside the opening balance.</div>`);
 
-  const ordersAsc = [...orders].reverse();
+  const ordersAsc = [...orders].filter(o => _normDayStr(o.date) >= _coDate).reverse();
   ordersAsc.forEach(o => {
     const total = parseFloat(o.total)||0;
     const paid = parseFloat(o.payment?.amount||o.paymentAmount)||0;
     runBal += (total - paid);
     const refNo = String(o.id||'').slice(-5);
-    const orderDate = o.date||'';
-    const now = new Date(); const od = new Date(orderDate);
+    const orderDate = _normDayStr(o.date)||'';
+    const now = new Date(); const od = new Date(orderDate+'T00:00:00');
     const daysOld = Math.floor((now-od)/(1000*60*60*24));
     const isOverdue = creditDays > 0 && daysOld > creditDays;
     const isPaid = paid >= total;
@@ -8231,7 +8269,7 @@ function piCustomerSearch(q) {
   const matches = STATE.customers.filter(c=>c.name.toLowerCase().includes(q.toLowerCase())).slice(0,8);
   if(!matches.length) { dd.style.display='none'; return; }
   dd.innerHTML = matches.map(c=>{
-    const bal = c.balance||0;
+    const bal = getCustomerOutstanding(c.id);   // v151: was c.balance — showed only the opening balance
     return `<div onclick="piSelectCustomer('${c.id}')"
       style="padding:10px 14px;cursor:pointer;border-bottom:1px solid var(--border);font-size:13px;font-weight:600;"
       onmouseover="this.style.background='#FFFBF0'" onmouseout="this.style.background=''">
@@ -8251,7 +8289,7 @@ function piSelectCustomer(id) {
 }
 
 function showPiBalance(c) {
-  const bal = c.balance||0;
+  const bal = getCustomerOutstanding(c.id);   // v151: opening balance + unpaid invoices, same as Dues
   const el = document.getElementById('pi-cust-balance');
   if(bal>0) {
     el.textContent = `Outstanding balance: ₹${bal.toLocaleString('en-IN')}`;
@@ -8668,13 +8706,8 @@ function _ppeMarkApplied(refs) {
 // Outstanding a customer owes = opening balance + unpaid order balances.
 // Mirrors the figure shown on the profile / QR screens.
 function _ppeCustOutstanding(c) {
-  var opening = parseFloat(c.balance) || 0;
-  var od = (STATE.orders || []).filter(function(o){
-    return (o.customerId === c.id || o.customerName === c.name) &&
-      (o.status === 'due' || o.status === 'partial' ||
-       ((o.status === 'confirmed' || o.status === 'delivered') && (o.total||0) > ((o.payment && o.payment.amount) || 0)));
-  }).reduce(function(s,o){ return s + ((o.total||0) - ((o.payment && o.payment.amount)||0)); }, 0);
-  return Math.round((opening + od) * 100) / 100;
+  // v151: use the one shared calculation (cutover-aware, name-normalised)
+  return Math.round(getCustomerOutstanding(c.id) * 100) / 100;
 }
 
 // Minimal CSV line splitter (handles simple quoted fields).
@@ -9023,10 +9056,15 @@ function ensureOnlineIndicator(){
 function updateOnlineIndicator(){
   let el; try{ el=ensureOnlineIndicator(); }catch(e){ return; }
   const pend=getPendingOrders().length;
+  // v150: the pill used to float over list text permanently. Show it only
+  // when it carries information (offline, or orders waiting to sync) — the
+  // green all-good state is already shown by the header dot.
+  if(navigator.onLine && !pend){ el.style.display='none'; return; }
+  el.style.display='block';
   if(navigator.onLine){
-    el.textContent = pend ? ('⏳ '+pend+' to sync') : '🟢 Online';
-    el.style.background = pend ? '#FFF3E0' : '#E8F5E9';
-    el.style.color = pend ? '#E65100' : '#1B7A2E';
+    el.textContent = '⏳ '+pend+' to sync';
+    el.style.background = '#FFF3E0';
+    el.style.color = '#E65100';
   } else {
     el.textContent = pend ? ('📴 Offline · '+pend+' saved') : '📴 Offline';
     el.style.background = '#FDECEA';
