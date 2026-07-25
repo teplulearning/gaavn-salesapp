@@ -260,7 +260,7 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
     <div class="top-bar-left">
       <span class="logo">🐄 GF</span>
       <span class="role-badge" id="role-badge">SALES</span>
-      <span style="font-size:9px;color:var(--muted);margin-left:4px;" id="build-stamp">v149</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:4px;" id="build-stamp">v150</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <span class="date-chip" id="today-chip"></span>
@@ -759,6 +759,7 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
       </div>
       <div id="hist-fetch-status" style="font-size:12px;color:var(--muted);min-height:18px;margin-bottom:8px;"></div>
       <button class="btn btn-primary" onclick="fetchAllHistoryMonths()" style="width:100%;margin-bottom:8px;">☁ Load ALL Months (full history)</button>
+      <button class="btn btn-secondary" onclick="checkSheetVsPhone()" style="width:100%;margin-bottom:8px;">🔍 Check Sheet vs Phone</button>
       <button class="btn btn-primary" onclick="fetchHistoryMonth()" style="width:100%;margin-bottom:8px;background:#2E7D32;">🗓 Load Whole Month</button>
       <div class="btn-row">
         <button class="btn btn-secondary" onclick="closeModal('modal-hist-fetch')">Cancel</button>
@@ -1413,8 +1414,14 @@ function allocatePaymentFIFO(custId, amountReceived) {
   // so payments never settled them and stale dues kept generating reminders
   const _pc = STATE.customers.find(c=>c.id===custId);
   const _pcn = _pc ? String(_pc.name||'').trim().toLowerCase() : '';
+  // v149.1: exclude pre-cutover orders — those are already inside the opening
+  // balance. Without this, full-history sync let payments drain into old
+  // never-marked-paid orders (oldest-first!), so the dues shown on screen
+  // never went down and totals kept overstating.
+  const _cutover = localStorage.getItem('gf_cutover') || '2026-07-05';
   const unpaidOrders = STATE.orders
-    .filter(o => (o.customerId===custId || (_pcn && String(o.customerName||'').trim().toLowerCase()===_pcn)) && (o.status==='due'||o.status==='partial'||o.status==='confirmed'||o.status==='delivered'))
+    .filter(o => (String(o.date||'') >= _cutover) &&
+      (o.customerId===custId || (_pcn && String(o.customerName||'').trim().toLowerCase()===_pcn)) && (o.status==='due'||o.status==='partial'||o.status==='confirmed'||o.status==='delivered'))
     .filter(o => (o.total||0) > (o.payment?.amount||0))
     .sort((a,b) => a.date.localeCompare(b.date)); // oldest first = FIFO
 
@@ -3448,10 +3455,7 @@ function savePayment(orderId) {
     const cust = STATE.customers.find(c=>c.id===order.customerId);
     if(cust && (cust.balance||0) > 0) {
       cust.balance = Math.max(0, (cust.balance||0) - amount);
-      const extras=JSON.parse(localStorage.getItem(LS_CUSTS)||'[]');
-      const ei=extras.findIndex(x=>x.id===cust.id);
-      if(ei>=0) extras[ei].balance=cust.balance; else extras.push({...cust});
-      localStorage.setItem(LS_CUSTS,JSON.stringify(extras));
+      applyBalanceChange(cust);   // v149.1: persist to Sheet too, not just this phone
     }
   }
   showToast(isDue?'⏰ Marked as due':isPart?`💰 Partial ₹${amount}`:`✓ Payment ₹${amount} collected`);
@@ -4672,7 +4676,12 @@ async function syncCustomersFromSheet() {
         if(c.pricing && Object.keys(c.pricing).length > 0) {
           existing.pricing = Object.assign({}, existing.pricing||{}, c.pricing);
         }
-        if(c.balance !== undefined) existing.balance = c.balance;
+        // v149.1: a locally-changed balance awaiting Sheet confirmation must
+        // NOT be overwritten by the (still stale) sheet value — this exact
+        // overwrite was resurrecting paid-off opening balances on every load.
+        const _bd = _balDirtyMap();
+        if(c.balance !== undefined && !_bd[existing.id]) existing.balance = c.balance;
+        else if(_bd[existing.id]) existing.balance = _bd[existing.id].balance;
         if(c.phone)    existing.phone    = c.phone;
         if(c.area)     existing.area     = c.area;
         if(c.category) existing.category = c.category;
@@ -5434,6 +5443,7 @@ function getAppsScriptCode() {
     '    if (a === "ping")         return handlePing(e);',
     '    if (a === "logOrder")     return logOrder(e.parameter);',
     '    if (a === "logPayment")   return logPayment(e.parameter);',
+    '    if (a === "setBalance")    return setBalance(e.parameter);',
     '    if (a === "getOrders")    return getOrders(e.parameter);',
     '    if (a === "getMonthOrders") return getMonthOrders(e.parameter);',
     '    if (a === "settleOrdersUpto") return settleOrdersUpto(e.parameter);',
@@ -5773,6 +5783,30 @@ function getAppsScriptCode() {
     '}',
     '',
     '// ── LOG PAYMENT ─────────────────────────────────────────────────────',
+    '// v149.1: write a customer\'s Balance cell exactly (including 0).',
+    '// The app pushes every local balance change here so payments against',
+    '// opening balances survive reloads and reach every device.',
+    'function setBalance(p) {',
+    '  var ss=SpreadsheetApp.openById(SS_ID);',
+    '  var sh=ss.getSheetByName("Customers");',
+    '  if(!sh||sh.getLastRow()<2) return jsonOut({error:"No customers sheet"});',
+    '  var data=sh.getDataRange().getValues(); var headers=data[0];',
+    '  var idCol=headers.indexOf("ID"), nmCol=headers.indexOf("Name"), balCol=headers.indexOf("Balance");',
+    '  if(balCol<0) return jsonOut({error:"No Balance column"});',
+    '  function norm(x){return String(x||"").replace(/\\s+/g," ").trim().toLowerCase();}',
+    '  var id=String(p.id||"").trim(), nm=norm(p.name);',
+    '  for(var r=1;r<data.length;r++){',
+    '    var rid=idCol>=0?String(data[r][idCol]||"").trim():"";',
+    '    var rnm=nmCol>=0?norm(data[r][nmCol]):"";',
+    '    if((id&&rid===id)||(nm&&rnm===nm)){',
+    '      var bal=parseFloat(p.balance); if(isNaN(bal)||bal<0) bal=0;',
+    '      sh.getRange(r+1,balCol+1).setValue(bal);',
+    '      return jsonOut({status:"ok",row:r+1,balance:bal});',
+    '    }',
+    '  }',
+    '  return jsonOut({error:"Customer not found"});',
+    '}',
+    '',
     'function logPayment(p) {',
     '  var ss=SpreadsheetApp.openById(SS_ID);',
     '  var rawDate=String(p.date||"").trim();',
@@ -5926,18 +5960,30 @@ function getAppsScriptCode() {
     '  var ss=SpreadsheetApp.openById(SS_ID);',
     '  var month=String(p.month||"").trim().slice(0,7);',
     '  if(!month) return jsonOut({orders:[],month:month,count:0});',
+    '  var tz=Session.getScriptTimeZone(); var orders=[];',
+    '  function collect(sh, dailyTag){',
+    '    var data=sh.getDataRange().getValues(); if(data.length<2) return;',
+    '    var headers=data[0];',
+    '    data.slice(1).forEach(function(row){',
+    '      var id=String(row[0]||"").trim();',
+    '      if(!id||id==="undefined"||id.indexOf("TOTAL:")===0||id.indexOf("RESUBMIT:")===0) return;',
+    '      var obj={}; headers.forEach(function(h,i){obj[h]=row[i]!==undefined?row[i]:"";});',
+    '      obj._date=normDateCell(row[1],tz)||dailyTag||"";',
+    '      orders.push(obj);',
+    '    });',
+    '  }',
     '  var sh=ss.getSheetByName("Orders_"+month);',
-    '  if(!sh) return jsonOut({orders:[],month:month,count:0});',
-    '  var data=sh.getDataRange().getValues();',
-    '  if(data.length<2) return jsonOut({orders:[],month:month,count:0});',
-    '  var headers=data[0], tz=Session.getScriptTimeZone();',
-    '  var orders=data.slice(1).filter(function(row){',
-    '    var id=String(row[0]||"").trim();',
-    '    return id && id!=="undefined" && id.indexOf("TOTAL:")!==0 && id.indexOf("RESUBMIT:")!==0;',
-    '  }).map(function(row){',
-    '    var obj={}; headers.forEach(function(h,i){obj[h]=row[i]!==undefined?row[i]:"";});',
-    '    obj._date=normDateCell(row[1],tz);',
-    '    return obj;',
+    '  if(sh) collect(sh, "");',
+    '  // v149: ALSO read legacy DAILY sheets (Orders_YYYYMMDD) for this month —',
+    '  // months from before the monthly-tab format were invisible here, so the',
+    '  // months from before the monthly-tab format were invisible here.',
+    '  var dp="Orders_"+month.replace("-","");',
+    '  ss.getSheets().forEach(function(s2){',
+    '    var n=s2.getName();',
+    '    if(/^Orders_[0-9]{8}$/.test(n) && n.indexOf(dp)===0){',
+    '      var tag=n.slice(7,11)+"-"+n.slice(11,13)+"-"+n.slice(13,15);',
+    '      collect(s2, tag);',
+    '    }',
     '  });',
     '  return jsonOut({orders:orders,month:month,count:orders.length});',
     '}',
@@ -6105,7 +6151,8 @@ function getAppsScriptCode() {
     '      sh.getRange(r+2,col["Phone"]).setValue(p.phone||data[r][col["Phone"]-1]||"");',
     '      sh.getRange(r+2,col["Area"]).setValue(p.area||data[r][col["Area"]-1]||"");',
     '      sh.getRange(r+2,col["Pricing"]).setValue(JSON.stringify(merged));',
-    '      if(parseFloat(p.balance)) sh.getRange(r+2,col["Balance"]).setValue(parseFloat(p.balance)||0);',
+    '      // v149.1: was if(parseFloat(p.balance)) — a balance paid down to 0 could never be saved',
+    '      if(p.balance!==undefined && p.balance!=="") sh.getRange(r+2,col["Balance"]).setValue(parseFloat(p.balance)||0);',
     '      return jsonOut({status:"updated",row:r+2});',
     '    }',
     '  }',
@@ -7615,6 +7662,67 @@ async function fetchAllHistoryMonths() {
   }, 900);
 }
 
+// v149: month-by-month reconciliation — shows exactly where the Sheet has
+// orders that this phone is missing (or vice versa), so 'why does it show
+// only N days' is answerable at a glance.
+async function checkSheetVsPhone(){
+  const url = getSheetUrl();
+  if(!url) { showToast('\u2699 Set Sheet URL in Setup first'); return; }
+  const statusEl = document.getElementById('hist-fetch-status');
+  statusEl.style.color = 'var(--muted)';
+  const cur = new Date(); cur.setDate(1);
+  let html = '<table style="width:100%;font-size:11px;border-collapse:collapse;margin-top:4px;">'
+    + '<tr style="font-weight:700;color:var(--muted);border-bottom:1px solid var(--border);">'
+    + '<td style="padding:2px 0;">Month</td><td style="text-align:right;">Sheet</td>'
+    + '<td style="text-align:right;">Phone</td><td style="text-align:right;">Days P/S</td></tr>';
+  let mismatch=0, emptyStreak=0;
+  for(let i=0; i<12 && emptyStreak<3; i++){
+    const tag = _monthTagOf(cur);
+    statusEl.textContent = '\uD83D\uDD0D Checking '+tag+' ...';
+    let sheetCount=0, sheetDays=0, note='';
+    try {
+      const r = await fetch(url+'?action=getMonthOrders&month='+tag, {cache:'no-store'});
+      const d = await r.json();
+      if(d && Array.isArray(d.orders)) {
+        const ids={}, days={};
+        d.orders.forEach(row=>{
+          const id=String(row['Order ID']||'').trim(); if(id) ids[id]=1;
+          let dt=String(row._date||row['Date']||'');
+          if(dt.indexOf('T')>0){ try{ const x=new Date(dt); if(!isNaN(x)) dt=x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0')+'-'+String(x.getDate()).padStart(2,'0'); }catch(e){} }
+          dt=dt.slice(0,10); if(dt) days[dt]=1;
+        });
+        sheetCount=Object.keys(ids).length; sheetDays=Object.keys(days).length;
+      } else if(d && d.error) { note=' \u26a0'; }
+    } catch(e) { note=' \u2717'; }
+    let phoneCount=0, phoneDays=0;
+    try {
+      for(let j=0;j<localStorage.length;j++){
+        const k=localStorage.key(j);
+        if(k && k.indexOf('gf_orders_'+tag)===0 && /^gf_orders_\d{4}-\d{2}-\d{2}$/.test(k)){
+          try{ const arr=JSON.parse(localStorage.getItem(k)||'[]'); if(arr.length){ phoneCount+=arr.length; phoneDays++; } }catch(e){}
+        }
+      }
+    } catch(e) {}
+    if(sheetCount===0 && phoneCount===0){ emptyStreak++; cur.setMonth(cur.getMonth()-1); continue; }
+    emptyStreak=0;
+    const diff = sheetCount!==phoneCount;
+    if(diff) mismatch++;
+    html += '<tr style="'+(diff?'color:var(--red);font-weight:700;':'')+'">'
+      + '<td style="padding:2px 0;">'+tag+note+'</td>'
+      + '<td style="text-align:right;">'+sheetCount+'</td>'
+      + '<td style="text-align:right;">'+phoneCount+'</td>'
+      + '<td style="text-align:right;">'+phoneDays+'/'+sheetDays+'</td></tr>';
+    cur.setMonth(cur.getMonth()-1);
+  }
+  html += '</table>';
+  html += '<div style="margin-top:6px;font-size:11px;line-height:1.5;color:'+(mismatch?'var(--red)':'var(--green,#2E7D32)')+';">'
+    + (mismatch
+      ? mismatch+' month(s) differ. If <b>Sheet &gt; Phone</b>: tap Load ALL Months. If a month you know has orders shows Sheet = 0: the Apps Script deployed on your Sheet is outdated \u2014 re-copy the script from Setup \u2192 Google Sheet Setup and re-deploy, then reload here.'
+      : '\u2713 This phone matches the Sheet for every month checked.')
+    + '</div>';
+  statusEl.innerHTML = html;
+}
+
 
 // ── DELIVERY SEQUENCE ────────────────────────────────────────────────
 const LS_SEQ = 'gf_sequence';
@@ -8201,7 +8309,7 @@ function savePaymentIn() {
     const oldCust = STATE.customers.find(c=>c.id===oldCustId);
     if(oldCust) {
       oldCust.balance = Math.max(0, (oldCust.balance||0) + oldAmount);
-      _saveCustomerBalance(oldCust);
+      applyBalanceChange(oldCust);   // v149.1
     }
   }
   if(custId) {
@@ -8212,7 +8320,7 @@ function savePaymentIn() {
       // Any surplus reduces opening balance
       if(surplus > 0) {
         cust.balance = Math.max(0, (cust.balance||0) - surplus);
-        _saveCustomerBalance(cust);
+        applyBalanceChange(cust);   // v149.1
       }
       // Show allocation summary in toast
       if(allocated.length > 0) {
@@ -8257,6 +8365,54 @@ function _saveCustomerBalance(cust) {
   const ei = extras.findIndex(x=>x.id===cust.id);
   if(ei>=0) extras[ei].balance=cust.balance; else extras.push({id:cust.id,balance:cust.balance});
   localStorage.setItem(LS_CUSTS, JSON.stringify(extras));
+}
+
+// ── v149.1: BALANCE WRITE-BACK ───────────────────────────────────────
+// THE overstated-dues bug: every balance reduction was saved only to this
+// phone's localStorage. syncCustomersFromSheet() then overwrote it with the
+// stale sheet value on every app load — so payments applied against the
+// opening balance kept coming back, on every device, forever.
+// Now: every balance change is (a) marked 'dirty' locally so no sync can
+// overwrite it, and (b) pushed to the Sheet's Balance cell; the dirty flag
+// clears only once the Sheet confirms the write.
+const LS_BAL_DIRTY='gf_bal_dirty';
+function _balDirtyMap(){ try{ return JSON.parse(localStorage.getItem(LS_BAL_DIRTY)||'{}'); }catch(e){ return {}; } }
+function _balDirtySave(m){ try{ localStorage.setItem(LS_BAL_DIRTY, JSON.stringify(m)); }catch(e){} }
+function applyBalanceChange(cust){
+  if(!cust || !cust.id) return;
+  _saveCustomerBalance(cust);
+  const d=_balDirtyMap();
+  d[cust.id]={balance:parseFloat(cust.balance)||0, name:cust.name||'', ts:Date.now()};
+  _balDirtySave(d);
+  try{ flushDirtyBalances(); }catch(e){}
+}
+let _balFlushing=false;
+async function flushDirtyBalances(){
+  if(_balFlushing) return;
+  if(!navigator.onLine) return;
+  const url=(typeof getSheetUrl==='function'?getSheetUrl():'')||'';
+  if(!url) return;
+  const dirty=_balDirtyMap();
+  const ids=Object.keys(dirty);
+  if(!ids.length) return;
+  _balFlushing=true;
+  try{
+    for(const id of ids){
+      const c=STATE.customers.find(x=>x.id===id);
+      const bal=(c!==undefined && c!==null) ? (parseFloat(c.balance)||0) : (dirty[id].balance||0);
+      const nm=(c&&c.name)||dirty[id].name||'';
+      try{
+        const r=await fetch(url+'?action=setBalance&id='+encodeURIComponent(id)+'&name='+encodeURIComponent(nm)+'&balance='+encodeURIComponent(bal),{cache:'no-store'});
+        const d=await r.json();
+        if(d && d.status==='ok'){ delete dirty[id]; }
+        // any error (old script without setBalance, offline blip) → stays
+        // dirty: the local value keeps winning until the write succeeds.
+      }catch(e){}
+    }
+  } finally {
+    _balDirtySave(dirty);
+    _balFlushing=false;
+  }
 }
 
 // Sync a payment entry to Google Sheet (Payments tab)
@@ -8692,7 +8848,7 @@ function applyPhonePeSelected() {
     var res = allocatePaymentFIFO(custId, t.amount);
     if(res.surplus > 0) {
       cust.balance = Math.max(0, (cust.balance||0) - res.surplus);
-      _saveCustomerBalance(cust);
+      applyBalanceChange(cust);   // v149.1
     }
     if(hasUrl) { try { syncPaymentToSheet(entry); } catch(e){} }
 
@@ -8975,10 +9131,12 @@ async function autoSyncHistory(force){
   }
 }
 
-window.addEventListener('online', function(){ updateOnlineIndicator(); showToast('🟢 Back online — syncing pending orders...'); autoSyncPending(false); setTimeout(function(){ try{ autoSyncHistory(true); }catch(e){} }, 1500); });
+window.addEventListener('online', function(){ updateOnlineIndicator(); showToast('🟢 Back online — syncing pending orders...'); autoSyncPending(false); setTimeout(function(){ try{ autoSyncHistory(true); }catch(e){} }, 1500); setTimeout(function(){ try{ flushDirtyBalances(); }catch(e){} }, 2500); });
 window.addEventListener('offline', function(){ updateOnlineIndicator(); showToast('📴 Offline — orders are saved on this device'); });
 setTimeout(function(){ try{ updateOnlineIndicator(); autoSyncPending(true); }catch(e){} }, 2500);
 setTimeout(function(){ try{ autoSyncHistory(false); }catch(e){} }, 5000);       // v149: pull on startup
+setTimeout(function(){ try{ flushDirtyBalances(); }catch(e){} }, 6000);          // v149.1: push un-synced balance changes
+setInterval(function(){ try{ flushDirtyBalances(); }catch(e){} }, 5*60*1000);
 setInterval(function(){ try{ autoSyncHistory(false); }catch(e){} }, 15*60*1000); // v149: and every 15 min
 setInterval(function(){ try{ updateOnlineIndicator(); }catch(e){} }, 5000);
 
