@@ -33,6 +33,11 @@ h1,h2,h3,.serif{font-family:Georgia,'Times New Roman',serif;}
 .role-info h3{font-size:16px;font-weight:600;margin-bottom:2px;}
 .role-info p{font-size:12px;color:var(--muted);}
 html,body{overflow-x:hidden;max-width:100%;} /* v150: no sideways bleed on any page */
+/* v154 PANEL RULE (recorded in DevNotes): a full-screen panel must NOT rely on
+   z-index to cover the app — iOS composites scrollable rows above fixed panels.
+   When a body-level panel opens, the app behind it is hidden outright. */
+body.gf-panel-open #app{ visibility:hidden; }
+#report-panel,#clients-detail-panel{ transform:translateZ(0); isolation:isolate; }
 #app{display:none;max-width:480px;margin:0 auto;padding-bottom:130px;overflow-x:hidden;} /* v150: was 80px — last rows hid under the bottom nav */
 .card,.screen *{min-width:0;} /* v150: let flex children shrink instead of pushing off-screen */
 .top-bar{background:var(--surface);border-bottom:1.5px solid var(--border);padding:12px 16px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100;}
@@ -264,7 +269,7 @@ html,body{overflow-x:hidden;max-width:100%;} /* v150: no sideways bleed on any p
     <div class="top-bar-left">
       <span class="logo">🐄 GF</span>
       <span class="role-badge" id="role-badge">SALES</span>
-      <span style="font-size:9px;color:var(--muted);margin-left:4px;" id="build-stamp">v152</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:4px;" id="build-stamp">v154</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <span class="date-chip" id="today-chip"></span>
@@ -5867,7 +5872,12 @@ function getAppsScriptCode() {
     '  if(!sh||sh.getLastRow()<2) return jsonOut({error:"No customers sheet"});',
     '  var data=sh.getDataRange().getValues(); var headers=data[0];',
     '  var idCol=headers.indexOf("ID"), nmCol=headers.indexOf("Name"), balCol=headers.indexOf("Balance");',
-    '  if(balCol<0) return jsonOut({error:"No Balance column"});',
+    '  if(balCol<0){',
+    '    // v152.1: create the Balance column instead of failing — some sheets',
+    '    // were made by older versions that never had it.',
+    '    sh.getRange(1,headers.length+1).setValue("Balance");',
+    '    balCol=headers.length;',
+    '  }',
     '  function norm(x){return String(x||"").replace(/\\s+/g," ").trim().toLowerCase();}',
     '  var id=String(p.id||"").trim(), nm=norm(p.name);',
     '  for(var r=1;r<data.length;r++){',
@@ -9145,6 +9155,7 @@ async function autoSyncPending(silent){
 // from the Sheet's Payments_ tabs (action getMonthPayments — redeploy script).
 function _repISO(d){ return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
 function openReport(){
+  document.body.classList.add('gf-panel-open');   // v154: hide the app behind — no bleed-through
   document.getElementById('report-panel').style.display='block';
   document.getElementById('report-panel').scrollTop=0;
   try{ resetZoom(); }catch(e){}
@@ -9152,7 +9163,7 @@ function openReport(){
   setReportPreset('month', null);
   _repPullPayments();              // background: other phones' payment entries
 }
-function closeReport(){ document.getElementById('report-panel').style.display='none'; }
+function closeReport(){ document.body.classList.remove('gf-panel-open'); document.getElementById('report-panel').style.display='none'; }
 function setReportPreset(p, btn){
   const now=new Date(); let from, to=_repISO(now);
   if(p==='today') from=to;
