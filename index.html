@@ -269,7 +269,7 @@ body.gf-panel-open #app{ visibility:hidden; }
     <div class="top-bar-left">
       <span class="logo">🐄 GF</span>
       <span class="role-badge" id="role-badge">SALES</span>
-      <span style="font-size:9px;color:var(--muted);margin-left:4px;" id="build-stamp">v154</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:4px;" id="build-stamp">v156</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <span class="date-chip" id="today-chip"></span>
@@ -1463,9 +1463,8 @@ function allocatePaymentFIFO(custId, amountReceived) {
   // balance. Without this, full-history sync let payments drain into old
   // never-marked-paid orders (oldest-first!), so the dues shown on screen
   // never went down and totals kept overstating.
-  const _cutover = localStorage.getItem('gf_cutover') || '2026-07-05';
   const unpaidOrders = STATE.orders
-    .filter(o => (String(o.date||'') >= _cutover) &&
+    .filter(o => orderCountsForCust(o,_pc) &&
       (o.customerId===custId || (_pcn && String(o.customerName||'').trim().toLowerCase()===_pcn)) && (o.status==='due'||o.status==='partial'||o.status==='confirmed'||o.status==='delivered'))
     .filter(o => (o.total||0) > (o.payment?.amount||0))
     .sort((a,b) => a.date.localeCompare(b.date)); // oldest first = FIFO
@@ -1506,9 +1505,8 @@ function getCustomerCreditAlerts(custId) {
   // double-counted dues in reminder messages.
   const _c = STATE.customers.find(c=>c.id===custId);
   const _cn = _c ? String(_c.name||'').trim().toLowerCase() : '';
-  const _cutover = localStorage.getItem('gf_cutover') || '2026-07-05';
   return STATE.orders
-    .filter(o => (String(o.date||'') >= _cutover) &&
+    .filter(o => orderCountsForCust(o,_c) &&
       (o.customerId===custId || (_cn && String(o.customerName||'').trim().toLowerCase()===_cn)) &&
       (o.status==='due'||o.status==='partial'||o.status==='confirmed'||o.status==='delivered'))
     .map(o => ({order:o, cs:getCreditStatus(o)}))
@@ -1520,6 +1518,18 @@ function getCustomerCreditAlerts(custId) {
 // backend's norm(), so 'Priya  General' (sheet typo) matches 'Priya General'.
 function _nameKey(x){ return String(x||'').replace(/\s+/g,' ').trim().toLowerCase(); }
 
+// v155: PER-CUSTOMER BALANCE DATE. Balances were loaded in two batches
+// (13/06 and 07/07), so one global cutover can't be right for everyone.
+// Each customer's 'Balance As Of' date (new sheet column) marks what their
+// balance already covers — only orders AFTER that date are counted on top.
+// Customers without the date fall back to the global gf_cutover (>=).
+function orderCountsForCust(o, cust){
+  const d=_normDayStr(o&&o.date); if(!d) return false;
+  const asOf = cust&&cust.balanceAsOf ? _normDayStr(cust.balanceAsOf) : '';
+  if(asOf) return d > asOf;
+  return d >= (localStorage.getItem('gf_cutover')||'2026-07-05');
+}
+
 // v149: ALL unpaid orders for a customer (any credit status, including 'cash').
 // getCustomerCreditAlerts() excludes cash-basis orders, so Cash & Carry clients
 // with unpaid invoices showed ₹0 in reminders and 'Clear' in client detail
@@ -1527,9 +1537,8 @@ function _nameKey(x){ return String(x||'').replace(/\s+/g,' ').trim().toLowerCas
 function getCustomerUnpaidOrders(custId) {
   const _c = STATE.customers.find(c=>c.id===custId);
   const _cn = _c ? _nameKey(_c.name) : '';
-  const _cutover = localStorage.getItem('gf_cutover') || '2026-07-05';
   return (STATE.orders||[])
-    .filter(o => (String(o.date||'') >= _cutover) &&
+    .filter(o => orderCountsForCust(o,_c) &&
       (o.customerId===custId || (_cn && _nameKey(o.customerName)===_cn)) &&
       (o.status==='due'||o.status==='partial'||o.status==='confirmed'||o.status==='delivered') &&
       (o.total||0) > (o.payment?.amount||0))
@@ -3532,10 +3541,10 @@ function renderCustomerList(q='') {
     (c.category||'').toLowerCase().includes(q.toLowerCase()));
   // v149: outstanding = ledger balance + unpaid order dues (was c.balance only,
   // which showed '✓ Clear' for clients whose dues live in unpaid orders).
-  const _cutover = localStorage.getItem('gf_cutover') || '2026-07-05';
   const _dueByName = {}, _dueById = {};
+  const _cbk = {}; (STATE.customers||[]).forEach(c=>{ if(c.name) _cbk[_nameKey(c.name)]=c; });
   (STATE.orders||[]).forEach(o=>{
-    if(String(o.date||'') < _cutover) return;
+    if(!orderCountsForCust(o, _cbk[_nameKey(o.customerName)] || (o.customerId?STATE.customers.find(x=>x.id===o.customerId):null))) return;   // v155
     if(!(o.status==='due'||o.status==='partial'||o.status==='confirmed'||o.status==='delivered')) return;
     const out=(o.total||0)-(o.payment?.amount||0); if(out<=0) return;
     const k=String(o.customerName||'').trim().toLowerCase();
@@ -3720,7 +3729,8 @@ async function openClientDetail(id) {
   // TOTAL OUTSTANDING uses c.balance + post-cutover unpaid orders. The two
   // never agreed. Now both use the same basis: ledger balance + orders since
   // the cutover — the top of the running column equals TOTAL OUTSTANDING.
-  const _coDate = localStorage.getItem('gf_cutover') || '2026-07-05';
+  const _asOf = c.balanceAsOf ? _normDayStr(c.balanceAsOf) : '';
+  const _coDate = _asOf || (localStorage.getItem('gf_cutover') || '2026-07-05');
   const openBal = parseFloat(c.balance)||0;
   let runBal = openBal;
   const txnRows = [];
@@ -3731,9 +3741,9 @@ async function openClientDetail(id) {
       <div style="font-size:14px;font-weight:800;color:var(--amber);">₹${openBal.toLocaleString('en-IN')}</div>
     </div>`);
   }
-  txnRows.push(`<div style="font-size:10px;color:var(--muted);margin:0 2px 6px;">Showing invoices since ${_coDate} — older history is inside the opening balance.</div>`);
+  txnRows.push(`<div style="font-size:10px;color:var(--muted);margin:0 2px 6px;">Showing invoices ${_asOf?'after':'since'} ${_coDate} — older history is inside the opening balance.</div>`);
 
-  const ordersAsc = [...orders].filter(o => _normDayStr(o.date) >= _coDate).reverse();
+  const ordersAsc = [...orders].filter(o => orderCountsForCust(o, c)).reverse();
   ordersAsc.forEach(o => {
     const total = parseFloat(o.total)||0;
     const paid = parseFloat(o.payment?.amount||o.paymentAmount)||0;
@@ -3837,9 +3847,11 @@ function saveNewCustomer() {
 // ── DUES ─────────────────────────────────────────────────────────────
 function renderDues() {
   // ── Compute credit status for all unpaid orders ──────────────────
-  const _cutover = localStorage.getItem('gf_cutover') || '2026-07-05';
+  // v155: which orders count depends on each customer's Balance-As-Of date
+  const _custByKey = {};
+  (STATE.customers||[]).forEach(c=>{ if(c.name) _custByKey[_nameKey(c.name)]=c; });
   const unpaidOrders = STATE.orders.filter(o =>
-    (String(o.date||'') >= _cutover) &&
+    orderCountsForCust(o, _custByKey[_nameKey(o.customerName)]) &&
     (o.status==='due' || o.status==='partial' ||
     ((o.status==='confirmed'||o.status==='delivered') && (o.total||0)>(o.payment?.amount||0)))
   );
@@ -4761,6 +4773,7 @@ async function syncCustomersFromSheet() {
         const _bd = _balDirtyMap();
         if(c.balance !== undefined && !_bd[existing.id]) existing.balance = c.balance;
         else if(_bd[existing.id]) existing.balance = _bd[existing.id].balance;
+        if(c.balanceAsOf !== undefined) existing.balanceAsOf = c.balanceAsOf;   // v155
         if(c.phone)    existing.phone    = c.phone;
         if(c.area)     existing.area     = c.area;
         if(c.category) existing.category = c.category;
@@ -6018,7 +6031,9 @@ function getAppsScriptCode() {
     '    });',
     '    return {id:String(obj["ID"]),name:String(obj["Name"]),category:String(obj["Category"]||"Retail"),',
     '      phone:String(obj["Phone"]||""),area:String(obj["Area"]||""),address:String(obj["Address"]||""),',
-    '      balance:parseFloat(obj["Balance"])||0,pricing:pricing};',
+    '      balance:parseFloat(obj["Balance"])||0,',
+    '      balanceAsOf:(function(v){ if(!v) return ""; try{ if(Object.prototype.toString.call(v)==="[object Date]") return Utilities.formatDate(v,Session.getScriptTimeZone(),"yyyy-MM-dd"); }catch(ex){} return String(v); })(obj["Balance As Of"]),',
+    '      pricing:pricing};',
     '  }).filter(function(c){return c.id&&c.name;});',
     '  return jsonOut({customers:customers});',
     '}',
@@ -9195,9 +9210,20 @@ function _repData(){
   });
   const ledger=(STATE.payments||[]).filter(p=>p && inR(p.date));
   // payments collected directly on orders (no ledger entry, e.g. at delivery)
+  // v156: the 'allocatedAt' marker lives only on the phone that recorded the
+  // payment — other phones saw ledger entry + paid order and counted the same
+  // money TWICE (why two phones showed different Received totals). Now an
+  // order-payment is also skipped when a ledger entry for the same customer
+  // and same amount exists in the period, whichever phone recorded it.
+  const _lk={};
+  ledger.forEach(p=>{ const k=_nameKey(p.custName)+'|'+Math.round(parseFloat(p.amount)||0); _lk[k]=(_lk[k]||0)+1; });
   const direct=orders.filter(o=>{
     const amt=(o.payment&&parseFloat(o.payment.amount))||parseFloat(o.paymentAmount)||0;
-    return amt>0 && !(o.payment&&o.payment.allocatedAt);
+    if(!(amt>0)) return false;
+    if(o.payment&&o.payment.allocatedAt) return false;
+    const k=_nameKey(o.customerName)+'|'+Math.round(amt);
+    if(_lk[k]>0){ _lk[k]--; return false; }
+    return true;
   });
   return {from,to,orders,ledger,direct};
 }
