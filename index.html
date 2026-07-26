@@ -269,7 +269,7 @@ body.gf-panel-open #app{ visibility:hidden; }
     <div class="top-bar-left">
       <span class="logo">🐄 GF</span>
       <span class="role-badge" id="role-badge">SALES</span>
-      <span style="font-size:9px;color:var(--muted);margin-left:4px;" id="build-stamp">v156</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:4px;" id="build-stamp">v157</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <span class="date-chip" id="today-chip"></span>
@@ -3624,10 +3624,14 @@ function resetZoom() {
 // = local midnight). Raw use broke the display, shifted due dates by one day
 // in IST, and confused cutover comparisons. Normalise to local YYYY-MM-DD.
 function _normDayStr(d){
-  d=String(d||'');
+  d=String(d||'').trim();
   if(d.indexOf('T')>0){
     try{ const x=new Date(d); if(!isNaN(x)) return x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0')+'-'+String(x.getDate()).padStart(2,'0'); }catch(e){}
   }
+  // v157: also accept dd/mm/yyyy or d/m/yyyy (how dates look in the Sheet,
+  // e.g. the Balance As Of column) — Indian day-first, never month-first.
+  const m=d.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if(m) return m[3]+'-'+String(m[2]).padStart(2,'0')+'-'+String(m[1]).padStart(2,'0');
   return d.slice(0,10);
 }
 
