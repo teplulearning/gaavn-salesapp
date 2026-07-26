@@ -264,7 +264,7 @@ html,body{overflow-x:hidden;max-width:100%;} /* v150: no sideways bleed on any p
     <div class="top-bar-left">
       <span class="logo">🐄 GF</span>
       <span class="role-badge" id="role-badge">SALES</span>
-      <span style="font-size:9px;color:var(--muted);margin-left:4px;" id="build-stamp">v151</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:4px;" id="build-stamp">v152</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <span class="date-chip" id="today-chip"></span>
@@ -655,6 +655,10 @@ html,body{overflow-x:hidden;max-width:100%;} /* v150: no sideways bleed on any p
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
       <div class="page-title">Order History</div>
       <div style="display:flex;gap:6px;">
+        <button onclick="openReport()"
+          style="background:#1A527A;color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:11px;font-weight:700;cursor:pointer;">
+          📈 Report
+        </button>
         <button onclick="openGSTExport()"
           style="background:var(--amber);color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:11px;font-weight:700;cursor:pointer;">
           📊 GST Report
@@ -811,6 +815,8 @@ html,body{overflow-x:hidden;max-width:100%;} /* v150: no sideways bleed on any p
           style="background:var(--blue);color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:12px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif;">📤 Upload</button>
         <button onclick="openPhonePeReconcile()"
           style="background:#5F259F;color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:12px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif;">🟣 PhonePe</button>
+        <button onclick="openReport()"
+          style="background:#1A527A;color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:12px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif;">📈 Report</button>
       </div>
     </div>
     <div class="page-sub">All payments received from customers</div>
@@ -839,6 +845,36 @@ html,body{overflow-x:hidden;max-width:100%;} /* v150: no sideways bleed on any p
   </div>
 
   <div class="bottom-nav" id="bottom-nav"></div>
+</div>
+
+<!-- v152 SALES & COLLECTIONS REPORT PANEL -->
+<div id="report-panel" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:var(--bg);z-index:600;overflow-y:auto;overflow-x:hidden;box-sizing:border-box;padding-bottom:150px;-webkit-overflow-scrolling:touch;">
+  <div style="background:var(--surface);border-bottom:1.5px solid var(--border);padding:12px 16px;display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:10;">
+    <button onclick="closeReport()" style="background:none;border:none;font-size:22px;cursor:pointer;color:#1A527A;line-height:1;">←</button>
+    <div style="flex:1;min-width:0;">
+      <div style="font-size:17px;font-weight:800;">📈 Sales &amp; Collections</div>
+      <div id="rep-sub" style="font-size:11px;color:var(--muted);"></div>
+    </div>
+    <button onclick="downloadReportPDF()" style="background:#1A527A;color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:11px;font-weight:700;cursor:pointer;flex-shrink:0;">📄 PDF</button>
+  </div>
+  <div style="padding:12px 16px;">
+    <div style="display:flex;gap:8px;margin-bottom:8px;">
+      <input type="date" id="rep-from" onchange="renderReport()" style="flex:1;min-width:0;background:var(--surface);border:1.5px solid var(--border);border-radius:10px;padding:9px 10px;font-family:'DM Sans',sans-serif;font-size:13px;">
+      <input type="date" id="rep-to" onchange="renderReport()" style="flex:1;min-width:0;background:var(--surface);border:1.5px solid var(--border);border-radius:10px;padding:9px 10px;font-family:'DM Sans',sans-serif;font-size:13px;">
+    </div>
+    <div id="rep-presets" style="display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;margin-bottom:10px;">
+      <button class="filter-btn" onclick="setReportPreset('today',this)">Today</button>
+      <button class="filter-btn" onclick="setReportPreset('7',this)">7 days</button>
+      <button class="filter-btn" onclick="setReportPreset('10',this)">10 days</button>
+      <button class="filter-btn" onclick="setReportPreset('15',this)">15 days</button>
+      <button class="filter-btn active" onclick="setReportPreset('month',this)">This Month</button>
+      <button class="filter-btn" onclick="setReportPreset('lastmonth',this)">Last Month</button>
+    </div>
+    <div id="rep-summary"></div>
+    <input id="rep-search" placeholder="🔍 Search entries by client…" oninput="renderReport()" autocomplete="off"
+      style="width:100%;box-sizing:border-box;margin:10px 0;padding:10px 14px;border:1.5px solid var(--border);border-radius:10px;font-size:14px;font-family:inherit;background:var(--surface);">
+    <div id="rep-list"></div>
+  </div>
 </div>
 
 <!-- ORDER DETAIL MODAL -->
@@ -5482,6 +5518,7 @@ function getAppsScriptCode() {
     '    if (a === "logOrder")     return logOrder(e.parameter);',
     '    if (a === "logPayment")   return logPayment(e.parameter);',
     '    if (a === "setBalance")    return setBalance(e.parameter);',
+    '    if (a === "getMonthPayments") return getMonthPayments(e.parameter);',
     '    if (a === "getOrders")    return getOrders(e.parameter);',
     '    if (a === "getMonthOrders") return getMonthOrders(e.parameter);',
     '    if (a === "settleOrdersUpto") return settleOrdersUpto(e.parameter);',
@@ -5843,6 +5880,20 @@ function getAppsScriptCode() {
     '    }',
     '  }',
     '  return jsonOut({error:"Customer not found"});',
+    '}',
+    '',
+    '// v152: return one month of the payment ledger so every device can show',
+    '// the same collections report regardless of which phone recorded them.',
+    'function getMonthPayments(p) {',
+    '  var ss=SpreadsheetApp.openById(SS_ID);',
+    '  var month=String(p.month||"").trim().slice(0,7);',
+    '  if(!month) return jsonOut({payments:[],count:0});',
+    '  var sh=ss.getSheetByName("Payments_"+month);',
+    '  if(!sh||sh.getLastRow()<2) return jsonOut({payments:[],month:month,count:0});',
+    '  var data=sh.getDataRange().getValues(); var headers=data[0];',
+    '  var out=data.slice(1).filter(function(row){ return String(row[0]||"").trim(); })',
+    '    .map(function(row){ var o={}; headers.forEach(function(h,i){o[h]=row[i]!==undefined?row[i]:"";}); return o; });',
+    '  return jsonOut({payments:out,month:month,count:out.length});',
     '}',
     '',
     'function logPayment(p) {',
@@ -9088,6 +9139,160 @@ async function autoSyncPending(silent){
   updateOnlineIndicator();
   if(ok) showToast('✓ Synced '+ok+' order'+(ok>1?'s':'')+' to Sheet');
 }
+// ═══ v152: SALES & COLLECTIONS REPORT ════════════════════════════════
+// Cumulative sales vs money received for any date range, with quick presets
+// and a cash/UPI/bank breakdown. Payments recorded on OTHER phones are pulled
+// from the Sheet's Payments_ tabs (action getMonthPayments — redeploy script).
+function _repISO(d){ return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+function openReport(){
+  document.getElementById('report-panel').style.display='block';
+  document.getElementById('report-panel').scrollTop=0;
+  try{ resetZoom(); }catch(e){}
+  try{ saveOrders(); }catch(e){}   // fold every cached day into STATE.orders
+  setReportPreset('month', null);
+  _repPullPayments();              // background: other phones' payment entries
+}
+function closeReport(){ document.getElementById('report-panel').style.display='none'; }
+function setReportPreset(p, btn){
+  const now=new Date(); let from, to=_repISO(now);
+  if(p==='today') from=to;
+  else if(p==='month'){ const d=new Date(now); d.setDate(1); from=_repISO(d); }
+  else if(p==='lastmonth'){ const a=new Date(now.getFullYear(),now.getMonth()-1,1); const b=new Date(now.getFullYear(),now.getMonth(),0); from=_repISO(a); to=_repISO(b); }
+  else { const n=parseInt(p,10)||7; const d=new Date(now); d.setDate(d.getDate()-(n-1)); from=_repISO(d); }
+  const f=document.getElementById('rep-from'), t=document.getElementById('rep-to');
+  if(f) f.value=from; if(t) t.value=to;
+  document.querySelectorAll('#rep-presets .filter-btn').forEach(b=>b.classList.remove('active'));
+  if(btn) btn.classList.add('active');
+  renderReport();
+}
+function _repModeGroup(m){
+  m=String(m||'').toLowerCase();
+  if(!m) return 'Other';
+  if(m.indexOf('cash')>=0) return 'Cash';
+  if(m.indexOf('phonepe')>=0||m.indexOf('gpay')>=0||m.indexOf('upi')>=0||m.indexOf('paytm')>=0||m.indexOf('qr')>=0||m.indexOf('online')>=0) return 'UPI/Online';
+  if(m.indexOf('neft')>=0||m.indexOf('imps')>=0||m.indexOf('rtgs')>=0||m.indexOf('bank')>=0||m.indexOf('cheque')>=0||m.indexOf('chq')>=0||m.indexOf('idbi')>=0) return 'Bank/Cheque';
+  return 'Other';
+}
+function _repData(){
+  const from=(document.getElementById('rep-from')||{}).value||'2026-07-01';
+  const to=(document.getElementById('rep-to')||{}).value||TODAY_KEY;
+  const inR=d=>{ d=_normDayStr(d); return d && d>=from && d<=to; };
+  const seen={};
+  const orders=(STATE.orders||[]).filter(o=>{
+    if(!o || !o.id || seen[o.id]) return false; seen[o.id]=1;
+    return !isOrderDeleted(o.id) && inR(o.date);
+  });
+  const ledger=(STATE.payments||[]).filter(p=>p && inR(p.date));
+  // payments collected directly on orders (no ledger entry, e.g. at delivery)
+  const direct=orders.filter(o=>{
+    const amt=(o.payment&&parseFloat(o.payment.amount))||parseFloat(o.paymentAmount)||0;
+    return amt>0 && !(o.payment&&o.payment.allocatedAt);
+  });
+  return {from,to,orders,ledger,direct};
+}
+function renderReport(){
+  const {from,to,orders,ledger,direct}=_repData();
+  const q=((document.getElementById('rep-search')||{}).value||'').toLowerCase();
+  const sales=orders.reduce((s,o)=>s+(parseFloat(o.total)||0),0);
+  const ledgerAmt=ledger.reduce((s,p)=>s+(parseFloat(p.amount)||0),0);
+  const dAmt=o=>((o.payment&&parseFloat(o.payment.amount))||parseFloat(o.paymentAmount)||0);
+  const directAmt=direct.reduce((s,o)=>s+dAmt(o),0);
+  const received=ledgerAmt+directAmt;
+  const modes={};
+  ledger.forEach(p=>{ const g=_repModeGroup(p.mode); modes[g]=(modes[g]||0)+(parseFloat(p.amount)||0); });
+  direct.forEach(o=>{ const g=_repModeGroup(o.payment&&o.payment.mode); modes[g]=(modes[g]||0)+dAmt(o); });
+  const sub=document.getElementById('rep-sub');
+  if(sub) sub.textContent=from+' → '+to;
+  const modeChips=Object.keys(modes).sort((a,b)=>modes[b]-modes[a]).map(g=>
+    `<span style="background:${g==='Cash'?'#E8F5E9':'var(--cream)'};border:1.5px solid var(--border);border-radius:16px;padding:3px 10px;font-size:11px;font-weight:700;color:${g==='Cash'?'#1B7A2E':'var(--muted)'};">${g}: ₹${Math.round(modes[g]).toLocaleString('en-IN')}</span>`).join(' ');
+  document.getElementById('rep-summary').innerHTML=`
+    <div class="card" style="padding:12px 14px;margin-bottom:8px;">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;text-align:center;">
+        <div><div style="font-size:10px;color:var(--muted);font-weight:700;">SALES (GOODS GIVEN)</div>
+          <div style="font-family:'DM Serif Display',serif;font-size:22px;color:var(--red);">₹${Math.round(sales).toLocaleString('en-IN')}</div>
+          <div style="font-size:10px;color:var(--muted);">${orders.length} orders</div></div>
+        <div><div style="font-size:10px;color:var(--muted);font-weight:700;">RECEIVED (MONEY IN)</div>
+          <div style="font-family:'DM Serif Display',serif;font-size:22px;color:var(--green);">₹${Math.round(received).toLocaleString('en-IN')}</div>
+          <div style="font-size:10px;color:var(--muted);">${ledger.length+direct.length} entries</div></div>
+      </div>
+      <div style="border-top:1px solid var(--border);margin-top:10px;padding-top:8px;display:flex;justify-content:space-between;align-items:center;">
+        <span style="font-size:12px;font-weight:700;color:var(--muted);">Net (sales − received)</span>
+        <span style="font-family:'DM Serif Display',serif;font-size:18px;color:${sales-received>0?'var(--red)':'var(--green)'};">₹${Math.round(sales-received).toLocaleString('en-IN')}</span>
+      </div>
+      ${modeChips?`<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">${modeChips}</div>`:''}
+    </div>`;
+  // combined entry list, newest first
+  let rows=[];
+  orders.forEach(o=>rows.push({date:_normDayStr(o.date),name:o.customerName||'—',
+    sub:(o.items&&o.items.length? o.items.map(i=>(i.qty||'')+(i.unit||'')+' '+(i.name||'')).slice(0,2).join(', ') : ('#'+String(o.id||'').slice(-6))),
+    amt:parseFloat(o.total)||0,type:'sale'}));
+  ledger.forEach(p=>rows.push({date:_normDayStr(p.date),name:p.custName||'—',
+    sub:(p.mode||'')+(p.ref?' · '+p.ref:'')+(p.createdBy?' · '+p.createdBy:''),amt:parseFloat(p.amount)||0,type:'recv'}));
+  direct.forEach(o=>rows.push({date:_normDayStr(o.date),name:o.customerName||'—',
+    sub:'collected with order'+((o.payment&&o.payment.mode)?' · '+o.payment.mode:''),amt:dAmt(o),type:'recv'}));
+  if(q) rows=rows.filter(r=>r.name.toLowerCase().includes(q)||String(r.sub||'').toLowerCase().includes(q));
+  rows.sort((a,b)=>b.date.localeCompare(a.date));
+  document.getElementById('rep-list').innerHTML = rows.length ? rows.map(r=>`
+    <div style="background:var(--surface);border:1.5px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:6px;display:flex;align-items:center;gap:10px;">
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${r.name}</div>
+        <div style="font-size:11px;color:var(--muted);">${r.date}${r.sub?' · '+r.sub:''}</div>
+      </div>
+      <div style="flex-shrink:0;text-align:right;font-weight:800;font-size:14px;color:${r.type==='sale'?'var(--red)':'var(--green)'};">
+        ${r.type==='sale'?'':'+'}₹${Math.round(r.amt).toLocaleString('en-IN')}
+        <div style="font-size:9px;font-weight:600;color:var(--muted);">${r.type==='sale'?'SALE':'RECEIVED'}</div>
+      </div>
+    </div>`).join('') : '<div class="empty-state"><p>No entries in this period</p></div>';
+}
+// pull other phones' payment-ledger entries from the Sheet (Payments_ tabs)
+let _repPulling=false;
+async function _repPullPayments(){
+  if(_repPulling) return; _repPulling=true;
+  try{
+    const url=getSheetUrl(); if(!url||!navigator.onLine) return;
+    const now=new Date(); let added=0;
+    for(let i=0;i<3;i++){  // this + previous 2 months
+      const m=new Date(now.getFullYear(),now.getMonth()-i,1);
+      const tag=_repISO(m).slice(0,7);
+      try{
+        const r=await fetch(url+'?action=getMonthPayments&month='+tag,{cache:'no-store'});
+        const d=await r.json();
+        (d&&Array.isArray(d.payments)?d.payments:[]).forEach(row=>{
+          const id=String(row['Pay ID']||'').trim(); if(!id) return;
+          if(STATE.payments.some(x=>x.id===id)) return;
+          STATE.payments.push({id:id,date:_normDayStr(row['Date']),custName:String(row['Customer']||''),
+            custId:String(row['Cust ID']||''),amount:parseFloat(row['Amount (Rs)'])||0,
+            mode:String(row['Mode']||''),ref:String(row['Reference']||''),notes:String(row['Notes']||''),
+            createdBy:String(row['Created By']||''),fromSheet:true});
+          added++;
+        });
+      }catch(e){}
+    }
+    if(added){ savePaymentLedger(); renderReport(); showToast('☁ '+added+' payment entries pulled from Sheet'); }
+  } finally { _repPulling=false; }
+}
+function downloadReportPDF(){
+  const {from,to,orders,ledger,direct}=_repData();
+  const sales=orders.reduce((s,o)=>s+(parseFloat(o.total)||0),0);
+  const dAmt=o=>((o.payment&&parseFloat(o.payment.amount))||parseFloat(o.paymentAmount)||0);
+  const received=ledger.reduce((s,p)=>s+(parseFloat(p.amount)||0),0)+direct.reduce((s,o)=>s+dAmt(o),0);
+  const jsPDF=window.jspdf.jsPDF;
+  const doc=new jsPDF({orientation:'portrait',unit:'mm',format:'a4'});
+  doc.setFontSize(14); doc.setFont('helvetica','bold');
+  doc.text('Gaavn Fresh — Sales & Collections Report', 14, 16);
+  doc.setFontSize(10); doc.setFont('helvetica','normal');
+  doc.text('Period: '+from+' to '+to, 14, 23);
+  doc.text('Sales: Rs.'+Math.round(sales).toLocaleString('en-IN')+' ('+orders.length+' orders)   Received: Rs.'+Math.round(received).toLocaleString('en-IN')+'   Net: Rs.'+Math.round(sales-received).toLocaleString('en-IN'), 14, 29);
+  const body=[];
+  orders.forEach(o=>body.push([_normDayStr(o.date),o.customerName||'-','Sale','Rs.'+Math.round(parseFloat(o.total)||0).toLocaleString('en-IN'),'']));
+  ledger.forEach(p=>body.push([_normDayStr(p.date),p.custName||'-','Received ('+(p.mode||'-')+')','','Rs.'+Math.round(parseFloat(p.amount)||0).toLocaleString('en-IN')]));
+  direct.forEach(o=>body.push([_normDayStr(o.date),o.customerName||'-','Received (with order)','','Rs.'+Math.round(dAmt(o)).toLocaleString('en-IN')]));
+  body.sort((a,b)=>String(b[0]).localeCompare(String(a[0])));
+  doc.autoTable({startY:34,head:[['Date','Customer','Type','Sales','Received']],body:body,
+    styles:{fontSize:8},headStyles:{fillColor:[26,82,122]},columnStyles:{3:{halign:'right'},4:{halign:'right'}}});
+  doc.save('Report_'+from+'_to_'+to+'.pdf');
+}
+
 // ── v149: AUTO-PULL HISTORY FROM THE SHEET ───────────────────────────
 // autoSyncPending (above) pushes this phone's orders UP. This pulls everyone
 // else's orders DOWN automatically whenever the phone is online, so History,
