@@ -1,4 +1,4 @@
-var CACHE = 'gf-sales-v157';
+var CACHE = 'gf-sales-v158';
 
 self.addEventListener('install', function(e) {
   e.waitUntil(
