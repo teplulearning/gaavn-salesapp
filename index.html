@@ -269,7 +269,7 @@ body.gf-panel-open #app{ visibility:hidden; }
     <div class="top-bar-left">
       <span class="logo">🐄 GF</span>
       <span class="role-badge" id="role-badge">SALES</span>
-      <span style="font-size:9px;color:var(--muted);margin-left:4px;" id="build-stamp">v157</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:4px;" id="build-stamp">v158</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <span class="date-chip" id="today-chip"></span>
@@ -6890,24 +6890,72 @@ function getOrdersForDate(date) {
 }
 
 // Store orders fetched from sheet into localStorage for offline access
-function cacheOrdersForDate(date, orders) {
-  if(!date || !orders.length) return;
+// v158: THE PHANTOM-ORDER BUG.
+// This function used to be ADD-ONLY: it updated matching ids and appended new
+// ones, but could never remove anything. So once a device had orders cached
+// under a date — from an older buggy build, an order later deleted or re-dated
+// in the Sheet, or a mis-attributed pull — no amount of "pull from Sheet" could
+// ever clear them. That is exactly why one phone showed 10 clients for 6 July
+// while the phone that created the orders showed 5.
+// With authoritative=true the Sheet becomes the source of truth for that date:
+// orders that came FROM the Sheet but are no longer in it are dropped. Orders
+// created on this device that have not reached the Sheet yet are always kept.
+function cacheOrdersForDate(date, orders, authoritative) {
+  if(!date) return null;
+  orders = orders || [];
+  if(!authoritative && !orders.length) return null;
   const key = LS_PREFIX + date;
   const existing = getOrdersForDate(date);
-  // Merge: sheet orders may have newer status than local cache
-  const merged = [...existing];
-  orders.forEach(o => {
-    const idx = merged.findIndex(x => x.id === o.id);
-    // v149: if the local copy has un-pushed edits (synced:false), keep it —
-    // it will be pushed UP by autoSyncPending; overwriting it with the sheet
-    // row would silently revert the edit.
-    if(idx >= 0) { if(merged[idx] && merged[idx].synced === false) return; merged[idx] = {...merged[idx], ...o}; }
-    else merged.push(o);
-  });
+  let merged, dropped = [];
+  if (authoritative) {
+    const sheetIds = new Set(orders.map(o => String(o.id)));
+    // only ever discard rows we KNOW came from the Sheet or were confirmed
+    // synced — never a local order still waiting to be pushed up
+    dropped = existing.filter(o => o && !sheetIds.has(String(o.id)) &&
+                                   (o.fromSheet === true || o.synced === true));
+    const keepLocal = existing.filter(o => o && !sheetIds.has(String(o.id)) &&
+                                   !(o.fromSheet === true || o.synced === true));
+    merged = [...orders, ...keepLocal].filter(o => o && !isOrderDeleted(o.id));
+    if (dropped.length) {
+      // also purge from STATE.orders, otherwise the next saveOrders() would
+      // merge them straight back out of memory
+      const dropIds = new Set(dropped.map(o => String(o.id)));
+      STATE.orders = (STATE.orders || []).filter(o => !dropIds.has(String(o.id)));
+    }
+  } else {
+    merged = [...existing];
+    orders.forEach(o => {
+      const idx = merged.findIndex(x => x.id === o.id);
+      // v149: if the local copy has un-pushed edits (synced:false), keep it —
+      // it will be pushed UP by autoSyncPending; overwriting it with the sheet
+      // row would silently revert the edit.
+      if(idx >= 0) { if(merged[idx] && merged[idx].synced === false) return; merged[idx] = {...merged[idx], ...o}; }
+      else merged.push(o);
+    });
+  }
   // v149: quota errors here used to abort month-loads with a misleading
   // 'check Sheet URL' message and silently truncate History totals.
   try { localStorage.setItem(key, JSON.stringify(merged)); }
   catch(e) { showToast('\u26a0 Phone storage full \u2014 could not cache '+date+'. History totals will be incomplete.'); }
+  return {kept: merged.length, dropped: dropped.length, droppedIds: dropped.map(o=>o.id)};
+}
+
+// v158: hard refresh one date from the Sheet — the manual repair for a device
+// that has drifted. Wipes this device's copy of that day and takes whatever the
+// Sheet has, keeping only orders not yet pushed up.
+async function rebuildDateFromSheet(date){
+  const url = getSheetUrl();
+  if(!url){ showToast('\u2699 Set the Sheet URL in Setup first'); return; }
+  if(!confirm('Rebuild '+date+' from the Google Sheet?\n\nThis device\'s copy of that day is replaced by whatever the Sheet holds. Orders created here that have not synced yet are kept.')) return;
+  showToast('\u23f3 Rebuilding '+date+' from Sheet\u2026');
+  try {
+    const res = await _loadMonthFromSheet(date.slice(0,7), null, date);
+    const after = getOrdersForDate(date);
+    try{ saveOrders(); }catch(e){}
+    if(typeof renderHistory==='function') renderHistory();
+    const d = (res && res.perDate && res.perDate[date]) ? res.perDate[date] : null;
+    showToast('\u2713 '+date+': now '+after.length+' order(s)'+(d&&d.dropped?(' \u00b7 removed '+d.dropped+' stale'):''));
+  } catch(e){ showToast('\u2717 Could not rebuild '+date+' \u2014 check connection'); }
 }
 
 // ── MANUAL LINE ITEMS FOR GST REPORT ─────────────────────────────────
@@ -7340,12 +7388,21 @@ function renderHistory() {
   }
 
   // Summary chips — totals across all visible dates
+  // v158: History used to total the ITEM LINES when present, while My Orders,
+  // Dues, the Dashboard and the Report all total the ORDER TOTAL. That is the
+  // ₹7.0L vs ₹6.92L gap. The order total is the billed figure and the one dues
+  // are computed from, so History now uses it too — and any order whose item
+  // lines disagree with its total is counted and surfaced instead of silently
+  // smoothed over.
   let totalRev = 0, totalOrders = 0, totalCustomers = new Set();
+  let mismatchN = 0, mismatchAmt = 0;
   dates.forEach(d => {
     const orders = d === TODAY_KEY ? JSON.parse(localStorage.getItem(LS_ORDERS)||'[]') : getOrdersForDate(d);
     orders.forEach(o => {
+      const t = parseFloat(o.total)||0;
       const itemsSum = (o.items||[]).reduce((s,i) => s+(parseFloat(i.amount)||0), 0);
-      totalRev += itemsSum > 0 ? itemsSum : (o.total||0);
+      totalRev += t;
+      if(itemsSum > 0 && Math.abs(itemsSum - t) > 1){ mismatchN++; mismatchAmt += (itemsSum - t); }
       totalOrders++;
       totalCustomers.add(o.customerName);
     });
@@ -7364,6 +7421,9 @@ function renderHistory() {
     <div style="background:var(--surface);border:1.5px solid var(--border);border-radius:20px;padding:4px 12px;font-size:11px;font-weight:600;color:var(--muted);">
       ${dates.length} days
     </div>
+    ${mismatchN?`<div style="flex-basis:100%;font-size:11px;color:var(--red);font-weight:700;margin-top:4px;">
+      ⚠ ${mismatchN} order(s) where the item lines add up to ₹${Math.round(Math.abs(mismatchAmt)).toLocaleString('en-IN')} ${mismatchAmt>0?'more':'less'} than the order total — open those orders and check.
+    </div>`:''}
     <div style="flex-basis:100%;font-size:10px;color:var(--muted);margin-top:2px;">
       ☁ Auto-syncs with the Sheet when online${(function(){ try{ const t=parseInt(localStorage.getItem('gf_hist_autosync_ts'),10)||0; return t?(' · last sync '+new Date(t).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'})):''; }catch(e){ return ''; } })()} — tap <b>Sheet → Load ALL Months</b> to force a full reload.
     </div>
@@ -7378,11 +7438,8 @@ function renderHistory() {
 
     if(!orders.length) return '';
 
-    const dayRev    = orders.reduce((s,o) => {
-      // Recalculate from items if available — catches stale totals from pre-delivery estimates
-      const itemsSum = (o.items||[]).reduce((si,i) => si + (parseFloat(i.amount)||0), 0);
-      return s + (itemsSum > 0 ? itemsSum : (o.total||0));
-    }, 0);
+    // v158: order total, consistent with My Orders / Dues / Report
+    const dayRev    = orders.reduce((s,o) => s + (parseFloat(o.total)||0), 0);
     const dayCount  = orders.length;
     const paid      = orders.filter(o=>o.status==='paid').length;
     const due       = orders.filter(o=>o.status==='due'||o.status==='partial').length;
@@ -7416,6 +7473,12 @@ function renderHistory() {
         <div id="hday-${date}" style="display:${isToday?'block':'none'};border-top:1px solid var(--border);padding:10px 12px;">
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;align-items:center;">
             <button onclick="copyWhatsAppForDate('${date}')" style="background:#25D366;color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;">💬 WhatsApp</button>
+            <button onclick="rebuildDateFromSheet('${date}')" style="background:#6A1B9A;color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;" title="Replace this device's copy of this day with the Sheet's version">🔄 Rebuild from Sheet</button>
+            <span style="font-size:11px;color:var(--muted);align-self:center;">${(function(){
+              const fs=orders.filter(o=>o&&(o.fromSheet===true||o.synced===true)).length;
+              const loc=orders.length-fs;
+              return '☁ '+fs+' from Sheet'+(loc?' · 📱 '+loc+' local only':'');
+            })()}</span>
             <button onclick="openResubmitDay('${date}')" style="background:var(--blue);color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;">🔄 Resubmit to Sheet</button>
           </div>
           ${renderHistoryOrders(orders, date)}
@@ -7648,7 +7711,7 @@ async function fetchHistoryDate() {
     const orders = orderSeq.map(id=>orderMap[id]).filter(o=>o.id);
 
     // Cache to localStorage
-    cacheOrdersForDate(date, orders.filter(o=>!isOrderDeleted(o.id)));
+    cacheOrdersForDate(date, orders.filter(o=>!isOrderDeleted(o.id)), true);   // v158 authoritative
 
     statusEl.textContent = `✓ ${orders.length} orders loaded for ${date}`;
     statusEl.style.color = 'var(--green,#2E7D32)';
@@ -7670,7 +7733,7 @@ async function fetchHistoryDate() {
 
 // v149: core month loader shared by single-month and load-all flows.
 // Fetches one month from the Sheet and caches each day locally.
-async function _loadMonthFromSheet(month, statusEl) {
+async function _loadMonthFromSheet(month, statusEl, onlyDate) {
   const url = getSheetUrl();
   if(!url) throw new Error('no-url');
 
@@ -7725,8 +7788,19 @@ async function _loadMonthFromSheet(month, statusEl) {
   const byDate={};
   rows.forEach(row=>{ const dt=normDate(row); if(!dt) return; (byDate[dt]=byDate[dt]||[]).push(row); });
   let totalOrders=0, dateCount=0;
-  Object.keys(byDate).forEach(dt=>{ const ords=buildOrders(byDate[dt], dt).filter(o=>!isOrderDeleted(o.id)); if(ords.length){ cacheOrdersForDate(dt, ords); totalOrders+=ords.length; dateCount++; } });
-  return {orders:totalOrders, days:dateCount};
+  // v158: the Sheet is authoritative for any date it returns, so stale copies
+  // on this device are evicted instead of accumulating forever.
+  const perDate = {};
+  const _dates = onlyDate ? [onlyDate] : Object.keys(byDate);
+  _dates.forEach(dt=>{
+    const ords=buildOrders(byDate[dt]||[], dt).filter(o=>!isOrderDeleted(o.id));
+    // for a targeted rebuild we write even when the Sheet has none for that day
+    if(ords.length || onlyDate){
+      perDate[dt] = cacheOrdersForDate(dt, ords, true) || {};
+      totalOrders+=ords.length; if(ords.length) dateCount++;
+    }
+  });
+  return {orders:totalOrders, days:dateCount, perDate:perDate};
 }
 
 async function fetchHistoryMonth() {
