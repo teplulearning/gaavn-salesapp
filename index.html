@@ -269,7 +269,7 @@ body.gf-panel-open #app{ visibility:hidden; }
     <div class="top-bar-left">
       <span class="logo">🐄 GF</span>
       <span class="role-badge" id="role-badge">SALES</span>
-      <span style="font-size:9px;color:var(--muted);margin-left:4px;" id="build-stamp">v158</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:4px;" id="build-stamp">v162</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <span class="date-chip" id="today-chip"></span>
@@ -359,7 +359,7 @@ body.gf-panel-open #app{ visibility:hidden; }
             <label>Notes (optional)</label>
             <input type="text" id="order-notes" placeholder="e.g. deliver by 9am">
           </div>
-          <button class="btn btn-primary" onclick="submitOrder()">✓ Submit Order</button>
+          <button class="btn btn-primary" id="btn-submit-order" onclick="submitOrder()">✓ Submit Order</button>
         </div>
       </div>
     </div>
@@ -773,6 +773,7 @@ body.gf-panel-open #app{ visibility:hidden; }
       <div id="hist-fetch-status" style="font-size:12px;color:var(--muted);min-height:18px;margin-bottom:8px;"></div>
       <button class="btn btn-primary" onclick="fetchAllHistoryMonths()" style="width:100%;margin-bottom:8px;">☁ Load ALL Months (full history)</button>
       <button class="btn btn-secondary" onclick="checkSheetVsPhone()" style="width:100%;margin-bottom:8px;">🔍 Check Sheet vs Phone</button>
+      <button class="btn btn-secondary" onclick="cleanDuplicateRows()" style="width:100%;margin-bottom:8px;">🧹 Clean duplicate rows in Sheet</button>
       <button class="btn btn-primary" onclick="fetchHistoryMonth()" style="width:100%;margin-bottom:8px;background:#2E7D32;">🗓 Load Whole Month</button>
       <div class="btn-row">
         <button class="btn btn-secondary" onclick="closeModal('modal-hist-fetch')">Cancel</button>
@@ -1592,6 +1593,64 @@ function markOrderDeleted(orderId, orderDate, sheetOk){
   }catch(e){}
 }
 function _markSheetDeleteDone(orderId){ const m=_deletedMap(); if(m[String(orderId)]){ m[String(orderId)].sheetOk=true; _deletedSave(m); } }
+// v161: DELETIONS NOW TRAVEL BETWEEN DEVICES.
+// Tombstones used to live only on the phone that did the deleting, so an order
+// deleted on the salesperson's phone stayed visible on the owner's phone
+// forever. This pulls the Sheet's shared Deleted_Orders list and merges it into
+// this device's tombstones, then drops any local copies. Combined with
+// retryPendingSheetDeletes() (which pushes deletes that never reached the
+// Sheet), a delete made anywhere now reaches everywhere.
+const LS_DEL_PULL_TS = 'gf_delpull_ts';
+let _delPulling = false;
+async function pullDeletedOrders(force){
+  if(_delPulling) return 0;
+  if(!navigator.onLine) return 0;
+  const url = (typeof getSheetUrl==='function'?getSheetUrl():'')||'';
+  if(!url) return 0;
+  const last = parseInt(localStorage.getItem(LS_DEL_PULL_TS),10)||0;
+  if(!force && Date.now()-last < 10*60*1000) return 0;   // at most every 10 min
+  _delPulling = true;
+  try{ localStorage.setItem(LS_DEL_PULL_TS, String(Date.now())); }catch(e){}
+  let applied = 0;
+  try{
+    const since = (localStorage.getItem('gf_cutover')||'2026-06-01');
+    const r = await fetch(url+'?action=getDeletedOrders&since='+encodeURIComponent(since),{cache:'no-store'});
+    const j = await r.json();
+    const list = (j && Array.isArray(j.deleted)) ? j.deleted : [];
+    const m = _deletedMap();
+    list.forEach(d=>{
+      const id = String(d.id||'').trim(); if(!id) return;
+      if(m[id]) return;                                  // already known here
+      m[id] = {date:d.date||'', ts:Date.now(), sheetOk:true, fromSheet:true};
+      applied++;
+    });
+    if(applied){
+      _deletedSave(m);
+      // strip every local copy of the newly-known deleted orders
+      const ids = new Set(list.map(d=>String(d.id).trim()));
+      try{
+        for(let i=localStorage.length-1;i>=0;i--){
+          const k=localStorage.key(i);
+          if(!k||k.indexOf('gf_orders_')!==0) continue;
+          let arr=[]; try{ arr=JSON.parse(localStorage.getItem(k)||'[]'); }catch(e){}
+          const kept=(arr||[]).filter(o=>o&&!ids.has(String(o.id)));
+          if(kept.length!==(arr||[]).length) localStorage.setItem(k, JSON.stringify(kept));
+        }
+      }catch(e){}
+      STATE.orders = (STATE.orders||[]).filter(o=>o&&!ids.has(String(o.id)));
+      showToast('\u2601 '+applied+' order(s) deleted on another device \u2014 removed here too');
+      try{
+        const h=document.getElementById('screen-history');
+        if(h&&h.classList.contains('active')&&typeof renderHistory==='function') renderHistory();
+        if(typeof renderDashboard==='function') renderDashboard();
+        if(typeof renderDues==='function') renderDues();
+      }catch(e){}
+    }
+  }catch(e){ /* old script without getDeletedOrders — ignore silently */ }
+  finally{ _delPulling=false; }
+  return applied;
+}
+
 async function retryPendingSheetDeletes(){
   const url=(typeof getSheetUrl==='function'?getSheetUrl():'')||'';
   if(!url||!navigator.onLine) return;
@@ -1895,7 +1954,7 @@ function showScreen(id) {
     if(id==='new-order')  initNewOrder();
     if(id==='setup')      { renderSetup(); renderGSTMaster(); }
     if(id==='manage')     renderManageCustomers();
-    if(id==='history')  { renderHistory(); setTimeout(function(){ try{ autoSyncHistory(false); }catch(e){} }, 400); }
+    if(id==='history')  { renderHistory(); setTimeout(function(){ try{ autoSyncHistory(false); }catch(e){} }, 400); setTimeout(function(){ try{ pullDeletedOrders(false); }catch(e){} }, 900); }
     if(id==='payment-in') renderPaymentIn();
     try{ attachSearchClears(); }catch(e){}
   });
@@ -2958,7 +3017,42 @@ function updateOrderSummary() {
     : '<div style="color:var(--muted);font-size:13px;padding:8px 0;">No items added yet</div>';
 }
 
+// ── v160: DOUBLE-SUBMIT PREVENTION ──────────────────────────────────
+// The order id was generated fresh inside submitOrder() on every tap:
+//   const orderId = 'ORD'+Date.now().toString().slice(-8)
+// so a double tap produced TWO DIFFERENT ids, and the server's dedupe (which
+// replaces rows with a matching Order ID) could not see them as the same order.
+// Result: one delivery, two rows in the Sheet, inflated day totals.
+// Three layers now stop it:
+//   1. re-entry lock + disabled button — a second tap cannot start at all
+//   2. identical order within 3 minutes REUSES the same id, so the server
+//      replaces its own row instead of adding a second
+//   3. an identical order already on that date asks for explicit confirmation
+let _submitting = false;
+let _lastSubmit = null;   // {sig, id, at}
+function _orderSignature(custId, dateStr, items, total){
+  const parts = (items||[]).map(i=>[i.product,i.qty,i.rate,Math.round(i.amount||0)].join(':')).sort();
+  return [custId||'', dateStr||'', Math.round(total||0), parts.join('|')].join('#');
+}
+
 function submitOrder() {
+  // layer 1 — re-entry lock
+  if (_submitting) { showToast('⏳ Already submitting — please wait'); return; }
+  const _btn = document.getElementById('btn-submit-order');
+  _submitting = true;
+  if (_btn) { _btn.disabled = true; _btn.style.opacity = '0.6'; }
+  const _release = () => { _submitting = false; if (_btn) { _btn.disabled = false; _btn.style.opacity = ''; } };
+  setTimeout(_release, 4000);   // failsafe: never leave the button stuck
+  try {
+    return _submitOrderInner(_release);
+  } catch(e) {
+    _release();
+    showToast('✗ Could not submit — ' + (e && e.message ? e.message : 'unexpected error'));
+    throw e;
+  }
+}
+
+function _submitOrderInner(_release) {
   const items = Object.entries(STATE.cart).map(([pid,v])=>{
     const p=PRODUCTS.find(x=>x.id===pid);
     const isLaadi = p.isLaadi||false;
@@ -2974,9 +3068,32 @@ function submitOrder() {
   if(!STATE.selectedCustomer) { showToast('Select a customer first'); return; }
   // No stop order block — sales person gets alert on customer selection instead
   const total = items.reduce((s,i)=>s+i.amount,0);
-  const orderId = 'ORD'+Date.now().toString().slice(-8);
   // Use the date selected in the picker (defaults to today)
   const orderDate = STATE.orderDate || TODAY_KEY;
+
+  const _sig = _orderSignature(STATE.selectedCustomer.id, orderDate, items, total);
+  // layer 2 — same order re-submitted within 3 minutes: reuse the id so the
+  // Sheet replaces that row rather than creating a second order
+  let orderId, _isRepeat = false;
+  if (_lastSubmit && _lastSubmit.sig === _sig && (Date.now() - _lastSubmit.at) < 180000) {
+    orderId = _lastSubmit.id; _isRepeat = true;
+  } else {
+    // layer 3 — an identical order already exists on that date: ask first
+    const _dup = (STATE.orders||[]).find(o =>
+      o && String(o.date) === String(orderDate) &&
+      _orderSignature(o.customerId, o.date, o.items, o.total) === _sig);
+    if (_dup) {
+      if (!confirm('An identical order for ' + STATE.selectedCustomer.name + ' already exists on ' + orderDate +
+                   ' (#' + _dup.id + ', ₹' + Math.round(_dup.total||0).toLocaleString('en-IN') + ').\n\n' +
+                   'Create a SECOND order with the same items?')) {
+        if (_release) _release();
+        showToast('Cancelled — the existing order was kept');
+        return;
+      }
+    }
+    orderId = 'ORD'+Date.now().toString().slice(-8);
+  }
+  _lastSubmit = {sig:_sig, id:orderId, at:Date.now()};
   const isBackdated = orderDate !== TODAY_KEY;
   const order = {
     id:orderId, date:orderDate,
@@ -3016,7 +3133,8 @@ function submitOrder() {
       const label = d.toLocaleDateString('en-IN',{day:'numeric',month:'short'});
       showToast('✓ Back-dated order for '+label+' — syncing...');
     } else {
-      showToast('✓ Order submitted — syncing to Sheet...');
+      showToast(_isRepeat ? '✓ Same order re-sent — updated #'+orderId+' (no duplicate created)'
+                          : '✓ Order submitted — syncing to Sheet...');
     }
   } else {
     showToast('✓ Order saved locally — ⚠ Sheet URL not set!', 4000);
@@ -3030,6 +3148,7 @@ function submitOrder() {
       setTimeout(() => banner.remove(), 8000);
     }, 500);
   }
+  if (_release) _release();   // v160: work done, re-enable the button
   // ── Auto-save any rates changed during this order back to customer profile ──
   saveCustomerRates(STATE.selectedCustomer, STATE.cart);
 
@@ -5556,6 +5675,8 @@ function getAppsScriptCode() {
     '    if (a === "deleteDay")             return deleteDay(e.parameter);',
     '    if (a === "rebuildDayTotal")       return rebuildDayTotal(e.parameter);',
     '    if (a === "deleteOrder")           return deleteOrder(e.parameter);',
+    '    if (a === "getDeletedOrders")      return getDeletedOrders(e.parameter);',
+    '    if (a === "dedupeOrderRows")       return dedupeOrderRows(e.parameter);',
     '    return jsonOut({error: "Unknown action: " + a});',
     '  } catch(err) { return jsonOut({error: err.message}); }',
     '}',
@@ -5813,6 +5934,63 @@ function getAppsScriptCode() {
     '    dsh.appendRow([orderId, rawDate, new Date()]);',
     '  }catch(ex){}',
     '  return jsonOut({status:"ok", deleted:deleted, orderId:orderId});',
+    '}',
+    '',
+    '// v162: an order legitimately occupies ONE ROW PER PRODUCT LINE, and all',
+    '// rows of one write share the same "Synced At" stamp. Older builds appended',
+    '// instead of replacing, so a re-sync (e.g. marking an order paid) left the',
+    '// earlier row-set behind — the same Order ID appearing twice, once',
+    '// "confirmed" and once "paid". This keeps only the newest write for each',
+    '// Order ID and deletes the superseded ones. Day totals are unaffected',
+    '// (they already count distinct Order IDs), this just cleans the sheet.',
+    'function dedupeOrderRows(p) {',
+    '  var ss = SpreadsheetApp.openById(SS_ID);',
+    '  var month = String(p && p.month || "").slice(0,7);',
+    '  var sh = ss.getSheetByName("Orders_" + month);',
+    '  if(!sh || sh.getLastRow() < 2) return jsonOut({status:"ok", removed:0, note:"no sheet"});',
+    '  var data = sh.getDataRange().getValues();',
+    '  var SYNC_COL = 16;   // "Synced At" is the 17th column (0-based 16)',
+    '  var newest = {};',
+    '  for(var r = 1; r < data.length; r++) {',
+    '    var oid = String(data[r][0]||"").trim();',
+    '    if(!oid || oid.indexOf("TOTAL:") === 0 || oid.indexOf("RESUBMIT") === 0) continue;',
+    '    var st = String(data[r][SYNC_COL]||"").trim();',
+    '    if(!newest[oid] || st > newest[oid]) newest[oid] = st;',
+    '  }',
+    '  var removed = 0, dry = String(p && p.dryRun || "") === "1";',
+    '  for(var r2 = data.length - 1; r2 >= 1; r2--) {',
+    '    var id2 = String(data[r2][0]||"").trim();',
+    '    if(!id2 || id2.indexOf("TOTAL:") === 0 || id2.indexOf("RESUBMIT") === 0) continue;',
+    '    var s2 = String(data[r2][SYNC_COL]||"").trim();',
+    '    // a row whose batch stamp is older than the newest batch for this id',
+    '    // was superseded by a later write — remove it',
+    '    if(newest[id2] && s2 && s2 < newest[id2]) {',
+    '      if(!dry) sh.deleteRow(r2 + 1);',
+    '      removed++;',
+    '    }',
+    '  }',
+    '  return jsonOut({status:"ok", removed:removed, month:month, dryRun:dry});',
+    '}',
+    '',
+    '// v161: return the shared delete list so every device can honour a',
+    '// deletion made on any other device. Optional ?since=yyyy-mm-dd trims it.',
+    'function getDeletedOrders(p) {',
+    '  var ss = SpreadsheetApp.openById(SS_ID);',
+    '  var dsh = ss.getSheetByName("Deleted_Orders");',
+    '  if(!dsh || dsh.getLastRow() < 1) return jsonOut({deleted:[], count:0});',
+    '  var tz = Session.getScriptTimeZone();',
+    '  var data = dsh.getRange(1,1,dsh.getLastRow(),3).getValues();',
+    '  var since = String(p && p.since || "").slice(0,10);',
+    '  var out = [];',
+    '  for(var r=0; r<data.length; r++) {',
+    '    var oid = String(data[r][0]||"").trim();',
+    '    if(!oid || oid === "Order ID") continue;',
+    '    var od = data[r][1];',
+    '    var ods = (od instanceof Date) ? Utilities.formatDate(od, tz, "yyyy-MM-dd") : String(od||"").slice(0,10);',
+    '    if(since && ods && ods < since) continue;',
+    '    out.push({id:oid, date:ods});',
+    '  }',
+    '  return jsonOut({deleted:out, count:out.length});',
     '}',
     '',
     '// ── DELETE ALL ROWS FOR A DATE (used before bulk resubmit) ─────────',
@@ -6940,6 +7118,122 @@ function cacheOrdersForDate(date, orders, authoritative) {
   return {kept: merged.length, dropped: dropped.length, droppedIds: dropped.map(o=>o.id)};
 }
 
+// v160: DUPLICATE FINDER — read-only scan of what the Sheet holds for a date.
+// Groups the Sheet's rows by Order ID (the Sheet stores ONE ROW PER PRODUCT
+// LINE, so a 3-item order is 3 rows — counting rows overstates the order
+// count), then flags orders that look like the same delivery entered twice:
+// same customer + same total, or same customer + same items.
+async function findDuplicatesForDate(date){
+  const url = getSheetUrl();
+  if(!url){ showToast('\u2699 Set the Sheet URL in Setup first'); return; }
+  showToast('\u23f3 Scanning the Sheet for '+date+'\u2026');
+  let rows=[];
+  try{
+    const r=await fetch(url+'?action=getMonthOrders&month='+date.slice(0,7),{cache:'no-store'});
+    const j=await r.json(); rows=(j&&Array.isArray(j.orders))?j.orders:[];
+  }catch(e){ showToast('\u2717 Could not read the Sheet'); return; }
+  const norm=d=>{ d=String(d||''); if(d.indexOf('T')>0){ try{ const x=new Date(d);
+      if(!isNaN(x)) return x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0')+'-'+String(x.getDate()).padStart(2,'0'); }catch(e){} }
+    return d.slice(0,10); };
+  const byId={};
+  rows.forEach(row=>{
+    if(norm(row._date||row['Date'])!==date) return;
+    const id=String(row['Order ID']||'').trim(); if(!id||id.indexOf('TOTAL')===0) return;
+    if(!byId[id]) byId[id]={id:id,cust:String(row['Customer']||'').trim(),total:0,by:String(row['Created By']||''),
+      at:String(row['Synced At']||''),status:String(row['Status']||''),items:[]};
+    const t=parseFloat(row['Order Total (Rs)']);
+    if(!isNaN(t)&&t>byId[id].total) byId[id].total=t;
+    const prod=String(row['Product']||'').trim();
+    if(prod&&prod!=='(no items)') byId[id].items.push(prod+'\u00d7'+(row['Qty']||0));
+  });
+  const orders=Object.values(byId);
+  // group by customer + rounded total, and by customer + item list
+  const groups={};
+  orders.forEach(o=>{
+    const kA=(o.cust||'').toLowerCase()+'|amt:'+Math.round(o.total);
+    const kB=(o.cust||'').toLowerCase()+'|itm:'+o.items.slice().sort().join(',');
+    [kA,kB].forEach(k=>{ (groups[k]=groups[k]||[]).push(o); });
+  });
+  const seen=new Set(), suspect=[];
+  Object.values(groups).forEach(g=>{
+    if(g.length<2) return;
+    const key=g.map(o=>o.id).sort().join('+');
+    if(seen.has(key)) return; seen.add(key);
+    suspect.push(g);
+  });
+  let html='<div style="font-size:12px;margin-bottom:8px;"><b>'+orders.length+' distinct order(s)</b> in the Sheet for '+date+
+           ' &nbsp;('+rows.filter(r=>norm(r._date||r['Date'])===date).length+' product-line rows \u2014 multi-item orders span several rows)</div>';
+  if(!suspect.length){
+    html+='<div style="color:var(--green);font-size:12px;">\u2713 No look-alike duplicates found for this date.</div>';
+  } else {
+    html+='<div style="color:var(--red);font-weight:700;font-size:12px;margin-bottom:6px;">\u26a0 '+suspect.length+' possible duplicate group(s) \u2014 same customer, same amount or same items:</div>';
+    suspect.forEach(g=>{
+      html+='<div style="border:1.5px solid #C62828;border-radius:8px;padding:8px 10px;margin-bottom:8px;background:#FDECEA;">'+
+            '<div style="font-weight:700;font-size:12px;">'+(g[0].cust||'\u2014')+'</div>';
+      g.forEach(o=>{
+        html+='<div style="font-size:11px;margin-top:4px;display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;">'+
+          '<span style="font-family:monospace;">#'+o.id+'</span>'+
+          '<span>\u20b9'+Math.round(o.total).toLocaleString('en-IN')+'</span>'+
+          '<span style="color:var(--muted);">'+(o.items.join(', ')||'\u2014')+'</span>'+
+          '<span style="color:var(--muted);">'+(o.by||'')+' '+(o.at||'')+'</span></div>';
+      });
+      html+='<div style="font-size:10.5px;color:var(--muted);margin-top:6px;">Keep one, then tap \ud83d\uddd1 Delete Order on the other(s) below \u2014 that removes the row from the Sheet for every device.</div></div>';
+    });
+  }
+  const box=document.getElementById('sheet-rows-'+date);
+  if(box){ box.innerHTML=html; box.style.display='block'; }
+}
+
+// v159: READ-ONLY inspector. Lists exactly what the Google Sheet holds for a
+// date — order id, customer, total, who created it and when it was synced.
+// Nothing is written or deleted; this only shows the source data so a spurious
+// row can be identified and its origin traced from the 'Created By' column.
+async function showSheetRowsForDate(date){
+  const url = getSheetUrl();
+  if(!url){ showToast('\u2699 Set the Sheet URL in Setup first'); return; }
+  showToast('\u23f3 Reading the Sheet for '+date+'\u2026');
+  let rows=[];
+  try{
+    const r=await fetch(url+'?action=getMonthOrders&month='+date.slice(0,7),{cache:'no-store'});
+    const j=await r.json();
+    rows=(j&&Array.isArray(j.orders))?j.orders:[];
+  }catch(e){ showToast('\u2717 Could not read the Sheet'); return; }
+  const norm=d=>{ d=String(d||''); if(d.indexOf('T')>0){ try{ const x=new Date(d);
+      if(!isNaN(x)) return x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0')+'-'+String(x.getDate()).padStart(2,'0'); }catch(e){} }
+    return d.slice(0,10); };
+  const byId={};
+  rows.forEach(row=>{
+    if(norm(row._date||row['Date'])!==date) return;
+    const id=String(row['Order ID']||'').trim(); if(!id) return;
+    if(!byId[id]) byId[id]={id:id, cust:String(row['Customer']||''), total:parseFloat(row['Order Total (Rs)'])||0,
+      by:String(row['Created By']||''), at:String(row['Synced At']||''), status:String(row['Status']||''), lines:0};
+    byId[id].lines++;
+  });
+  const list=Object.values(byId).sort((a,b)=>String(a.at).localeCompare(String(b.at)));
+  const localIds=new Set(getOrdersForDate(date).map(o=>String(o.id)));
+  let html='<div style="font-size:12px;margin-bottom:8px;"><b>'+list.length+' order(s) in the Google Sheet for '+date+'</b>'+
+           ' &nbsp;·&nbsp; this device holds '+localIds.size+'</div>'+
+           '<table style="width:100%;border-collapse:collapse;font-size:11px;">'+
+           '<tr style="background:#1A3A1F;color:#fff;"><th style="padding:5px 6px;text-align:left;">Order ID</th>'+
+           '<th style="padding:5px 6px;text-align:left;">Customer</th><th style="padding:5px 6px;text-align:right;">Total</th>'+
+           '<th style="padding:5px 6px;text-align:left;">Created by</th><th style="padding:5px 6px;text-align:left;">Synced at</th></tr>';
+  list.forEach(o=>{
+    html+='<tr style="border-bottom:1px solid var(--border);'+(o.total<=0?'background:#FDECEA;':'')+'">'+
+      '<td style="padding:5px 6px;font-family:monospace;">'+o.id+'</td>'+
+      '<td style="padding:5px 6px;">'+o.cust+(o.total<=0?' <b style="color:var(--red);">\u2190 \u20b90</b>':'')+'</td>'+
+      '<td style="padding:5px 6px;text-align:right;">\u20b9'+Math.round(o.total).toLocaleString('en-IN')+'</td>'+
+      '<td style="padding:5px 6px;">'+(o.by||'\u2014')+'</td>'+
+      '<td style="padding:5px 6px;white-space:nowrap;">'+(o.at||'\u2014')+'</td></tr>';
+  });
+  html+='</table><div style="font-size:11px;color:var(--muted);margin-top:8px;line-height:1.6;">'+
+    'These rows are what the Sheet actually contains \u2014 every device pulls exactly this. '+
+    'To remove a spurious one, tap <b>\ud83d\uddd1 Delete Order</b> on it here: that deletes the row from the Sheet, '+
+    'so every phone drops it on the next sync. Look at <b>Created by</b> and <b>Synced at</b> to see where it came from.'+
+    '</div>';
+  const box=document.getElementById('sheet-rows-'+date);
+  if(box){ box.innerHTML=html; box.style.display='block'; }
+}
+
 // v158: hard refresh one date from the Sheet — the manual repair for a device
 // that has drifted. Wipes this device's copy of that day and takes whatever the
 // Sheet has, keeping only orders not yet pushed up.
@@ -7474,6 +7768,8 @@ function renderHistory() {
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;align-items:center;">
             <button onclick="copyWhatsAppForDate('${date}')" style="background:#25D366;color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;">💬 WhatsApp</button>
             <button onclick="rebuildDateFromSheet('${date}')" style="background:#6A1B9A;color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;" title="Replace this device's copy of this day with the Sheet's version">🔄 Rebuild from Sheet</button>
+            <button onclick="showSheetRowsForDate('${date}')" style="background:#455A64;color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;" title="Show exactly what the Google Sheet holds for this date">🔍 What's in the Sheet?</button>
+            <button onclick="findDuplicatesForDate('${date}')" style="background:#C62828;color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;" title="Find orders that look entered twice">🧬 Find duplicates</button>
             <span style="font-size:11px;color:var(--muted);align-self:center;">${(function(){
               const fs=orders.filter(o=>o&&(o.fromSheet===true||o.synced===true)).length;
               const loc=orders.length-fs;
@@ -7481,6 +7777,7 @@ function renderHistory() {
             })()}</span>
             <button onclick="openResubmitDay('${date}')" style="background:var(--blue);color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;">🔄 Resubmit to Sheet</button>
           </div>
+          <div id="sheet-rows-${date}" style="display:none;background:var(--surface);border:1.5px solid var(--border);border-radius:10px;padding:12px;margin-bottom:10px;overflow-x:auto;"></div>
           ${renderHistoryOrders(orders, date)}
         </div>
       </div>`;
@@ -7857,6 +8154,40 @@ async function fetchAllHistoryMonths() {
 // v149: month-by-month reconciliation — shows exactly where the Sheet has
 // orders that this phone is missing (or vice versa), so 'why does it show
 // only N days' is answerable at a glance.
+// v162: ask the Sheet to drop superseded row-sets (same Order ID written
+// twice by an older build). Runs a dry run first and asks before deleting.
+async function cleanDuplicateRows(){
+  const url = getSheetUrl();
+  if(!url){ showToast('\u2699 Set the Sheet URL in Setup first'); return; }
+  const statusEl = document.getElementById('hist-fetch-status');
+  const say = t => { if(statusEl){ statusEl.textContent = t; statusEl.style.color='var(--muted)'; } };
+  const months = [];
+  const now = new Date();
+  for(let i=0;i<3;i++){ const d=new Date(now.getFullYear(), now.getMonth()-i, 1);
+    months.push(d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')); }
+  say('\u23f3 Checking for superseded rows\u2026');
+  let found = 0; const detail = [];
+  for(const m of months){
+    try{
+      const r = await fetch(url+'?action=dedupeOrderRows&month='+m+'&dryRun=1',{cache:'no-store'});
+      const j = await r.json();
+      if(j && typeof j.removed === 'number' && j.removed>0){ found += j.removed; detail.push(m+': '+j.removed); }
+      if(j && j.error){ say('\u2717 '+j.error+' \u2014 re-deploy the Apps Script from Setup'); return; }
+    }catch(e){ say('\u2717 Could not reach the Sheet'); return; }
+  }
+  if(!found){ say('\u2713 No superseded rows found \u2014 the Sheet is clean.'); showToast('\u2713 Sheet already clean'); return; }
+  if(!confirm('Found '+found+' superseded row(s) in the Sheet ('+detail.join(', ')+').\n\n'+
+              'These are older copies of orders that were re-synced later — the newest version of every order is kept, and day totals do not change.\n\nRemove them?')) { say('Cancelled.'); return; }
+  say('\u23f3 Removing '+found+' row(s)\u2026');
+  let removed = 0;
+  for(const m of months){
+    try{ const r = await fetch(url+'?action=dedupeOrderRows&month='+m,{cache:'no-store'});
+      const j = await r.json(); removed += (j && j.removed) || 0; }catch(e){}
+  }
+  say('\u2713 Removed '+removed+' superseded row(s). Tap Load ALL Months to refresh this device.');
+  showToast('\u2713 Cleaned '+removed+' duplicate row(s) from the Sheet');
+}
+
 async function checkSheetVsPhone(){
   const url = getSheetUrl();
   if(!url) { showToast('\u2699 Set Sheet URL in Setup first'); return; }
@@ -9440,6 +9771,7 @@ async function autoSyncHistory(force){
   if(!force && Date.now()-last < 10*60*1000) return;   // at most every 10 min
   _histAutoSyncing=true;
   try{ localStorage.setItem(LS_HIST_SYNC_TS, String(Date.now())); }catch(e){}
+  try{ await pullDeletedOrders(false); }catch(e){}   // v161: know what was deleted before caching
   const before=_countCachedOrders();
   const synced=_histSyncedMap();
   const now=new Date(), curTag=_monthTagOf(now);
@@ -9489,10 +9821,12 @@ async function autoSyncHistory(force){
   }
 }
 
-window.addEventListener('online', function(){ updateOnlineIndicator(); showToast('🟢 Back online — syncing pending orders...'); autoSyncPending(false); setTimeout(function(){ try{ autoSyncHistory(true); }catch(e){} }, 1500); setTimeout(function(){ try{ flushDirtyBalances(); }catch(e){} }, 2500); });
+window.addEventListener('online', function(){ updateOnlineIndicator(); showToast('🟢 Back online — syncing pending orders...'); autoSyncPending(false); setTimeout(function(){ try{ autoSyncHistory(true); }catch(e){} }, 1500); setTimeout(function(){ try{ flushDirtyBalances(); }catch(e){} }, 2500); setTimeout(function(){ try{ pullDeletedOrders(true); }catch(e){} }, 3500); });
 window.addEventListener('offline', function(){ updateOnlineIndicator(); showToast('📴 Offline — orders are saved on this device'); });
 setTimeout(function(){ try{ updateOnlineIndicator(); autoSyncPending(true); }catch(e){} }, 2500);
 setTimeout(function(){ try{ autoSyncHistory(false); }catch(e){} }, 5000);       // v149: pull on startup
+setTimeout(function(){ try{ pullDeletedOrders(false); }catch(e){} }, 7000);      // v161: learn deletions made elsewhere
+setInterval(function(){ try{ pullDeletedOrders(false); }catch(e){} }, 10*60*1000);
 setTimeout(function(){ try{ flushDirtyBalances(); }catch(e){} }, 6000);          // v149.1: push un-synced balance changes
 setInterval(function(){ try{ flushDirtyBalances(); }catch(e){} }, 5*60*1000);
 setInterval(function(){ try{ autoSyncHistory(false); }catch(e){} }, 15*60*1000); // v149: and every 15 min
