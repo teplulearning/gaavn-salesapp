@@ -269,7 +269,7 @@ body.gf-panel-open #app{ visibility:hidden; }
     <div class="top-bar-left">
       <span class="logo">🐄 GF</span>
       <span class="role-badge" id="role-badge">SALES</span>
-      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v164</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v168</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <span class="date-chip" id="today-chip"></span>
@@ -1307,7 +1307,7 @@ body.gf-panel-open #app{ visibility:hidden; }
 const PRODUCTS = [
   {id:'paneer', name:'Med Fat Paneer',      unit:'kg',   stdRate:260, emoji:'🧀', hsn:'0406', gstRate:0},
   {id:'pl',     name:'Med Fat Paneer Ladi', unit:'ladi', stdRate:260, emoji:'🧱', isLaadi:true, rateFromPaneer:true, rateFrom:'paneer', hsn:'0406', gstRate:0},
-  {id:'mp',     name:'Malai Paneer',  unit:'kg',   stdRate:280, emoji:'🧀', altUnit:'pack', altRate:70, hsn:'0406', gstRate:0},
+  {id:'mp',     name:'Malai Paneer',  unit:'pack',   stdRate:280, emoji:'🧀', altUnit:'pack', altRate:70, hsn:'0406', gstRate:0},
   {id:'lp',     name:'Low Fat Paneer',      unit:'kg',   stdRate:240, emoji:'🥗', hsn:'0406', gstRate:0},
   {id:'lpl',    name:'Low Fat Paneer Ladi', unit:'ladi', stdRate:240, emoji:'🧱', isLaadi:true, rateFromPaneer:true, rateFrom:'lp', hsn:'0406', gstRate:0},
   {id:'lc',     name:'Lite Curd',     unit:'jar',  stdRate:270, emoji:'🥛', altUnit:'kg', altRate:60, jarToKg:1, hsn:'0406', gstRate:0},
@@ -2576,6 +2576,7 @@ function saveOrderDraft() {
     selectedCustomer: STATE.selectedCustomer,
     cart: STATE.cart || {},
     orderDate: STATE.orderDate || TODAY_KEY,
+    savedOn: TODAY_KEY,          // v167: so a stale draft can be detected
     notes: document.getElementById('order-notes')?.value || ''
   };
   localStorage.setItem(LS_ORDER_DRAFT, JSON.stringify(draft));
@@ -2604,11 +2605,40 @@ function initNewOrder() {
   const draftRaw = localStorage.getItem(LS_ORDER_DRAFT);
   const draft = draftRaw ? JSON.parse(draftRaw) : null;
 
+  // v168: a draft is crash-protection only — it must never be silently adopted.
+  // Previously anything typed was restored automatically, so a half-finished or
+  // mistaken entry could be resumed without the salesperson realising and then
+  // submitted. Now: a draft from an earlier day is discarded outright, and a
+  // draft from today is offered, never assumed. Nothing reaches the Sheet
+  // unless Submit Order is pressed — a draft alone never syncs.
+  let _useDraft = false;
   if(draft && (draft.selectedCustomer || Object.keys(draft.cart||{}).length > 0)) {
+    if(draft.savedOn && draft.savedOn !== TODAY_KEY){
+      localStorage.removeItem(LS_ORDER_DRAFT);          // stale — drop it
+    } else {
+      const _n = draft.selectedCustomer ? draft.selectedCustomer.name : 'no customer';
+      const _t = Object.values(draft.cart||{}).reduce((a,v)=>a+((v.qty||0)*(v.rate||0)),0);
+      _useDraft = confirm('You have an unfinished order that was not submitted:\n\n' +
+                          _n + (_t?('  —  about ₹'+Math.round(_t).toLocaleString('en-IN')):'') +
+                          '\n\nResume it?  (Cancel starts a fresh order and discards this one)');
+      if(!_useDraft) localStorage.removeItem(LS_ORDER_DRAFT);
+    }
+  }
+
+  if(_useDraft) {
     // Restore draft state
     STATE.selectedCustomer = draft.selectedCustomer;
     STATE.cart = draft.cart || {};
-    STATE.orderDate = draft.orderDate || TODAY_KEY;
+    // v167 FIX: an unfinished draft used to carry its order-date forever. If a
+    // back-dated order was started and abandoned, the NEXT order — days later,
+    // for a different customer — silently inherited that old date and was
+    // written to the Sheet under the wrong day. A draft from an earlier day
+    // now resets to today; the cart is kept, only the stale date is dropped.
+    const _staleDraft = draft.savedOn && draft.savedOn !== TODAY_KEY;
+    STATE.orderDate = _staleDraft ? TODAY_KEY : (draft.orderDate || TODAY_KEY);
+    if(_staleDraft && draft.orderDate && draft.orderDate !== TODAY_KEY){
+      setTimeout(function(){ showToast('📅 Draft was from '+draft.savedOn+' — date reset to today. Set it again if you meant to back-date.', 5000); }, 800);
+    }
 
     const dp = document.getElementById('order-date-picker');
     if(dp) { dp.value = STATE.orderDate; dp.max = TODAY_KEY; }
@@ -4597,7 +4627,11 @@ function sendCreditWA(custId, type) {
     document.getElementById('modal-remind-lang').classList.add('open');
     return;
   }
-  const totalOwed = alerts.length ? alerts.reduce((s,x)=>s+((x.order.total||0)-(x.order.payment?.amount||0)),0) : (_fbDue + balance);
+  // v165 FIX: when a customer had ANY overdue invoice, this quoted only those
+  // invoices and silently dropped their opening/ledger balance — so a client
+  // owing ₹31,070 opening + ₹4,470 overdue was asked for ₹4,470. Every other
+  // screen uses getCustomerOutstanding(); reminders now use it too.
+  const totalOwed = getCustomerOutstanding(custId);
   const orderLines = alerts.length
     ? alerts.map(x=>{ const o=(x.order.total||0)-(x.order.payment?.amount||0); return '\u2022 Order #'+x.order.id+' dated '+x.order.date+' \u2014 \u20b9'+o.toLocaleString('en-IN')+' ('+x.cs.daysOverdue+'d overdue)'; }).join('\n')
     : unpaidFB.length
@@ -4624,13 +4658,22 @@ function sendClientReminder(lang, custId) {
   // reminders. Fall back to ALL unpaid orders + ledger balance.
   const unpaidFallback = alerts.length ? [] : getCustomerUnpaidOrders(custId);
   const _fbDue = unpaidFallback.reduce((s,o)=>s+((o.total||0)-(o.payment?.amount||0)),0);
-  const totalOwed = alerts.length ? alerts.reduce((s,x)=>s+((x.order.total||0)-(x.order.payment?.amount||0)),0) : (_fbDue + balance);
+  // v165 FIX: when a customer had ANY overdue invoice, this quoted only those
+  // invoices and silently dropped their opening/ledger balance — so a client
+  // owing ₹31,070 opening + ₹4,470 overdue was asked for ₹4,470. Every other
+  // screen uses getCustomerOutstanding(); reminders now use it too.
+  const totalOwed = getCustomerOutstanding(custId);
   const cfg = getCreditConfig(cust.category, cust.name);
   const upiId=(localStorage.getItem('gf_upi_id')||DEFAULT_UPI).trim();
+  const _balLine = balance>0
+    ? (lang==='mr' ? ('\u2022 मागील थकित शिल्लक: \u20b9'+balance.toLocaleString('en-IN'))
+                   : ('\u2022 Previous outstanding balance: \u20b9'+balance.toLocaleString('en-IN')))
+    : '';
   const lines = alerts.length
     ? alerts.map(function(x){ var o=(x.order.total||0)-((x.order.payment&&x.order.payment.amount)||0); return lang==='mr'
         ? ('\u2022 बिल #'+x.order.id+' दिनांक '+x.order.date+' \u2014 \u20b9'+o.toLocaleString('en-IN'))
         : ('\u2022 Order #'+x.order.id+' dated '+x.order.date+' \u2014 \u20b9'+o.toLocaleString('en-IN')); }).join('\n')
+      + (_balLine ? '\n'+_balLine : '')
     : unpaidFallback.length
     ? unpaidFallback.map(function(o){ var v=(o.total||0)-((o.payment&&o.payment.amount)||0); return lang==='mr'
         ? ('\u2022 बिल #'+o.id+' दिनांक '+o.date+' \u2014 \u20b9'+v.toLocaleString('en-IN'))
@@ -5869,17 +5912,28 @@ function getAppsScriptCode() {
     '    if(cellDate === dateStr) {',
     '      lastDateRow = i + 1;',
     '      var oid = String(data[i][0]).trim();',
-    '      if(oid && !seenOrders[oid]) {',
-    '        seenOrders[oid] = true;',
-    '        count++;',
-    '        // Only the first item row (idx===0) has the order total in col G',
+    '      // v166: this used to take the FIRST row found for an order id. When',
+    '      // an older build left a superseded row behind (the same order once',
+    '      // as "confirmed / paid 0" and again as "paid / 2400"), the first row',
+    '      // won — so Sales was right but COLLECTED was read as 0 and the day',
+    '      // showed far less money received than was actually taken. Sales was',
+    '      // never inflated: each order id is still counted once. Now the',
+    '      // highest figure seen for an id wins, so a later payment is picked up',
+    '      // even while duplicate rows are still present.',
+    '      if(oid) {',
+    '        if(!seenOrders[oid]) { seenOrders[oid] = {total:0, paid:0}; count++; }',
+    '        // only a first-item row carries the order total in col G',
     '        var orderTotalCell = parseFloat(data[i][6]);',
-    '        if(!isNaN(orderTotalCell)) totSales += orderTotalCell;',
+    '        if(!isNaN(orderTotalCell) && orderTotalCell > seenOrders[oid].total) seenOrders[oid].total = orderTotalCell;',
     '        var payAmt = parseFloat(data[i][8]);',
-    '        if(!isNaN(payAmt)) totPaid += payAmt;',
+    '        if(!isNaN(payAmt) && payAmt > seenOrders[oid].paid) seenOrders[oid].paid = payAmt;',
     '      }',
     '    }',
     '  }',
+    '  Object.keys(seenOrders).forEach(function(k){',
+    '    totSales += seenOrders[k].total;',
+    '    totPaid  += seenOrders[k].paid;',
+    '  });',
     '  if(count === 0) return;',
     '  // Insert the TOTAL row immediately after the last row for this date',
     '  sh.insertRowAfter(lastDateRow);',
@@ -7118,6 +7172,63 @@ function cacheOrdersForDate(date, orders, authoritative) {
   return {kept: merged.length, dropped: dropped.length, droppedIds: dropped.map(o=>o.id)};
 }
 
+// v167: WHICH OF THIS PHONE'S ORDERS NEVER REACHED THE SHEET.
+// Answers "the salesperson entered it but it is not in the Sheet" directly,
+// by comparing this device's orders for a date against what the Sheet returns.
+// Read-only apart from an explicit re-push you confirm.
+async function findMissingFromSheet(date){
+  const url = getSheetUrl();
+  if(!url){ showToast('\u2699 Set the Sheet URL in Setup first'); return; }
+  showToast('\u23f3 Comparing this phone with the Sheet\u2026');
+  let sheetIds=new Set();
+  try{
+    const r=await fetch(url+'?action=getMonthOrders&month='+date.slice(0,7),{cache:'no-store'});
+    const j=await r.json();
+    const norm=d=>{ d=String(d||''); if(d.indexOf('T')>0){ try{ const x=new Date(d);
+        if(!isNaN(x)) return x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0')+'-'+String(x.getDate()).padStart(2,'0'); }catch(e){} }
+      return d.slice(0,10); };
+    (j&&Array.isArray(j.orders)?j.orders:[]).forEach(row=>{
+      const id=String(row['Order ID']||'').trim();
+      if(id) sheetIds.add(id);        // any date — an order may sit under the wrong day
+    });
+  }catch(e){ showToast('\u2717 Could not read the Sheet'); return; }
+  const local=getOrdersForDate(date);
+  const missing=local.filter(o=>o&&o.id&&!sheetIds.has(String(o.id)));
+  const box=document.getElementById('sheet-rows-'+date);
+  let html='<div style="font-size:12px;margin-bottom:8px;"><b>'+local.length+' order(s) on this phone for '+date+
+           '</b> &nbsp;·&nbsp; Sheet holds '+sheetIds.size+' order(s) this month</div>';
+  if(!missing.length){
+    html+='<div style="color:var(--green);font-size:12px;">\u2713 Every order on this phone for '+date+' exists in the Sheet.</div>'+
+          '<div style="font-size:11px;color:var(--muted);margin-top:6px;">If an order looks missing in the Sheet, it is most likely filed under a different date \u2014 use \ud83d\udd0d What\u2019s in the Sheet? on the day it was actually entered.</div>';
+  } else {
+    html+='<div style="color:var(--red);font-weight:700;font-size:12px;margin-bottom:6px;">\u26a0 '+missing.length+' order(s) never reached the Sheet:</div>';
+    missing.forEach(o=>{
+      html+='<div style="border:1.5px solid #C62828;border-radius:8px;padding:8px 10px;margin-bottom:6px;background:#FDECEA;font-size:11.5px;">'+
+        '<b>'+(o.customerName||'\u2014')+'</b> \u2014 \u20b9'+Math.round(o.total||0).toLocaleString('en-IN')+
+        ' <span style="font-family:monospace;color:var(--muted);">#'+o.id+'</span>'+
+        ' <span style="color:var(--muted);">'+(o.synced===false?'not synced':'marked synced but absent')+'</span></div>';
+    });
+    html+='<button onclick="pushMissingToSheet(\''+date+'\')" style="background:#1B5E20;color:#fff;border:none;border-radius:8px;padding:9px 16px;font-size:12px;font-weight:700;cursor:pointer;">\u2b06 Push these '+missing.length+' to the Sheet</button>';
+  }
+  if(box){ box.innerHTML=html; box.style.display='block'; }
+}
+async function pushMissingToSheet(date){
+  const url=getSheetUrl(); if(!url) return;
+  let sheetIds=new Set();
+  try{
+    const r=await fetch(url+'?action=getMonthOrders&month='+date.slice(0,7),{cache:'no-store'});
+    const j=await r.json();
+    (j&&Array.isArray(j.orders)?j.orders:[]).forEach(row=>{ const id=String(row['Order ID']||'').trim(); if(id) sheetIds.add(id); });
+  }catch(e){ showToast('\u2717 Could not read the Sheet'); return; }
+  const missing=getOrdersForDate(date).filter(o=>o&&o.id&&!sheetIds.has(String(o.id)));
+  if(!missing.length){ showToast('Nothing to push'); return; }
+  if(!confirm('Push '+missing.length+' order(s) to the Sheet?')) return;
+  let ok=0;
+  for(const o of missing){ try{ const r=await syncOneOrder(o.id, o); if(r) ok++; }catch(e){} }
+  showToast('\u2713 Pushed '+ok+' of '+missing.length+' order(s)');
+  findMissingFromSheet(date);
+}
+
 // v160: DUPLICATE FINDER — read-only scan of what the Sheet holds for a date.
 // Groups the Sheet's rows by Order ID (the Sheet stores ONE ROW PER PRODUCT
 // LINE, so a 3-item order is 3 rows — counting rows overstates the order
@@ -7223,7 +7334,13 @@ async function showSheetRowsForDate(date){
       '<td style="padding:5px 6px;">'+o.cust+(o.total<=0?' <b style="color:var(--red);">\u2190 \u20b90</b>':'')+'</td>'+
       '<td style="padding:5px 6px;text-align:right;">\u20b9'+Math.round(o.total).toLocaleString('en-IN')+'</td>'+
       '<td style="padding:5px 6px;">'+(o.by||'\u2014')+'</td>'+
-      '<td style="padding:5px 6px;white-space:nowrap;">'+(o.at||'\u2014')+'</td></tr>';
+      '<td style="padding:5px 6px;white-space:nowrap;">'+(o.at||'\u2014')+
+        (function(){   // v167: flag rows entered on a different day than they are dated
+          const m=String(o.at||'').match(/^(\d{2})\/(\d{2})\/(\d{4})/);
+          if(!m) return '';
+          const entered=m[3]+'-'+m[2]+'-'+m[1];
+          return entered!==date ? '<br><b style="color:#E65100;">\u26a0 entered on '+entered+', not '+date+'</b>' : '';
+        })()+'</td></tr>';
   });
   html+='</table><div style="font-size:11px;color:var(--muted);margin-top:8px;line-height:1.6;">'+
     'These rows are what the Sheet actually contains \u2014 every device pulls exactly this. '+
@@ -7770,6 +7887,7 @@ function renderHistory() {
             <button onclick="rebuildDateFromSheet('${date}')" style="background:#6A1B9A;color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;" title="Replace this device's copy of this day with the Sheet's version">🔄 Rebuild from Sheet</button>
             <button onclick="showSheetRowsForDate('${date}')" style="background:#455A64;color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;" title="Show exactly what the Google Sheet holds for this date">🔍 What's in the Sheet?</button>
             <button onclick="findDuplicatesForDate('${date}')" style="background:#C62828;color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;" title="Find orders that look entered twice">🧬 Find duplicates</button>
+            <button onclick="findMissingFromSheet('${date}')" style="background:#00695C;color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;" title="Orders on this phone that never reached the Sheet">📤 Missing from Sheet?</button>
             <span style="font-size:11px;color:var(--muted);align-self:center;">${(function(){
               const fs=orders.filter(o=>o&&(o.fromSheet===true||o.synced===true)).length;
               const loc=orders.length-fs;
