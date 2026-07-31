@@ -269,7 +269,7 @@ body.gf-panel-open #app{ visibility:hidden; }
     <div class="top-bar-left">
       <span class="logo">🐄 GF</span>
       <span class="role-badge" id="role-badge">SALES</span>
-      <span style="font-size:9px;color:var(--muted);margin-left:4px;" id="build-stamp">v162</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v164</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <span class="date-chip" id="today-chip"></span>
@@ -9901,10 +9901,121 @@ window.addEventListener('popstate', function() {
 if('serviceWorker' in navigator) {
   window.addEventListener('load', function() {
     navigator.serviceWorker.register('./sw.js')
-      .then(function(r){ console.log('[GF] SW registered'); })
+      .then(function(r){ console.log('[GF] SW registered'); try{ r.update(); }catch(e){} })
       .catch(function(e){ console.log('[GF] SW skipped:', e.message); });
   });
 }
+
+// ── v163: SELF-UPDATE ─────────────────────────────────────────────────
+// This app is installed as a PWA with a service worker, so a phone can keep
+// serving the version it cached even after the file is updated on GitHub —
+// which is why a phone showed v157 long after v158 was published. Rather than
+// depending on sw.js behaviour, the app fetches its OWN page with no-store and
+// compares the build stamp. If the server has a newer build it offers to
+// update, and applying it clears every cache and re-registers the worker.
+function _currentBuild(){
+  const el=document.getElementById('build-stamp');
+  return el ? String(el.textContent||'').trim() : '';
+}
+async function checkForAppUpdate(auto){
+  if(!navigator.onLine){ if(!auto) showToast('📴 Offline — connect first to check for updates'); return null; }
+  const cur=_currentBuild();
+  try{
+    const base=location.href.split('#')[0].split('?')[0];
+    const r=await fetch(base+'?_v='+Date.now(),{cache:'no-store'});
+    const t=await r.text();
+    const m=t.match(/id="build-stamp"[^>]*>\s*(v\d+)\s*</);
+    const latest=m?m[1]:null;
+    if(latest && cur && latest!==cur){ _showUpdateBanner(latest); return latest; }
+    if(!auto) showToast('✓ Up to date ('+(cur||'unknown')+')');
+  }catch(e){ if(!auto) showToast('Could not check — is the app opened from a web link?'); }
+  return null;
+}
+// v164: updates apply THEMSELVES — no tapping. The only thing that delays an
+// update is unfinished work on screen, because reloading mid-order would throw
+// away what the salesperson is typing. So the update waits for a safe moment
+// and then applies quietly.
+let _lastActivity = Date.now();
+['pointerdown','keydown','touchstart'].forEach(ev=>{
+  try{ document.addEventListener(ev, function(){ _lastActivity=Date.now(); }, {passive:true, capture:true}); }catch(e){}
+});
+function _isSafeToUpdate(){
+  try{
+    if(document.querySelector('.modal-overlay.open')) return false;              // a dialog is open
+    if(STATE && STATE.cart && Object.keys(STATE.cart).length) return false;      // an order is being built
+    const ns=document.getElementById('screen-new-order');
+    if(ns && ns.classList.contains('active')) return false;                       // on the order screen
+    const ae=document.activeElement;
+    if(ae && (ae.tagName==='INPUT'||ae.tagName==='TEXTAREA'||ae.tagName==='SELECT')) return false;  // typing
+    if(typeof getPendingOrders==='function' && getPendingOrders().length) return false;             // orders still to push
+    if(typeof _submitting!=='undefined' && _submitting) return false;            // a submit is in flight
+    if(Date.now()-_lastActivity < 20000) return false;                           // used it in the last 20s
+    return true;
+  }catch(e){ return false; }
+}
+// loop guard — a caching quirk must never put the app in a reload cycle
+const LS_UPD_TRY='gf_update_tries';
+function _updateTries(){ try{ return JSON.parse(localStorage.getItem(LS_UPD_TRY)||'{}'); }catch(e){ return {}; } }
+function _noteUpdateTry(v){
+  const m=_updateTries(); const now=Date.now();
+  if(!m[v] || (now-m[v].first)>10*60*1000) m[v]={first:now,n:1}; else m[v].n++;
+  try{ localStorage.setItem(LS_UPD_TRY, JSON.stringify(m)); }catch(e){}
+  return m[v].n;
+}
+let _pendingUpdate=null;
+function _showUpdateBanner(latest){
+  _pendingUpdate=latest;
+  _tryAutoUpdate();
+}
+function _tryAutoUpdate(){
+  if(!_pendingUpdate) return;
+  const tries=_updateTries()[_pendingUpdate];
+  if(tries && tries.n>=3){                 // gave up auto — let the user decide
+    _showUpdateChip(_pendingUpdate, true);
+    return;
+  }
+  if(_isSafeToUpdate()){
+    _noteUpdateTry(_pendingUpdate);
+    showToast('⬆ Updating to '+_pendingUpdate+'…');
+    setTimeout(applyAppUpdate, 1200);
+  } else {
+    _showUpdateChip(_pendingUpdate, false);   // wait, keep it visible but unobtrusive
+  }
+}
+function _showUpdateChip(latest, stuck){
+  let c=document.getElementById('gf-update-chip');
+  if(!c){
+    c=document.createElement('div');
+    c.id='gf-update-chip';
+    c.style.cssText='position:fixed;bottom:110px;left:50%;transform:translateX(-50%);z-index:9998;'+
+      'background:#1B5E20;color:#fff;font-size:11px;font-weight:700;padding:6px 14px;border-radius:16px;'+
+      'box-shadow:0 2px 8px rgba(0,0,0,.25);cursor:pointer;';
+    c.onclick=function(){ _noteUpdateTry(latest); applyAppUpdate(); };
+    document.body.appendChild(c);
+  }
+  c.textContent = stuck ? ('🔄 Update to '+latest+' — tap to apply')
+                        : ('⬆ '+latest+' ready — installs when you pause');
+}
+setInterval(_tryAutoUpdate, 15000);   // keep trying until a safe moment arrives
+async function applyAppUpdate(){
+  showToast('⏳ Updating…');
+  try{
+    if(window.caches){ const keys=await caches.keys(); await Promise.all(keys.map(k=>caches.delete(k))); }
+  }catch(e){}
+  try{
+    if('serviceWorker' in navigator){
+      const regs=await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map(r=>r.unregister()));
+    }
+  }catch(e){}
+  // cache-busted reload so the phone cannot serve the old file again
+  const base=location.href.split('#')[0].split('?')[0];
+  location.replace(base+'?_v='+Date.now());
+}
+// check early: right after launch nothing is in progress, so an update
+// applies immediately and the salesperson simply sees the new version
+setTimeout(function(){ try{ _lastActivity=0; checkForAppUpdate(true); }catch(e){} }, 4000);
+setInterval(function(){ try{ checkForAppUpdate(true); }catch(e){} }, 15*60*1000);
 
 // pageshow fires on back-navigation (bfcache restore)
 window.addEventListener('pageshow', function(e) {
