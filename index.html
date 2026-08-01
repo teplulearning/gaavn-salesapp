@@ -269,9 +269,10 @@ body.gf-panel-open #app{ visibility:hidden; }
     <div class="top-bar-left">
       <span class="logo">🐄 GF</span>
       <span class="role-badge" id="role-badge">SALES</span>
-      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v168</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v170</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
+      <button id="del-lang-btn" onclick="toggleDeliveryLang()" style="display:none;background:var(--blue);color:#fff;border:none;border-radius:14px;padding:4px 10px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;">मराठी</button>
       <span class="date-chip" id="today-chip"></span>
       <span id="sheet-status-dot" title="Tap to open Setup" style="font-size:16px;cursor:pointer;" onclick="showScreen('setup')">⚪</span>
       <button class="notif-btn" onclick="showScreen('approvals')" title="Pending Approvals">
@@ -1847,6 +1848,11 @@ function enterApp(role) {
   const badge = document.getElementById('role-badge');
   badge.textContent = role.toUpperCase();
   badge.className = 'role-badge' + (role==='delivery'?' delivery':role==='owner'?' owner':'');
+  try{
+    const _lb=document.getElementById('del-lang-btn');
+    if(_lb) _lb.style.display = (role==='delivery') ? 'inline-block' : 'none';   // v170
+    if(role==='delivery') setTimeout(applyDeliveryMarathi, 80);
+  }catch(e){}
   document.getElementById('today-chip').textContent = TODAY_STR;
   const h = TODAY.getHours();
   document.getElementById('dash-greeting').textContent =
@@ -1876,6 +1882,93 @@ function switchRole() {
 
 
 
+// ══ v170: MARATHI FOR THE DELIVERY SCREEN ═══════════════════════════
+// Strictly additive. dtr() returns the English string unchanged unless the
+// signed-in role is 'delivery' AND Marathi has been switched on, so owner and
+// sales screens are byte-for-byte unaffected. Translation is applied as a pass
+// over the rendered delivery screens rather than by rewriting render code, so
+// no existing logic, id or calculation is touched.
+const LS_DEL_LANG = 'gf_del_lang';
+const MR_DELIVERY = {
+  // navigation
+  'Home':'होम', 'Deliveries':'डिलिव्हरी', 'Dues':'बाकी', 'Setup':'सेटिंग',
+  // screen titles
+  'My Deliveries':'माझ्या डिलिव्हरी',
+  'Confirmed orders shown expanded · tap Delivered when done':'ऑर्डर उघड्या दाखवल्या आहेत · माल दिल्यावर “डिलिव्हरी झाली” दाबा',
+  'Payment Dues':'पैसे बाकी',
+  // status pills
+  'Draft':'ड्राफ्ट', 'Confirmed':'डिलिव्हरी बाकी', 'Modified ⚠':'बदल केला ⚠',
+  'Delivered':'पोहोच झाली', 'Paid ✓':'पैसे मिळाले ✓', 'Due 💰':'पैसे बाकी 💰',
+  'Partial':'अर्धे पैसे',
+  // buttons
+  '✅ Submit Delivered':'✅ डिलिव्हरी झाली',
+  '⚠️ Shortfall':'⚠️ माल कमी पडला',
+  '💰 Record Payment':'💰 पैसे नोंदवा',
+  '💰 Collect Payment':'💰 पैसे घ्या',
+  '💰 Collect Balance':'💰 उरलेले पैसे घ्या',
+  '💰 Payment Received':'💰 पैसे मिळाले',
+  '✓ Finalise':'✓ पूर्ण करा',
+  '✓ Approve':'✓ मंजूर करा',
+  '✕ Reject':'✕ नाकारा',
+  '✏ Edit':'✏ बदला',
+  '✏ Edit Order':'✏ ऑर्डर बदला',
+  '📤 Sync':'📤 पाठवा',
+  '🗑 Delete Order':'🗑 ऑर्डर काढा',
+  '🧾 Invoice':'🧾 बिल',
+  '🧾 Invoice ✓':'🧾 बिल ✓',
+  // labels
+  'Total weight':'एकूण वजन',
+  'MODIFIED':'बदल केला',
+};
+function delLangIsMR(){ try{ return localStorage.getItem(LS_DEL_LANG)==='mr'; }catch(e){ return false; } }
+function dtr(t){
+  if(STATE.role!=='delivery' || !delLangIsMR()) return t;
+  const k=String(t==null?'':t).trim();
+  return Object.prototype.hasOwnProperty.call(MR_DELIVERY,k) ? MR_DELIVERY[k] : t;
+}
+function toggleDeliveryLang(){
+  const on = !delLangIsMR();
+  try{ localStorage.setItem(LS_DEL_LANG, on?'mr':'en'); }catch(e){}
+  const b=document.getElementById('del-lang-btn');
+  if(b) b.textContent = on ? 'English' : 'मराठी';
+  // re-render whatever is on screen, then translate
+  try{ if(typeof renderOrdersList==='function') renderOrdersList(); }catch(e){}
+  try{ if(typeof renderDues==='function') renderDues(); }catch(e){}
+  try{ buildNav(STATE.role); }catch(e){}
+  applyDeliveryMarathi();
+  showToast(on ? 'भाषा: मराठी' : 'Language: English');
+}
+// translate the rendered delivery screens — buttons, status pills, titles
+function applyDeliveryMarathi(){
+  if(STATE.role!=='delivery') return;
+  const b=document.getElementById('del-lang-btn');
+  if(b){ b.style.display='inline-block'; b.textContent = delLangIsMR() ? 'English' : 'मराठी'; }
+  if(!delLangIsMR()) return;
+  try{
+    ['screen-orders','screen-dues','screen-home'].forEach(function(sid){
+      const root=document.getElementById(sid); if(!root) return;
+      root.querySelectorAll('button, .status-pill').forEach(function(el){
+        if(el.children.length) return;            // leave composite nodes alone
+        const k=el.textContent.trim();
+        if(Object.prototype.hasOwnProperty.call(MR_DELIVERY,k)) el.textContent=MR_DELIVERY[k];
+      });
+    });
+    // titles set via textContent
+    const t=document.getElementById('orders-screen-title');
+    if(t && MR_DELIVERY[t.textContent.trim()]) t.textContent=MR_DELIVERY[t.textContent.trim()];
+    const sub=document.getElementById('orders-page-sub');
+    if(sub && MR_DELIVERY[sub.textContent.trim()]) sub.textContent=MR_DELIVERY[sub.textContent.trim()];
+    // "12 orders" → "12 ऑर्डर"  (number kept)
+    document.querySelectorAll('#screen-orders span').forEach(function(el){
+      if(el.children.length) return;
+      const m=el.textContent.match(/^📦\s*(\d+)\s*orders(.*)$/);
+      if(m) el.textContent='📦 '+m[1]+' ऑर्डर'+(m[2]||'').replace('days','दिवस').replace('scroll','खाली बघा');
+      const m2=el.textContent.match(/^(\d+)\s*orders$/);
+      if(m2) el.textContent=m2[1]+' ऑर्डर';
+    });
+  }catch(e){}
+}
+
 // ── NAV ─────────────────────────────────────────────────────────────
 const NAV_CONFIG = {
   owner:    [{id:'home',icon:'🏠',label:'Home'},{id:'customers',icon:'🏢',label:'Clients'},
@@ -1893,7 +1986,7 @@ const NAV_CONFIG = {
 function buildNav(role) {
   document.getElementById('bottom-nav').innerHTML = NAV_CONFIG[role].map(item =>
     `<button class="nav-btn ${item.id==='home'?'active':''}" id="nav-${item.id}" onclick="showScreen('${item.id}')">
-      <span class="nav-icon">${item.icon}</span>${item.label}
+      <span class="nav-icon">${item.icon}</span>${dtr(item.label)}
     </button>`).join('');
 }
 
@@ -1939,6 +2032,7 @@ function showScreen(id) {
       ? 'Confirmed orders shown expanded · tap Delivered when done'
       : 'All orders · tap to expand';
   }
+  try{ if(STATE.role==='delivery') setTimeout(applyDeliveryMarathi, 60); }catch(e){}   // v170
 
   // 4. Render content AFTER the screen is active and visible.
   //    requestAnimationFrame ensures the browser has painted the
@@ -2518,10 +2612,14 @@ function renderOrdersList() {
   let html = '';
   if(totalOrders > 0) {
     const scrollHint = totalDays > 1 ? ' · '+totalDays+' days — scroll ↓' : '';
+    // v169: the delivery person does not need day/period revenue totals — she
+    // needs the round list and each customer's own amount to collect. Aggregate
+    // money is hidden for that role only; owner and sales are unchanged.
+    const _hideMoney = (STATE.role === 'delivery');
     html += '<div style="background:var(--amber);border-radius:10px;padding:10px 14px;'
       +'margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;">'
       +'<span style="font-size:13px;font-weight:700;color:#fff;">📦 '+totalOrders+' orders'+scrollHint+'</span>'
-      +'<span style="font-size:13px;font-weight:700;color:#fff;">₹'+totalValue.toLocaleString('en-IN')+'</span>'
+      +(_hideMoney ? '' : '<span style="font-size:13px;font-weight:700;color:#fff;">₹'+totalValue.toLocaleString('en-IN')+'</span>')
       +'</div>';
   }
   dates.forEach(d => {
@@ -2537,7 +2635,7 @@ function renderOrdersList() {
       +'margin:14px 0 6px;padding:6px 10px;background:var(--ink);border-radius:8px;">'
       +'<span style="font-size:12px;font-weight:700;color:var(--cream);">📅 '+dateLabel+'</span>'
       +'<div style="display:flex;align-items:center;gap:6px;">'
-      +'<span id="daytotal-'+d+'" style="font-size:12px;font-weight:700;color:var(--amber);">'+dayCount+' orders · ₹'+dayTotal.toLocaleString('en-IN')+'</span>'
+      +'<span id="daytotal-'+d+'" style="font-size:12px;font-weight:700;color:var(--amber);">'+dayCount+' orders'+(STATE.role==='delivery' ? '' : ' · ₹'+dayTotal.toLocaleString('en-IN'))+'</span>'
       +'<button onclick="copyWhatsAppForDate(\''+d+'\')" style="background:#25D366;color:#fff;border:none;border-radius:6px;padding:3px 9px;font-size:10px;font-weight:700;cursor:pointer;font-family:\'DM Sans\',sans-serif;">💬</button>'
       +'</div>'
       +'</div>';
@@ -2552,6 +2650,7 @@ function renderOrdersList() {
         document.getElementById('obody-'+o.id)?.classList.add('open');
       }
     });
+    try{ applyDeliveryMarathi(); }catch(e){}   // v170
   }
 }
 
