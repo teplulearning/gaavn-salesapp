@@ -269,7 +269,7 @@ body.gf-panel-open #app{ visibility:hidden; }
     <div class="top-bar-left">
       <span class="logo">🐄 GF</span>
       <span class="role-badge" id="role-badge">SALES</span>
-      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v170</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v174</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <button id="del-lang-btn" onclick="toggleDeliveryLang()" style="display:none;background:var(--blue);color:#fff;border:none;border-radius:14px;padding:4px 10px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;">मराठी</button>
@@ -632,6 +632,8 @@ body.gf-panel-open #app{ visibility:hidden; }
   <div class="screen" id="screen-manage">
     <div class="page-title">✏️ Manage Customers</div>
     <div class="page-sub">Edit rates, contact, category, balance</div>
+    <button onclick="findDuplicateCustomers()" style="background:#C62828;color:#fff;border:none;border-radius:8px;padding:8px 16px;font-size:12px;font-weight:700;cursor:pointer;margin:8px 0;">🔗 Find duplicate customers</button>
+    <div id="dup-cust-out" style="display:none;margin-bottom:12px;"></div>
     <div class="search-box">
       <span class="search-icon">🔍</span>
       <input type="text" id="manage-search" placeholder="Search customer..." oninput="renderManageCustomers(this.value)">
@@ -1536,6 +1538,16 @@ function orderCountsForCust(o, cust){
 // getCustomerCreditAlerts() excludes cash-basis orders, so Cash & Carry clients
 // with unpaid invoices showed ₹0 in reminders and 'Clear' in client detail
 // even while the Dues screen correctly showed money owed.
+// v172: resolve a customer id from the name on a Sheet row. Orders written to
+// the Sheet do not carry the customer id, so without this every link between an
+// order and its customer is by name — and any rename or spelling change breaks
+// dues, reminders and statements silently.
+function _custIdByName(nm){
+  const k=_nameKey(nm); if(!k) return '';
+  const c=(STATE.customers||[]).find(x=>_nameKey(x.name)===k);
+  return c ? c.id : '';
+}
+
 function getCustomerUnpaidOrders(custId) {
   const _c = STATE.customers.find(c=>c.id===custId);
   const _cn = _c ? _nameKey(_c.name) : '';
@@ -5023,6 +5035,7 @@ async function syncCustomersFromSheet() {
     if(!json.customers || !json.customers.length) return;
     const extras = JSON.parse(localStorage.getItem(LS_CUSTS)||'[]');
     let added = 0, updated = 0;
+    const renamed = [];   // v171: names changed on another device
     json.customers.forEach(function(c) {
       if(!c.id || !c.name) return;
       const idx = STATE.customers.findIndex(x => x.id===c.id || x.name.toLowerCase()===c.name.toLowerCase());
@@ -5039,6 +5052,14 @@ async function syncCustomersFromSheet() {
         if(c.balance !== undefined && !_bd[existing.id]) existing.balance = c.balance;
         else if(_bd[existing.id]) existing.balance = _bd[existing.id].balance;
         if(c.balanceAsOf !== undefined) existing.balanceAsOf = c.balanceAsOf;   // v155
+        // v171 FIX: every field was refreshed from the Sheet except the NAME,
+        // so a customer renamed on one device kept the old name on all others
+        // forever. Only applied on an id match, never on a name match.
+        if(c.name && c.id && existing.id === c.id &&
+           String(c.name).trim() !== String(existing.name||'').trim()){
+          renamed.push({from:existing.name, to:String(c.name).trim(), id:existing.id});
+          existing.name = String(c.name).trim();
+        }
         if(c.phone)    existing.phone    = c.phone;
         if(c.area)     existing.area     = c.area;
         if(c.category) existing.category = c.category;
@@ -5054,6 +5075,30 @@ async function syncCustomersFromSheet() {
     });
     localStorage.setItem(LS_CUSTS, JSON.stringify(extras));
     if(added > 0) showToast('✓ '+added+' new customer(s) synced from sheet');
+    // v171: orders store the customer name as a copy taken when the order was
+    // placed, and the invoice prints that copy. Without this, History, Dues and
+    // every invoice would keep showing the old name after a rename.
+    if(renamed.length){
+      let touched = 0;
+      renamed.forEach(function(r){
+        const _from = _nameKey(r.from);
+        (STATE.orders||[]).forEach(function(o){
+          if(!o || o.customerName === r.to) return;
+          // v172: orders pulled from the Sheet carry NO customerId — they are
+          // linked to a customer by name alone. v171 only relabelled orders
+          // that HAD an id, so after a rename those sheet orders stopped
+          // matching the customer: Clients showed ₹0 while History still listed
+          // them under the old name. Match on the old name too.
+          const byId   = o.customerId && o.customerId === r.id;
+          const byName = !o.customerId && _from && _nameKey(o.customerName) === _from;
+          if(byId || byName){ o.customerName = r.to; if(!o.customerId) o.customerId = r.id; touched++; }
+        });
+      });
+      if(touched){ try{ saveOrders(); }catch(e){} }
+      try{ if(typeof renderOrdersList==='function') renderOrdersList(); }catch(e){}
+      try{ if(typeof renderDues==='function') renderDues(); }catch(e){}
+      showToast('✓ Renamed: '+renamed.map(function(r){return r.from+' → '+r.to;}).join(', '));
+    }
     if(document.getElementById('screen-new-order')?.classList.contains('active')) {
       var cs = document.getElementById('cust-search');
       if(cs && cs.value.trim()) searchCustomers(cs.value);
@@ -6916,6 +6961,133 @@ function openManageCustomer(id) {
   document.getElementById('modal-manage-cust').classList.add('open');
 }
 
+
+// ══ v173: DUPLICATE CUSTOMER FINDER & MERGE ═════════════════════════
+// The KhataBook import created the same shop twice under slightly different
+// spellings. Because orders are linked to a customer by name, each copy holds
+// part of the history and part of the balance — so dues, reminders and
+// statements are all wrong for that shop. Deleting the extra row in the Sheet
+// does not stick: the app has no customer-delete, and any device still holding
+// that customer re-uploads it on the next sync.
+// This finds the pairs, shows exactly what each copy holds, and merges them.
+function _dupKey(n){
+  return String(n||'').toLowerCase()
+    .replace(/[^a-z0-9]+/g,'')        // drop spaces, commas, dots, dashes
+    .replace(/(hotel|shop|dairy|store|enterprises|enterprise)/g,'');
+}
+function _custStats(c){
+  const orders=(STATE.orders||[]).filter(o=>o && (o.customerId===c.id ||
+      (!o.customerId && _nameKey(o.customerName)===_nameKey(c.name))));
+  const pays=(STATE.payments||[]).filter(p=>p && (p.custId===c.id ||
+      (!p.custId && _nameKey(p.custName)===_nameKey(c.name))));
+  return {orders:orders.length,
+          value:orders.reduce((s,o)=>s+(parseFloat(o.total)||0),0),
+          pays:pays.length,
+          balance:parseFloat(c.balance)||0,
+          outstanding:getCustomerOutstanding(c.id)};
+}
+function findDuplicateCustomers(){
+  const groups={};
+  (STATE.customers||[]).forEach(c=>{
+    if(String(c.name||'').indexOf('⛔ merged') === 0) return;   // already merged
+    const k=_dupKey(c.name); if(!k) return;
+    (groups[k]=groups[k]||[]).push(c);
+  });
+  let dups=Object.values(groups).filter(g=>g.length>1);
+  // v173.1: exact-key grouping misses the case where one name simply has extra
+  // words — "Krishnai Enterprises" vs "Krishnai Enterprises Phadtare". Add a
+  // second tier: one key is a prefix of the other, minimum 6 characters so
+  // short names cannot collide by accident. Flagged for review, never auto-merged.
+  const keys=Object.keys(groups);
+  const seen=new Set(dups.map(g=>g.map(c=>c.id).sort().join('+')));
+  for(let i=0;i<keys.length;i++){
+    for(let j=i+1;j<keys.length;j++){
+      const a=keys[i], b=keys[j];
+      const short=a.length<=b.length?a:b, long=a.length<=b.length?b:a;
+      if(short.length<6 || short===long) continue;
+      if(long.indexOf(short)!==0) continue;              // must be a prefix
+      const g=groups[a].concat(groups[b]);
+      const sig=g.map(c=>c.id).sort().join('+');
+      if(seen.has(sig)) continue;
+      seen.add(sig); g._likely=true; dups.push(g);
+    }
+  }
+  const box=document.getElementById('dup-cust-out');
+  if(!box) return;
+  if(!dups.length){
+    box.innerHTML='<div style="color:var(--green);font-size:13px;padding:10px;">✓ No duplicate customers found.</div>';
+    box.style.display='block'; return;
+  }
+  let html='<div style="font-size:13px;font-weight:700;color:var(--red);margin-bottom:8px;">⚠ '+dups.length+
+           ' customer(s) appear more than once — their orders and balances are split between the copies:</div>';
+  dups.forEach((g,gi)=>{
+    const _likely=!!g._likely;
+    html+='<div style="border:1.5px solid '+(_likely?'#E65100':'var(--red)')+';border-radius:10px;padding:10px;margin-bottom:10px;background:'+(_likely?'#FFF3E0':'#FDECEA')+';">'
+      +(_likely?'<div style="font-size:11px;font-weight:700;color:#E65100;margin-bottom:4px;">possible match — one name has extra words, check before merging</div>':'');
+    g.forEach((c,ci)=>{
+      const st=_custStats(c);
+      html+='<label style="display:block;padding:6px 4px;border-bottom:1px dashed #ddd;cursor:pointer;font-size:12px;">'+
+        '<input type="radio" name="dupkeep'+gi+'" value="'+c.id+'"'+(ci===0?' checked':'')+' style="margin-right:6px;">'+
+        '<b>'+c.name+'</b> <span style="font-family:monospace;color:var(--muted);font-size:10px;">'+c.id+'</span><br>'+
+        '<span style="color:var(--muted);margin-left:20px;">'+st.orders+' order(s) · ₹'+Math.round(st.value).toLocaleString('en-IN')+
+        ' · balance ₹'+Math.round(st.balance).toLocaleString('en-IN')+
+        ' · outstanding ₹'+Math.round(st.outstanding).toLocaleString('en-IN')+
+        ' · '+st.pays+' payment(s)</span></label>';
+    });
+    html+='<div style="font-size:11px;color:var(--muted);margin:6px 0;">Choose the record to KEEP — the others are merged into it and marked as merged.</div>'+
+      '<button onclick="mergeDuplicateGroup('+gi+',[\''+g.map(c=>c.id).join("','")+'\'])" '+
+      'style="background:#1B5E20;color:#fff;border:none;border-radius:8px;padding:8px 16px;font-size:12px;font-weight:700;cursor:pointer;">🔗 Merge these</button></div>';
+  });
+  box.innerHTML=html; box.style.display='block';
+}
+function mergeDuplicateGroup(gi, ids){
+  const sel=document.querySelector('input[name="dupkeep'+gi+'"]:checked');
+  if(!sel){ showToast('Pick which record to keep'); return; }
+  const keepId=sel.value;
+  const keep=STATE.customers.find(c=>c.id===keepId);
+  const losers=ids.filter(i=>i!==keepId).map(i=>STATE.customers.find(c=>c.id===i)).filter(Boolean);
+  if(!keep||!losers.length){ showToast('Nothing to merge'); return; }
+  const sum=losers.reduce((s,l)=>s+(parseFloat(l.balance)||0),0);
+  if(!confirm('Merge into "'+keep.name+'"?\n\n'+
+      losers.map(l=>'• '+l.name+'  (balance ₹'+Math.round(parseFloat(l.balance)||0).toLocaleString('en-IN')+')').join('\n')+
+      '\n\nAll their orders and payments move to "'+keep.name+'", and ₹'+Math.round(sum).toLocaleString('en-IN')+
+      ' of balance is added to it.\n\nThis cannot be undone automatically.')) return;
+
+  let movedO=0, movedP=0;
+  losers.forEach(l=>{
+    const lk=_nameKey(l.name);
+    (STATE.orders||[]).forEach(o=>{
+      if(!o) return;
+      if(o.customerId===l.id || (!o.customerId && _nameKey(o.customerName)===lk)){
+        o.customerId=keep.id; o.customerName=keep.name; o.synced=false; movedO++;
+      }
+    });
+    (STATE.payments||[]).forEach(pm=>{
+      if(!pm) return;
+      if(pm.custId===l.id || (!pm.custId && _nameKey(pm.custName)===lk)){
+        pm.custId=keep.id; pm.custName=keep.name; movedP++;
+      }
+    });
+  });
+  keep.balance=(parseFloat(keep.balance)||0)+sum;
+  try{ applyBalanceChange(keep); }catch(e){}
+  losers.forEach(l=>{
+    l.balance=0;
+    l.name='⛔ merged → '+keep.name+' ('+l.name+')';
+    try{ applyBalanceChange(l); }catch(e){}
+    if(getSheetUrl()){ try{ l.synced=false; syncCustomerToSheet(l); }catch(e){} }
+  });
+  try{ saveOrders(); }catch(e){}
+  try{ savePaymentLedger(); }catch(e){}
+  try{ localStorage.setItem(LS_CUSTS, JSON.stringify(STATE.customers)); }catch(e){}
+  if(getSheetUrl()){ try{ syncCustomerToSheet(keep); }catch(e){} }
+  showToast('✓ Merged — '+movedO+' order(s) and '+movedP+' payment(s) moved to '+keep.name);
+  findDuplicateCustomers();
+  try{ renderManageCustomers(_manageCustFilter); }catch(e){}
+  try{ renderCustomerList(); }catch(e){}
+  try{ renderDues(); }catch(e){}
+}
+
 function saveManageCustomer() {
   const id = document.getElementById('mc-id').value;
   const c  = STATE.customers.find(x=>x.id===id); if(!c) return;
@@ -6944,7 +7116,18 @@ function saveManageCustomer() {
   localStorage.setItem(LS_CUSTS, JSON.stringify(extras));
 
   closeModal('modal-manage-cust');
-  showToast('✓ Customer updated: '+c.name);
+  // v171 FIX: this screen saved the edit to THIS phone only — it never called
+  // syncCustomerToSheet(), so a renamed customer stayed renamed on the owner's
+  // device and nowhere else. Push it now.
+  if(getSheetUrl()){
+    try{
+      c.synced = false;
+      syncCustomerToSheet(c);
+      showToast('✓ Saved — syncing "'+c.name+'" to the Sheet…');
+    }catch(e){ showToast('✓ Saved locally — could not reach the Sheet'); }
+  } else {
+    showToast('✓ Customer updated: '+c.name+' (⚠ Sheet URL not set — not synced)');
+  }
   renderManageCustomers(_manageCustFilter);
   renderCustomerList();
 }
@@ -8264,7 +8447,8 @@ async function _loadMonthFromSheet(month, statusEl, onlyDate) {
       const oid=String(row['Order ID']||'').trim(); if(!oid) return;
       if(!map[oid]){
         map[oid]={ id:oid, date:normDate(row)||fallbackDate,
-          customerName:String(row['Customer']||''), customerCategory:String(row['Category']||''),
+          customerName:String(row['Customer']||''),
+          customerId:_custIdByName(row['Customer']),   // v172 customerCategory:String(row['Category']||''),
           customerArea:String(row['Area']||''), customerPhone:'',
           status:String(row['Status']||'confirmed'),
           total:parseFloat(row['Order Total (Rs)']||row['Total']||0)||0,
@@ -10265,7 +10449,8 @@ async function syncOrdersFromSheet() {
           let dt = String(row['Date']||'');
           if(dt.indexOf('T')>0){ try{ const d=new Date(dt); if(!isNaN(d)) dt=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }catch(e){} }
           map[oid] = { id:oid, date:(dt||TODAY_KEY).slice(0,10),
-            customerName:String(row['Customer']||''), customerCategory:String(row['Category']||''),
+            customerName:String(row['Customer']||''),
+          customerId:_custIdByName(row['Customer']),   // v172 customerCategory:String(row['Category']||''),
             customerArea:String(row['Area']||''), customerPhone:'',
             status:String(row['Status']||'confirmed'),
             total:parseFloat(row['Order Total (Rs)']||row['Total (Rs)']||row['Total']||0)||0,
