@@ -269,7 +269,7 @@ body.gf-panel-open #app{ visibility:hidden; }
     <div class="top-bar-left">
       <span class="logo">🐄 GF</span>
       <span class="role-badge" id="role-badge">SALES</span>
-      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v174</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v176</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <button id="del-lang-btn" onclick="toggleDeliveryLang()" style="display:none;background:var(--blue);color:#fff;border:none;border-radius:14px;padding:4px 10px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;">मराठी</button>
@@ -3946,8 +3946,16 @@ async function openClientDetail(id) {
     const url = STATE.sheetUrl || DEFAULT_SHEET_URL;
     if(url) {
       const params = new URLSearchParams({action:'getCustomerOrders', customerId:id, customerName:c.name, phone:c.phone||''});
-      const res = await fetch(url+'?'+params, {cache:'no-store'});
-      const data = await res.json();
+      // v176: with no timeout, a slow Apps Script left this panel stuck on
+      // "Loading transactions…" indefinitely. Give up after 12s and fall back
+      // to the orders already held on this device.
+      const _ctl = (typeof AbortController!=='undefined') ? new AbortController() : null;
+      const _to  = setTimeout(function(){ try{ _ctl && _ctl.abort(); }catch(e){} }, 12000);
+      let res, data;
+      try {
+        res  = await fetch(url+'?'+params, _ctl ? {cache:'no-store', signal:_ctl.signal} : {cache:'no-store'});
+        data = await res.json();
+      } finally { clearTimeout(_to); }
       if (data.orders && data.orders.length) {
         const orderMap = {};
         const _wc = (c.name||'').trim().toLowerCase();
@@ -7099,6 +7107,7 @@ function saveManageCustomer() {
   });
 
   const newBal = parseFloat(document.getElementById('mc-balance').value)||0;
+  const _oldName = c.name;                                   // v176
   Object.assign(c,{
     name:    document.getElementById('mc-name').value.trim()||c.name,
     category:document.getElementById('mc-category').value,
@@ -7108,6 +7117,31 @@ function saveManageCustomer() {
     balance:    newBal,
     openingBalance: c.openingBalance!==undefined ? c.openingBalance : newBal,
   });
+
+  // v176 FIX: v171 pushed the rename to the Sheet and v172 re-labelled orders
+  // when a rename ARRIVED from the Sheet — but the device that MADE the change
+  // never re-labelled its own orders. Sheet-pulled orders link by name, so on
+  // this phone the customer instantly read "Clear" while History still listed
+  // ₹13k under the old name. Re-label here, and stamp the id so it cannot drift.
+  if(_oldName && _oldName !== c.name){
+    const _ok = _nameKey(_oldName);
+    let moved = 0;
+    (STATE.orders||[]).forEach(function(o){
+      if(!o || o.customerName === c.name) return;
+      const byId   = o.customerId && o.customerId === c.id;
+      const byName = !o.customerId && _ok && _nameKey(o.customerName) === _ok;
+      if(byId || byName){ o.customerName = c.name; o.customerId = c.id; moved++; }
+    });
+    (STATE.payments||[]).forEach(function(pm){
+      if(!pm) return;
+      if(pm.custId === c.id || (!pm.custId && _nameKey(pm.custName) === _ok)){
+        pm.custId = c.id; pm.custName = c.name;
+      }
+    });
+    if(moved){ try{ saveOrders(); }catch(e){} }
+    try{ savePaymentLedger(); }catch(e){}
+    if(moved) showToast('✓ '+moved+' order(s) moved to the new name');
+  }
 
   // Persist to localStorage extras
   const extras = JSON.parse(localStorage.getItem(LS_CUSTS)||'[]');
@@ -7130,6 +7164,8 @@ function saveManageCustomer() {
   }
   renderManageCustomers(_manageCustFilter);
   renderCustomerList();
+  try{ if(typeof renderDues==='function') renderDues(); }catch(e){}          // v176
+  try{ if(typeof renderOrdersList==='function') renderOrdersList(); }catch(e){}
 }
 
 
@@ -9663,15 +9699,63 @@ function parsePhonePeCSV(text) {
   }
   if(!txns.length) { showToast('No completed transactions found'); return; }
 
-  // Match each txn to customers by exact outstanding amount.
-  var custOut = STATE.customers
-    .map(function(c){ return {id:c.id, name:c.name, out:_ppeCustOutstanding(c)}; })
-    .filter(function(x){ return x.out > 0; });
+  // v175: the old matcher compared a payment ONLY against a customer's whole
+  // outstanding balance, within 50 paise. Customers almost never pay their exact
+  // total — they pay one invoice, or a round figure — so a ₹5,000 payment was
+  // pinned on whoever happened to owe exactly ₹5,000. That is the "random
+  // clients" you saw. Now each payment is tested against several realistic
+  // things it could be, each match carries a reason and a confidence, and a
+  // suggestion is only auto-selected when it is clearly ahead of the runner-up.
+  var _dayGap = function(a,b){
+    try{ return Math.abs((new Date(a+'T00:00:00') - new Date(b+'T00:00:00'))/86400000); }catch(e){ return 999; }
+  };
+  var custProfiles = STATE.customers.map(function(c){
+    return { id:c.id, name:c.name,
+             out:_ppeCustOutstanding(c),
+             bal:parseFloat(c.balance)||0,
+             inv:(typeof getCustomerUnpaidOrders==='function' ? getCustomerUnpaidOrders(c.id) : []) };
+  }).filter(function(x){ return x.out > 0 || x.inv.length; });
+
   txns.forEach(function(t){
     if(t.alreadyApplied) { t.bucket = 'done'; return; }
-    var cands = custOut.filter(function(x){ return Math.abs(x.out - t.amount) < 0.5; });
-    t.candidates = cands;
-    t.bucket = cands.length === 1 ? 'auto' : cands.length > 1 ? 'ambiguous' : 'counter';
+    var A = t.amount, near = function(x){ return Math.abs(x - A) < 1; };
+    var found = [];
+    custProfiles.forEach(function(c){
+      var best = null;
+      var take = function(score, why){ if(!best || score > best.score) best = {score:score, why:why}; };
+
+      // 1. clears the entire outstanding — strongest signal
+      if(near(c.out)) take(100, 'clears full outstanding ₹'+Math.round(c.out).toLocaleString('en-IN'));
+
+      // 2. matches one unpaid invoice exactly — the most common real case.
+      //    a recent invoice scores higher than an old one
+      c.inv.forEach(function(o){
+        var due = (parseFloat(o.total)||0) - ((o.payment&&o.payment.amount)||0);
+        if(near(due)){
+          var gap = _dayGap(t.date && t.date.slice(0,10), String(o.date||'').slice(0,10));
+          take(Math.max(70, 95 - Math.min(gap,25)), 'matches invoice #'+String(o.id).slice(-5)+' of '+o.date);
+        }
+      });
+
+      // 3. clears the oldest k invoices together (FIFO part-payment)
+      var run = 0;
+      for(var i=0;i<c.inv.length && i<6;i++){
+        run += (parseFloat(c.inv[i].total)||0) - ((c.inv[i].payment&&c.inv[i].payment.amount)||0);
+        if(near(run) && i>0) { take(80, 'clears the oldest '+(i+1)+' invoices'); break; }
+      }
+
+      // 4. clears just the opening balance
+      if(c.bal > 0 && near(c.bal)) take(65, 'clears opening balance');
+
+      if(best) found.push({id:c.id, name:c.name, out:c.out, score:best.score, why:best.why});
+    });
+
+    found.sort(function(a,b){ return b.score - a.score; });
+    t.candidates = found;
+    // auto-suggest only when the leader is strong AND clearly ahead
+    var strong = found.length && found[0].score >= 80;
+    var clear  = found.length === 1 || (found.length > 1 && (found[0].score - found[1].score) >= 15);
+    t.bucket = !found.length ? 'counter' : (strong && clear ? 'auto' : 'ambiguous');
   });
 
   _ppeTxns = txns;
@@ -9707,7 +9791,7 @@ function renderPhonePeResults() {
       var opts = '<option value="">— Ignore (counter sale) —</option>';
       t.candidates.forEach(function(x){
         var sel = (t.bucket==='auto') ? ' selected' : '';
-        opts += '<option value="'+x.id+'"'+sel+'>'+x.name+' (owes ₹'+x.out.toLocaleString('en-IN')+')</option>';
+        opts += '<option value="'+x.id+'"'+sel+'>'+x.name+' — '+(x.why||'')+'  ·  owes ₹'+Math.round(x.out).toLocaleString('en-IN')+'</option>';
       });
       html +=
         '<div style="border:1.5px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px;">' +
