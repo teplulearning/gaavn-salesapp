@@ -269,7 +269,7 @@ body.gf-panel-open #app{ visibility:hidden; }
     <div class="top-bar-left">
       <span class="logo">🐄 GF</span>
       <span class="role-badge" id="role-badge">SALES</span>
-      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v176</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v178</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <button id="del-lang-btn" onclick="toggleDeliveryLang()" style="display:none;background:var(--blue);color:#fff;border:none;border-radius:14px;padding:4px 10px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;">मराठी</button>
@@ -5063,10 +5063,20 @@ async function syncCustomersFromSheet() {
         // v171 FIX: every field was refreshed from the Sheet except the NAME,
         // so a customer renamed on one device kept the old name on all others
         // forever. Only applied on an id match, never on a name match.
-        if(c.name && c.id && existing.id === c.id &&
+        // v178: a rename made on THIS device and not yet confirmed by the
+        // Sheet must win. Previously the still-stale sheet name was written
+        // straight back over it, so the rename appeared to fail.
+        const _nd = _nameDirtyMap();
+        const _pending = _nd[existing.id];
+        if(_pending && String(_pending.name) !== String(c.name||'').trim()){
+          existing.name = String(_pending.name);        // keep the local edit
+        } else if(c.name && c.id && existing.id === c.id &&
            String(c.name).trim() !== String(existing.name||'').trim()){
           renamed.push({from:existing.name, to:String(c.name).trim(), id:existing.id});
           existing.name = String(c.name).trim();
+        }
+        if(_pending && String(c.name||'').trim() === String(_pending.name)){
+          try{ clearNameDirty(existing.id, _pending.name); }catch(e){}  // Sheet caught up
         }
         if(c.phone)    existing.phone    = c.phone;
         if(c.area)     existing.area     = c.area;
@@ -5148,6 +5158,7 @@ async function syncCustomerToSheet(customer, retryCount) {
       if(idx >= 0) { extras[idx].synced = true; localStorage.setItem(LS_CUSTS, JSON.stringify(extras)); }
       const sc = STATE.customers.find(x => x.id === customer.id);
       if(sc) sc.synced = true;
+      try{ clearNameDirty(customer.id, customer.name); }catch(e){}   // v178
     } else {
       throw new Error('Sheet did not confirm');
     }
@@ -5976,8 +5987,14 @@ function getAppsScriptCode() {
     '    else sh.getRange(nr,1,1,headers.length).setBackground("#F9F9F9");',
     '    sh.getRange(nr,14,1,1).setFontWeight("bold");',
     '  });',
-    '  // NO sort, NO day totals — kept clean and fast.',
-    '  // Run rebuildAllDayTotals manually when needed.',
+    '  // v177: the day TOTAL row used to be left stale after every write — the',
+    '  // comment above sortSheetAndRebuild claims it runs "after every logOrder",',
+    '  // but nothing called it. So adding or deleting an order left the SUMMARY',
+    '  // row showing the old figures (03/07 read 9 orders / Rs20220 with an',
+    '  // impossible "Due: Rs-2100") until someone ran rebuildAllDayTotals by hand.',
+    '  // updateDayTotals() rebuilds just this one date — no full-sheet sort, so',
+    '  // it stays fast.',
+    '  try { updateDayTotals(sh, rawDate); } catch(eDT) {}',
     '  return jsonOut({status:"ok", row:firstRow, orderId:p.orderId, items:items.length});',
     '}',
     '',
@@ -6139,6 +6156,9 @@ function getAppsScriptCode() {
     '    var dsh=ss.getSheetByName("Deleted_Orders")||ss.insertSheet("Deleted_Orders");',
     '    dsh.appendRow([orderId, rawDate, new Date()]);',
     '  }catch(ex){}',
+    '  // v177: rebuild that day\'s TOTAL row, otherwise the deleted order stays',
+    '  // inside the SUMMARY figures for ever.',
+    '  try { if(deleted > 0) updateDayTotals(sh, rawDate); } catch(eDT) {}',
     '  return jsonOut({status:"ok", deleted:deleted, orderId:orderId});',
     '}',
     '',
@@ -7153,6 +7173,7 @@ function saveManageCustomer() {
   // v171 FIX: this screen saved the edit to THIS phone only — it never called
   // syncCustomerToSheet(), so a renamed customer stayed renamed on the owner's
   // device and nowhere else. Push it now.
+  if(_oldName && _oldName !== c.name) markNameDirty(c.id, c.name);   // v178
   if(getSheetUrl()){
     try{
       c.synced = false;
@@ -9336,6 +9357,35 @@ function _saveCustomerBalance(cust) {
 // overwrite it, and (b) pushed to the Sheet's Balance cell; the dirty flag
 // clears only once the Sheet confirms the write.
 const LS_BAL_DIRTY='gf_bal_dirty';
+// v178: a locally-changed NAME awaiting Sheet confirmation, protected the same
+// way v149.1 protects a locally-changed balance. Without this, renaming a
+// customer and then opening any screen that calls syncCustomersFromSheet()
+// (Clients, New Order, app start) pulled the STILL-OLD name back from the Sheet
+// and silently undid the rename — the push had not landed yet.
+const LS_NAME_DIRTY='gf_name_dirty';
+function _nameDirtyMap(){ try{ return JSON.parse(localStorage.getItem(LS_NAME_DIRTY)||'{}'); }catch(e){ return {}; } }
+function _nameDirtySave(m){ try{ localStorage.setItem(LS_NAME_DIRTY, JSON.stringify(m)); }catch(e){} }
+function markNameDirty(id,name){
+  if(!id||!name) return;
+  const d=_nameDirtyMap(); d[id]={name:String(name), ts:Date.now()}; _nameDirtySave(d);
+}
+function clearNameDirty(id,confirmedName){
+  const d=_nameDirtyMap(); const e=d[id]; if(!e) return;
+  // only clear if the Sheet confirmed the name we are actually holding —
+  // a newer rename made since the push must stay protected
+  if(!confirmedName || String(e.name)===String(confirmedName)){ delete d[id]; _nameDirtySave(d); }
+}
+// retry any rename whose push never landed (offline, tab closed, script error)
+async function flushDirtyNames(){
+  const d=_nameDirtyMap(); const ids=Object.keys(d); if(!ids.length||!getSheetUrl()) return;
+  for(const id of ids){
+    const c=(STATE.customers||[]).find(x=>x.id===id);
+    if(!c){ delete d[id]; continue; }
+    if(String(c.name)!==String(d[id].name)) c.name=d[id].name;   // local wins
+    try{ await syncCustomerToSheet(c); }catch(e){}
+  }
+  _nameDirtySave(_nameDirtyMap());
+}
 function _balDirtyMap(){ try{ return JSON.parse(localStorage.getItem(LS_BAL_DIRTY)||'{}'); }catch(e){ return {}; } }
 function _balDirtySave(m){ try{ localStorage.setItem(LS_BAL_DIRTY, JSON.stringify(m)); }catch(e){} }
 function applyBalanceChange(cust){
@@ -10314,6 +10364,8 @@ setTimeout(function(){ try{ pullDeletedOrders(false); }catch(e){} }, 7000);     
 setInterval(function(){ try{ pullDeletedOrders(false); }catch(e){} }, 10*60*1000);
 setTimeout(function(){ try{ flushDirtyBalances(); }catch(e){} }, 6000);          // v149.1: push un-synced balance changes
 setInterval(function(){ try{ flushDirtyBalances(); }catch(e){} }, 5*60*1000);
+setInterval(function(){ try{ flushDirtyNames(); }catch(e){} }, 5*60*1000);       // v178
+setTimeout(function(){ try{ flushDirtyNames(); }catch(e){} }, 9000);             // v178
 setInterval(function(){ try{ autoSyncHistory(false); }catch(e){} }, 15*60*1000); // v149: and every 15 min
 setInterval(function(){ try{ updateOnlineIndicator(); }catch(e){} }, 5000);
 
