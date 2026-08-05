@@ -269,7 +269,7 @@ body.gf-panel-open #app{ visibility:hidden; }
     <div class="top-bar-left">
       <span class="logo">🐄 GF</span>
       <span class="role-badge" id="role-badge">SALES</span>
-      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v178</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v179</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <button id="del-lang-btn" onclick="toggleDeliveryLang()" style="display:none;background:var(--blue);color:#fff;border:none;border-radius:14px;padding:4px 10px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;">मराठी</button>
@@ -481,6 +481,21 @@ body.gf-panel-open #app{ visibility:hidden; }
     </div>
     <div class="connection-status untested" id="conn-status">
       <span id="conn-dot">⚪</span>&nbsp;<span id="conn-text">Google Sheet not yet tested</span>
+    </div>
+
+    <!-- v179 -->
+    <div style="background:#EAF3EA;border:1.5px solid #2E7D32;border-radius:10px;padding:12px 14px;margin:12px 0;">
+      <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;">
+        <input type="checkbox" id="fs-reads-chk" onchange="fsToggleReads(this.checked)"
+               style="width:20px;height:20px;margin-top:2px;flex-shrink:0;">
+        <span style="font-size:13px;line-height:1.6;">
+          <b>Read data from Firebase</b><br>
+          <span style="color:#5D6B5D;">Customers, orders and dues arrive live, on every phone, the moment they change —
+          no waiting, no refresh. <b>Orders are still saved to the Google Sheet exactly as now.</b>
+          Turn this off at any time to go straight back to how the app works today.</span>
+          <span id="fs-status-line" style="display:block;margin-top:6px;font-family:monospace;font-size:11px;color:#2E7D32;"></span>
+        </span>
+      </label>
     </div>
 
     <!-- Step cards -->
@@ -1304,6 +1319,34 @@ body.gf-panel-open #app{ visibility:hidden; }
   </div>
 </div>
 
+<div id="fs-login" style="display:none;position:fixed;inset:0;z-index:99999;background:#1A3A1F;
+     transform:translateZ(0);isolation:isolate;overflow:auto;padding:28px 20px;">
+  <div style="max-width:380px;margin:6vh auto;background:#fff;border-radius:16px;padding:24px;">
+    <div style="font-size:20px;font-weight:800;margin-bottom:4px;">Gaavn Fresh</div>
+    <div style="font-size:13px;color:#8A8070;margin-bottom:18px;line-height:1.6;">
+      Sign in once on this phone. You will stay signed in — you will not be asked again.
+    </div>
+    <label style="display:block;font-size:11px;color:#8A8070;margin-bottom:4px;">USERNAME</label>
+    <input id="fs-u" autocomplete="username" placeholder="sales1"
+      style="width:100%;padding:13px;font-size:16px;border:1.5px solid #E8DFC9;border-radius:10px;background:#FBF6EC;">
+    <label style="display:block;font-size:11px;color:#8A8070;margin:12px 0 4px;">PASSWORD</label>
+    <input id="fs-p" type="password" autocomplete="current-password"
+      style="width:100%;padding:13px;font-size:16px;border:1.5px solid #E8DFC9;border-radius:10px;background:#FBF6EC;">
+    <button onclick="fsLoginTap()" id="fs-btn"
+      style="width:100%;margin-top:16px;padding:14px;border:none;border-radius:10px;background:#2E7D32;color:#fff;
+             font-size:15px;font-weight:700;cursor:pointer;">Sign in</button>
+    <div id="fs-msg" style="margin-top:12px;font-size:13px;color:#C62828;line-height:1.6;"></div>
+    <div style="margin-top:18px;border-top:1px solid #E8DFC9;padding-top:12px;">
+      <button onclick="fsUseSheetInstead()"
+        style="width:100%;padding:11px;border:1.5px solid #E8DFC9;border-radius:10px;background:#fff;color:#8A8070;
+               font-size:13px;cursor:pointer;">Go back to reading from the Google Sheet</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 
 <script>
 // ── PRODUCT CATALOGUE ───────────────────────────────────────────────
@@ -1347,6 +1390,201 @@ let STATE = {
   sheetUrl: '',
   custFilter: 'all',
 };
+
+/* ═══════════════════════════════════════════════════════════════════
+   v179 — FIRESTORE READ LAYER  (reads only; every write still goes to
+   the Google Sheet exactly as before)
+
+   Controlled by ONE switch, in Setup: "Read data from Firebase".
+     OFF  → the app behaves precisely as v178 did. Nothing changes.
+     ON   → customers, orders and payments stream live from Firestore,
+            and the Sheet-reading functions stand down so they cannot
+            overwrite what arrives.
+
+   The switch exists so that if anything here misbehaves you turn it off
+   and you are instantly back on the Sheet, with no reinstall and no
+   data loss — the Sheet is still being written to either way.
+
+   The structural win: an order stores customerId, NEVER the customer's
+   name. The name is looked up at read time. Rename a customer and every
+   order follows automatically, because there is only one copy of it.
+   ═══════════════════════════════════════════════════════════════════ */
+const FS_CONFIG = {
+  apiKey: "AIzaSyAI8NvjxdcmoG2UinhJ0LZ0EdL18b-foZ0",
+  authDomain: "gaavnfresh-sales.firebaseapp.com",
+  projectId: "gaavnfresh-sales",
+  storageBucket: "gaavnfresh-sales.firebasestorage.app",
+  messagingSenderId: "974451495449",
+  appId: "1:974451495449:web:3985b05c49e52b5fbad088"
+};
+const LS_FS_READS='gf_fs_reads';
+const FS_LOGIN_DOMAIN='@gaavnfresh.invalid';
+let FS={app:null, auth:null, db:null, user:null, role:null, ready:false,
+        unsub:[], custById:{}, lastError:''};
+
+function fsReadsOn(){ return localStorage.getItem(LS_FS_READS)==='1'; }
+function fsInit(){
+  if(FS.app) return true;
+  if(typeof firebase==='undefined'){ FS.lastError='Firebase library did not load'; return false; }
+  try{
+    FS.app=firebase.initializeApp(FS_CONFIG);
+    FS.auth=firebase.auth(); FS.db=firebase.firestore();
+    FS.auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(function(){});
+    try{ FS.db.enablePersistence({synchronizeTabs:true}).catch(function(){}); }catch(e){}
+    return true;
+  }catch(e){ FS.lastError=e.message; return false; }
+}
+function fsEmail(u){ u=String(u||'').trim(); return u.indexOf('@')>=0?u:u.toLowerCase()+FS_LOGIN_DOMAIN; }
+
+/* ── Firestore document → the shape the rest of this app already uses ──
+   Anything that changes here changes ONLY this function. No screen code
+   is aware that the data came from somewhere new. */
+function fsCustToApp(id, d){
+  return {id:id, name:String(d.name||''), category:String(d.category||''),
+          area:String(d.area||''), phone:String(d.phone||''),
+          pricing:d.pricing||{}, balance:parseFloat(d.balance)||0,
+          balanceAsOf:d.balanceAsOf||'', synced:true, fromFirestore:true};
+}
+function fsOrderToApp(id, d){
+  const c=FS.custById[d.customerId];
+  return {
+    id:id, date:String(d.date||'').slice(0,10),
+    customerId:d.customerId||'',
+    // resolved from the customer record, never stored on the order
+    customerName: c ? c.name : (d.customerNameAtImport||'(unknown customer)'),
+    customerCategory: c ? (c.category||'') : (d.category||''),
+    customerArea:     c ? (c.area||'')     : (d.area||''),
+    status:String(d.status||'confirmed'),
+    total:parseFloat(d.total)||0,
+    // NOTE the field rename: Firestore says "product", this app says "name"
+    items:(d.items||[]).map(function(i){ return {name:String(i.product||i.name||''),
+      qty:parseFloat(i.qty)||0, unit:String(i.unit||''),
+      rate:parseFloat(i.rate)||0, amount:parseFloat(i.amount)||0}; }),
+    payment:{mode:String(d.paymentMode||''), amount:parseFloat(d.paidAmount)||0,
+             received:(parseFloat(d.paidAmount)||0)>0},
+    notes:String(d.notes||''), createdBy:String(d.createdBy||''),
+    synced:true, fromSheet:true, fromFirestore:true
+  };
+}
+function fsPayToApp(id, d){
+  const c=FS.custById[d.customerId];
+  return {id:id, date:String(d.date||'').slice(0,10),
+          custId:d.customerId||'',
+          custName: c ? c.name : (d.customerNameAtImport||''),
+          amount:parseFloat(d.amount)||0, mode:String(d.mode||''),
+          notes:String(d.notes||''), fromFirestore:true};
+}
+
+function fsRepaint(){
+  try{ if(typeof renderCustomerList==='function') renderCustomerList(); }catch(e){}
+  try{ if(typeof renderOrdersList==='function')   renderOrdersList();   }catch(e){}
+  try{ if(typeof renderDues==='function')         renderDues();         }catch(e){}
+  try{ if(typeof renderDashboard==='function')    renderDashboard();    }catch(e){}
+}
+
+function fsStopListening(){ FS.unsub.forEach(function(u){ try{u();}catch(e){} }); FS.unsub=[]; }
+
+function fsStartListening(){
+  if(!FS.db||!FS.user) return;
+  fsStopListening();
+  // customers first — orders resolve their names from this map
+  FS.unsub.push(FS.db.collection('customers').onSnapshot(function(snap){
+    const list=[]; FS.custById={};
+    snap.forEach(function(doc){ const c=fsCustToApp(doc.id, doc.data());
+      FS.custById[doc.id]=c; list.push(c); });
+    STATE.customers=list;
+    try{ localStorage.setItem(LS_CUSTS, JSON.stringify(list)); }catch(e){}
+    fsRepaint();
+    if(typeof showToast==='function' && !FS.ready){ FS.ready=true;
+      showToast('☁ live from Firebase — '+list.length+' customers'); }
+  }, function(err){ fsShowError('customers', err); }));
+
+  FS.unsub.push(FS.db.collection('orders').where('deleted','==',false)
+    .onSnapshot(function(snap){
+      const list=[];
+      snap.forEach(function(doc){ list.push(fsOrderToApp(doc.id, doc.data())); });
+      STATE.orders=list;
+      fsRepaint();
+    }, function(err){ fsShowError('orders', err); }));
+
+  FS.unsub.push(FS.db.collection('payments').where('deleted','==',false)
+    .onSnapshot(function(snap){
+      const list=[];
+      snap.forEach(function(doc){ list.push(fsPayToApp(doc.id, doc.data())); });
+      STATE.payments=list;
+      try{ savePaymentLedger(); }catch(e){}
+      fsRepaint();
+    }, function(err){ fsShowError('payments', err); }));
+}
+
+function fsShowError(what, err){
+  const m=String(err&&err.message||err);
+  FS.lastError=what+': '+m;
+  if(typeof showToast==='function'){
+    showToast(/permission/i.test(m)
+      ? '⚠ Firebase refused to read '+what+' — check your role'
+      : '⚠ Firebase '+what+': '+m);
+  }
+}
+
+async function fsSignIn(username, password){
+  if(!fsInit()) return {ok:false, msg:FS.lastError};
+  if(String(password||'').length<6) return {ok:false, msg:'Password must be at least 6 characters.'};
+  try{
+    await FS.auth.signInWithEmailAndPassword(fsEmail(username), password);
+    return {ok:true};
+  }catch(e){
+    const c=String(e.code||'');
+    if(/invalid-credential|wrong-password|user-not-found/.test(c)) return {ok:false, msg:'Username or password not recognised.'};
+    if(/unauthorized-domain/.test(c)) return {ok:false, msg:'This web address is not authorised in Firebase.'};
+    if(/network/.test(c)) return {ok:false, msg:'No connection to Firebase.'};
+    return {ok:false, msg:e.message};
+  }
+}
+async function fsSignOut(){ try{ fsStopListening(); await FS.auth.signOut(); }catch(e){} }
+
+function fsBoot(){
+  if(!fsReadsOn()) return;             // switch is off — app is untouched
+  if(!fsInit()) return;
+  FS.auth.onAuthStateChanged(async function(u){
+    FS.user=u||null;
+    if(!u){ fsStopListening(); fsShowLogin(); return; }
+    try{ const d=await FS.db.collection('users').doc(u.uid).get();
+         FS.role=d.exists?(d.data().role||''):''; }catch(e){ FS.role=''; }
+    fsHideLogin();
+    fsStartListening();
+  });
+}
+
+function fsShowLogin(){
+  const el=document.getElementById('fs-login'); if(!el) return;
+  el.style.display='block'; document.body.classList.add('gf-panel-open');
+}
+function fsHideLogin(){
+  const el=document.getElementById('fs-login'); if(!el) return;
+  el.style.display='none'; document.body.classList.remove('gf-panel-open');
+}
+async function fsLoginTap(){
+  const b=document.getElementById('fs-btn'), m=document.getElementById('fs-msg');
+  b.disabled=true; b.textContent='Signing in…'; m.textContent='';
+  const r=await fsSignIn(document.getElementById('fs-u').value,
+                         document.getElementById('fs-p').value);
+  b.disabled=false; b.textContent='Sign in';
+  if(!r.ok){ m.textContent=r.msg; return; }
+  document.getElementById('fs-p').value='';
+}
+// An escape hatch that is always reachable: if Firebase will not let someone
+// in, the app must not become a brick. Turning the switch off restores v178
+// behaviour immediately.
+function fsUseSheetInstead(){
+  localStorage.setItem(LS_FS_READS,'0');
+  fsHideLogin();
+  location.reload();
+}
+function fsToggleReads(on){
+  localStorage.setItem(LS_FS_READS, on?'1':'0');
+  location.reload();
+}
 
 const TODAY = new Date();
 const TODAY_STR = TODAY.toLocaleDateString('en-IN',{weekday:'short',day:'numeric',month:'short',year:'numeric'});
@@ -2147,6 +2385,21 @@ function initApp() {
     if(!_savedUrl && DEFAULT_SHEET_URL) localStorage.setItem(LS_URL, DEFAULT_SHEET_URL);
   }
   updateSheetDot();
+  // v179: start Firestore if the switch is on. Does nothing at all when off.
+  try{ fsBoot(); }catch(e){ console.warn('fsBoot', e); }
+  try{
+    const chk=document.getElementById('fs-reads-chk');
+    if(chk) chk.checked = fsReadsOn();
+    setInterval(function(){
+      const l=document.getElementById('fs-status-line'); if(!l) return;
+      if(!fsReadsOn()){ l.textContent=''; return; }
+      l.textContent = FS.user
+        ? ('signed in as '+FS.user.email.split('@')[0]+' · role '+(FS.role||'?')
+           +' · '+(STATE.customers||[]).length+' customers, '+(STATE.orders||[]).length+' orders live'
+           +(FS.lastError?(' · last error: '+FS.lastError):''))
+        : 'not signed in';
+    }, 2000);
+  }catch(e){}
   // ALWAYS pull the full customer master (names + balances + pricing) from the
   // sheet on every load, so a cache-clear/reinstall restores all customers.
   setTimeout(function(){ try{ syncCustomersFromSheet(); }catch(e){} }, 600);
@@ -5033,6 +5286,9 @@ function downloadCustomerList() {
 }
 
 async function syncCustomersFromSheet() {
+  // v179: Firestore is the source of truth while the switch is on. If this
+  // ran too it would overwrite live data with a slower, staler copy.
+  if(typeof fsReadsOn==='function' && fsReadsOn() && FS.user) return;
   // Fetch all customers from Google Sheet Customers tab
   // so customers added on any device are visible everywhere
   const _base = getSheetUrl(); if(!_base) return;
@@ -9935,6 +10191,7 @@ function stopDeliveryPoll() {
 }
 
 async function pollOrdersFromSheet() {
+  if(typeof fsReadsOn==='function' && fsReadsOn() && FS.user) return;   // v179
   const url = getSheetUrl();
   if(!url || STATE.role!=='delivery') return;
   try {
@@ -10298,6 +10555,7 @@ function _countCachedOrders(){
 function _monthTagOf(d){ return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'); }
 let _histAutoSyncing=false;
 async function autoSyncHistory(force){
+  if(typeof fsReadsOn==='function' && fsReadsOn() && FS.user) return;   // v179
   if(_histAutoSyncing) return;
   if(!navigator.onLine) return;
   const url=(typeof getSheetUrl==='function'?getSheetUrl():'')||'';
