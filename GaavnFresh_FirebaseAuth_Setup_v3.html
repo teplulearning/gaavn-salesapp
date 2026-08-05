@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Gaavn Fresh — Firebase sign-in &amp; roles v3</title>
+<style>
+:root{--ink:#1A1208;--cream:#FBF6EC;--surface:#fff;--border:#E8DFC9;--green:#2E7D32;--red:#C62828;--amber:#C8830A;--blue:#1A527A;--muted:#8A8070;}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--cream);font-family:'Segoe UI',system-ui,sans-serif;color:var(--ink);padding-bottom:60px;}
+header{background:var(--ink);color:#fff;padding:16px 22px;}
+header h1{font-size:17px;} header .sub{font-family:monospace;font-size:11px;color:#C8B89A;margin-top:3px;}
+main{max-width:880px;margin:0 auto;padding:18px 22px;}
+.panel{background:var(--surface);border:1.5px solid var(--border);border-radius:14px;padding:16px;margin-bottom:16px;}
+h3{font-size:14px;margin-bottom:10px;}
+label{display:block;font-family:monospace;font-size:10px;color:var(--muted);margin:8px 0 3px;}
+input,select{width:100%;padding:9px;border:1.5px solid var(--border);border-radius:8px;background:var(--cream);font-family:monospace;font-size:12px;}
+.row{display:flex;gap:10px;flex-wrap:wrap;} .row>div{flex:1;min-width:160px;}
+button{border:none;border-radius:9px;padding:11px 18px;font-family:monospace;font-size:12px;font-weight:700;cursor:pointer;color:#fff;margin:10px 8px 0 0;}
+.b1{background:var(--blue);} .b2{background:var(--green);} .b3{background:var(--ink);} .b4{background:var(--red);}
+pre{background:#12100C;color:#D8E8D0;padding:13px;border-radius:10px;font-size:11.5px;line-height:1.65;max-height:340px;overflow:auto;white-space:pre-wrap;}
+.muted{color:var(--muted);font-size:12px;line-height:1.7;}
+.who{background:#EAF3EA;border:1.5px solid var(--green);border-radius:10px;padding:12px;font-family:monospace;font-size:12px;line-height:1.8;margin-bottom:12px;}
+table{width:100%;border-collapse:collapse;font-family:monospace;font-size:11.5px;margin-top:8px;}
+th{background:#1A3A1F;color:#fff;padding:6px 8px;text-align:left;} td{padding:6px 8px;border-bottom:1px solid var(--border);}
+.warn{background:#FFF3CD;border:1.5px solid var(--amber);border-radius:10px;padding:12px;font-size:12.5px;line-height:1.7;margin-bottom:12px;}
+code{background:#F2ECDD;padding:1px 5px;border-radius:4px;}
+</style>
+</head>
+<body>
+<header>
+  <h1>Gaavn Fresh — Firebase sign-in &amp; roles</h1>
+  <div class="sub">project gaavnfresh-sales · setup v3 · usernames on a non-routable domain, signed in once per phone</div>
+</header>
+<main>
+
+<div class="warn">
+  <b>Order matters.</b> The locked-down rules decide what someone may do by reading their
+  <code>users/&lt;uid&gt;</code> document. Those documents have to exist <i>first</i>.
+  So: enable Email/Password → create the five accounts → sign in here and assign each a role →
+  <i>then</i> publish the locked rules → come back and press “Re-test”.
+</div>
+
+<div class="panel">
+  <h3>1 · Sign in</h3>
+  <div id="whobox"></div>
+  <div class="row">
+    <div><label>USERNAME</label>
+      <div style="display:flex;align-items:center;gap:6px;">
+        <input id="em" autocomplete="username" placeholder="sales1" style="flex:1;">
+        <span class="muted" style="font-family:monospace;white-space:nowrap;">@gaavnfresh.invalid</span>
+      </div>
+    </div>
+    <div><label>PASSWORD</label><input id="pw" type="password" autocomplete="current-password" placeholder="at least 6 characters"></div>
+  </div>
+  <button class="b1" onclick="doLogin()">Sign in</button>
+  <button class="b3" onclick="doLogout()">Sign out</button>
+  <p class="muted" style="margin-top:8px;">
+    Type just the username — <code>sales1</code>, <code>delivery1</code>, <code>owner</code>. The
+    <code>@gaavnfresh.invalid</code> part is added for you and nobody has to remember it.<br>
+    <code>.invalid</code> is reserved by internet standard — it can never be registered by anyone and mail to it can
+    never be delivered, so no password-reset link can ever reach an outsider. Password changes are made by you in the
+    Firebase console.<br><br>
+    <b>This phone stays signed in.</b> Once you sign a phone in it remains signed in through app restarts and
+    phone restarts, indefinitely, until someone presses Sign out. So you do this once per phone when you hand it
+    over, and your team never types a password again.<br><br>
+    Accounts are created by you in the Firebase console — this page never creates a user or changes a password.
+  </p>
+</div>
+
+<div class="panel">
+  <h3>2 · Give each person a role</h3>
+  <p class="muted">Paste each person's UID from the console (Authentication → Users → User UID column),
+  or sign in as them here and press "Use my own UID".</p>
+  <div class="warn" style="margin-top:8px;">
+    Create these four accounts in the console, with the full address including <code>@gaavnfresh.invalid</code>:<br>
+    <code>owner@gaavnfresh.invalid</code> &nbsp; <code>sales1@gaavnfresh.invalid</code> &nbsp;
+    <code>sales2@gaavnfresh.invalid</code> &nbsp; <code>delivery1@gaavnfresh.invalid</code><br>
+    Your team only ever types the part before the @.
+  </div>
+  <div class="row">
+    <div style="flex:2;"><label>USER UID</label><input id="ruid" placeholder="paste the UID, or use 'Me' below"></div>
+    <div><label>EMAIL (for your reference)</label><input id="remail" placeholder="who this is"></div>
+    <div><label>ROLE</label>
+      <select id="rrole">
+        <option value="owner">owner — everything</option>
+        <option value="sales">sales — orders, payments, customers</option>
+        <option value="delivery">delivery — read, and mark delivered</option>
+      </select>
+    </div>
+  </div>
+  <button class="b3" onclick="useMe()">Use my own UID</button>
+  <button class="b2" onclick="saveRole()">Save role</button>
+  <button class="b1" onclick="listRoles()">Show everyone</button>
+  <div id="roles"></div>
+</div>
+
+<div class="panel">
+  <h3>3 · Test what you can actually do</h3>
+  <p class="muted">Run this before publishing the locked rules, and again straight after.
+  Before: everything should pass because the rules are still open. After: the results should match the role you hold.</p>
+  <button class="b2" onclick="runTests()">Re-test permissions</button>
+</div>
+
+<div class="panel">
+  <h3>Log</h3>
+  <pre id="log">Not signed in yet.</pre>
+</div>
+
+</main>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script>
+const firebaseConfig = {
+  apiKey: "AIzaSyAI8NvjxdcmoG2UinhJ0LZ0EdL18b-foZ0",
+  authDomain: "gaavnfresh-sales.firebaseapp.com",
+  projectId: "gaavnfresh-sales",
+  storageBucket: "gaavnfresh-sales.firebasestorage.app",
+  messagingSenderId: "974451495449",
+  appId: "1:974451495449:web:3985b05c49e52b5fbad088"
+};
+firebase.initializeApp(firebaseConfig);
+const auth=firebase.auth(), db=firebase.firestore();
+const LOGIN_DOMAIN='@gaavnfresh.invalid';
+// Stay signed in across restarts. This is the browser default, but it is set
+// explicitly so a future SDK change cannot quietly log the whole team out.
+auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(e=>console.warn(e));
+function toEmail(v){
+  v=String(v||'').trim();
+  if(!v) return '';
+  return v.indexOf('@')>=0 ? v : v.toLowerCase()+LOGIN_DOMAIN;
+}
+const $=id=>document.getElementById(id);
+let LOG=[];
+function log(s){ LOG.push(s); $('log').textContent=LOG.slice(-200).join('\n'); $('log').scrollTop=1e9; }
+
+function friendly(e){
+  const c=String(e&&e.code||'');
+  if(c.indexOf('auth/invalid-credential')>=0||c.indexOf('wrong-password')>=0||c.indexOf('user-not-found')>=0)
+    return 'Username or password not recognised. The account must exist in the console with the FULL address, '
+         + 'e.g. Authentication → Users → Add user → sales1@gaavnfresh.invalid';
+  if(c.indexOf('auth/weak-password')>=0)
+    return 'Firebase requires at least 6 characters.';
+  if(c.indexOf('auth/operation-not-allowed')>=0)
+    return 'Email/Password sign-in is switched off. Console → Authentication → Sign-in method → Email/Password → Enable.';
+  if(c.indexOf('auth/unauthorized-domain')>=0)
+    return 'This web address is not allowed to sign in. Console → Authentication → Settings → Authorized domains → Add domain → teplulearning.github.io';
+  if(c.indexOf('auth/network-request-failed')>=0)
+    return 'Could not reach Firebase — check the connection.';
+  if(c.indexOf('permission-denied')>=0)
+    return 'The rules refused this. If you have already published the locked rules, your users/<uid> document may be missing or hold the wrong role.';
+  return (e&&e.message)||String(e);
+}
+
+auth.onAuthStateChanged(async u=>{
+  if(!u){ $('whobox').innerHTML=''; log('Signed out.'); return; }
+  let role='(no role document yet)';
+  try{ const d=await db.collection('users').doc(u.uid).get(); if(d.exists) role=d.data().role||'(blank)'; }
+  catch(e){ role='could not read — '+friendly(e); }
+  $('whobox').innerHTML='<div class="who"><b>Signed in</b><br>email &nbsp;'+u.email
+    +'<br>uid &nbsp;&nbsp;&nbsp;'+u.uid+'<br>role &nbsp;&nbsp;<b>'+role+'</b></div>';
+  log('Signed in as '+u.email+'  (role: '+role+')');
+});
+
+async function doLogin(){
+  const email=toEmail($('em').value);
+  if(!email){ log('Type a username first — sales1, delivery1 or owner.'); return; }
+  if(($('pw').value||'').length<6){
+    log('✗ Firebase requires at least 6 characters. A 4-digit PIN cannot be used — that limit is Google\'s, not the app\'s.');
+    return;
+  }
+  try{
+    await auth.signInWithEmailAndPassword(email, $('pw').value);
+    $('pw').value='';
+    log('✔ This phone is now signed in and will STAY signed in. Hand it over — nobody needs the password again.');
+  }
+  catch(e){ log('✗ Sign-in failed for '+email+': '+friendly(e)); }
+}
+async function doLogout(){ await auth.signOut(); }
+function useMe(){
+  const u=auth.currentUser; if(!u){ log('Sign in first.'); return; }
+  $('ruid').value=u.uid; $('remail').value=u.email;
+}
+async function saveRole(){
+  const uid=$('ruid').value.trim(); if(!uid){ log('Paste a UID first.'); return; }
+  try{
+    await db.collection('users').doc(uid).set(
+      {email:$('remail').value.trim(), role:$('rrole').value, updatedAt:new Date().toISOString()}, {merge:true});
+    log('✔ '+($('remail').value.trim()||uid)+' is now "'+$('rrole').value+'"');
+    listRoles();
+  }catch(e){ log('✗ Could not save the role: '+friendly(e)); }
+}
+async function listRoles(){
+  try{
+    const s=await db.collection('users').get();
+    if(s.empty){ $('roles').innerHTML='<p class="muted" style="margin-top:8px;">No roles set yet.</p>'; return; }
+    let h='<table><tr><th>email</th><th>role</th><th>uid</th></tr>';
+    s.forEach(d=>{ const x=d.data();
+      h+='<tr><td>'+(x.email||'—')+'</td><td><b>'+(x.role||'—')+'</b></td><td>'+d.id+'</td></tr>'; });
+    $('roles').innerHTML=h+'</table>';
+    log('✔ '+s.size+' user role document(s).');
+  }catch(e){ log('✗ Could not list roles: '+friendly(e)); }
+}
+
+// Probe what this account can really do. Writes go to a throwaway document and
+// are deleted again, so nothing real is touched.
+async function runTests(){
+  const u=auth.currentUser; if(!u){ log('Sign in first.'); return; }
+  log('\n── permission check for '+u.email+' ──');
+  const probe='__permcheck_'+u.uid.slice(0,8);
+  const t=[
+    ['read customers',  ()=>db.collection('customers').limit(1).get()],
+    ['read orders',     ()=>db.collection('orders').limit(1).get()],
+    ['read payments',   ()=>db.collection('payments').limit(1).get()],
+    ['read my own role',()=>db.collection('users').doc(u.uid).get()],
+    ['create an order', ()=>db.collection('orders').doc(probe).set({probe:true,deleted:true,date:'1970-01-01'})],
+    ['update a customer',()=>db.collection('customers').doc(probe).set({probe:true},{merge:true})],
+    ['HARD-delete an order (should be refused)', ()=>db.collection('orders').doc(probe).delete()],
+  ];
+  for(const [label,fn] of t){
+    try{ await fn(); log('  '+label.padEnd(44)+'allowed'); }
+    catch(e){ log('  '+label.padEnd(44)+'refused  ('+(e.code||'')+')'); }
+  }
+  try{ await db.collection('customers').doc(probe).delete(); }catch(e){}
+  log('  (the throwaway documents were cleaned up where permitted)');
+}
+</script>
+</body>
+</html>
