@@ -269,7 +269,7 @@ body.gf-panel-open #app{ visibility:hidden; }
     <div class="top-bar-left">
       <span class="logo">🐄 GF</span>
       <span class="role-badge" id="role-badge">SALES</span>
-      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v179</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v180</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <button id="del-lang-btn" onclick="toggleDeliveryLang()" style="display:none;background:var(--blue);color:#fff;border:none;border-radius:14px;padding:4px 10px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;">मराठी</button>
@@ -491,8 +491,9 @@ body.gf-panel-open #app{ visibility:hidden; }
         <span style="font-size:13px;line-height:1.6;">
           <b>Read data from Firebase</b><br>
           <span style="color:#5D6B5D;">Customers, orders and dues arrive live, on every phone, the moment they change —
-          no waiting, no refresh. <b>Orders are still saved to the Google Sheet exactly as now.</b>
-          Turn this off at any time to go straight back to how the app works today.</span>
+          no waiting, no refresh. <b>Every save still goes to the Google Sheet exactly as now, and is copied to
+          Firebase as well</b>, so the two stay in step. Turn this off at any time to go straight back to how the
+          app works today.</span>
           <span id="fs-status-line" style="display:block;margin-top:6px;font-family:monospace;font-size:11px;color:#2E7D32;"></span>
         </span>
       </label>
@@ -1556,6 +1557,108 @@ function fsBoot(){
   });
 }
 
+/* ═══════════════════════════════════════════════════════════════════
+   v180 — DUAL WRITE
+
+   Every save now goes to the Google Sheet exactly as it always has, AND
+   is mirrored into Firestore. The Sheet remains the thing that must
+   succeed; Firestore is written alongside it and can never block it.
+
+   Why this had to come next: from the moment reads moved to Firestore in
+   v179, a change saved by the app went to the Sheet only — so the app
+   could not see its own edit. A customer renamed after the migration
+   still showed the old name. Mirroring the write closes that gap.
+
+   Every mirror call is wrapped so that a Firestore failure can never
+   stop an order being saved. Firestore's own offline queue holds writes
+   made without signal and sends them on reconnect.
+   ═══════════════════════════════════════════════════════════════════ */
+let FS_WRITES={ok:0, failed:0, lastErr:''};
+
+function fsCanWrite(){ return fsReadsOn() && FS.db && FS.user; }
+function fsResolveCustId(name){
+  const k=String(name||'').replace(/\s+/g,' ').trim().toLowerCase();
+  if(!k) return null;
+  const ids=Object.keys(FS.custById||{});
+  for(let i=0;i<ids.length;i++){
+    const c=FS.custById[ids[i]];
+    if(String(c.name||'').replace(/\s+/g,' ').trim().toLowerCase()===k) return ids[i];
+  }
+  return null;
+}
+function fsWriteErr(what, e){
+  FS_WRITES.failed++; FS_WRITES.lastErr=what+': '+(e&&e.message||e);
+  if(/permission/i.test(String(e&&e.message))){
+    try{ showToast('⚠ Firebase refused to save '+what+' — your role may not allow it'); }catch(x){}
+  }
+}
+function fsWriteOk(){ FS_WRITES.ok++; }
+
+async function fsWriteOrder(o){
+  if(!fsCanWrite() || !o || !o.id) return;
+  try{
+    await FS.db.collection('orders').doc(String(o.id)).set({
+      customerId: o.customerId || fsResolveCustId(o.customerName) || null,
+      customerNameAtImport: String(o.customerName||''),
+      date: String(o.date||TODAY_KEY).slice(0,10),
+      status: String(o.status||'confirmed'),
+      total: parseFloat(o.total)||0,
+      paidAmount: parseFloat(o.payment&&o.payment.amount)||0,
+      paymentMode: String((o.payment&&o.payment.mode)||''),
+      // the app calls it "name", Firestore calls it "product" — inverse of fsOrderToApp
+      items: (o.items||[]).map(function(i){ return {product:String(i.name||''),
+        qty:parseFloat(i.qty)||0, unit:String(i.unit||''),
+        rate:parseFloat(i.rate)||0, amount:parseFloat(i.amount)||0}; }),
+      notes:String(o.notes||''), createdBy:String(o.createdBy||STATE.role||''),
+      deleted:false, source:'app', updatedAt:new Date().toISOString()
+    }, {merge:true});
+    fsWriteOk();
+  }catch(e){ fsWriteErr('order '+o.id, e); }
+}
+
+async function fsWriteCustomer(c){
+  if(!fsCanWrite() || !c || !c.id) return;
+  try{
+    await FS.db.collection('customers').doc(String(c.id)).set({
+      name:String(c.name||''), category:String(c.category||''),
+      area:String(c.area||''), phone:String(c.phone||''),
+      pricing:c.pricing||{}, balance:parseFloat(c.balance)||0,
+      balanceAsOf:c.balanceAsOf||null,
+      source:'app', updatedAt:new Date().toISOString()
+    }, {merge:true});
+    fsWriteOk();
+  }catch(e){ fsWriteErr('customer '+c.id, e); }
+}
+
+async function fsWritePayment(p){
+  if(!fsCanWrite() || !p || !p.id) return;
+  try{
+    await FS.db.collection('payments').doc(String(p.id)).set({
+      customerId: p.custId || fsResolveCustId(p.custName) || null,
+      customerNameAtImport:String(p.custName||''),
+      date:String(p.date||TODAY_KEY).slice(0,10),
+      amount:parseFloat(p.amount)||0, mode:String(p.mode||''),
+      ref:String(p.ref||''), notes:String(p.notes||''),
+      createdBy:String(p.createdBy||STATE.role||''),
+      deleted:false, source:'app', updatedAt:new Date().toISOString()
+    }, {merge:true});
+    fsWriteOk();
+  }catch(e){ fsWriteErr('payment '+p.id, e); }
+}
+
+// A deletion is an UPDATE, never a removal — the rules forbid hard deletes.
+// That is what makes a deletion reach every phone instead of vanishing on one.
+async function fsDeleteOrder(orderId){
+  if(!fsCanWrite() || !orderId) return;
+  try{
+    await FS.db.collection('orders').doc(String(orderId)).set({
+      deleted:true, deletedAt:new Date().toISOString(),
+      deletedBy:String(STATE.role||''), updatedAt:new Date().toISOString()
+    }, {merge:true});
+    fsWriteOk();
+  }catch(e){ fsWriteErr('delete '+orderId, e); }
+}
+
 function fsShowLogin(){
   const el=document.getElementById('fs-login'); if(!el) return;
   el.style.display='block'; document.body.classList.add('gf-panel-open');
@@ -1828,6 +1931,7 @@ function _deletedMap(){ try{ return JSON.parse(localStorage.getItem(LS_DELETED)|
 function _deletedSave(m){ try{ localStorage.setItem(LS_DELETED, JSON.stringify(m)); }catch(e){} }
 function isOrderDeleted(id){ if(id===undefined||id===null||id==='') return false; return !!_deletedMap()[String(id)]; }
 function markOrderDeleted(orderId, orderDate, sheetOk){
+  try{ fsDeleteOrder(orderId); }catch(e){}       // v180 mirror
   const m=_deletedMap();
   const cutoff=Date.now()-60*24*3600*1000; // prune confirmed tombstones older than 60 days
   Object.keys(m).forEach(k=>{ if((m[k].ts||0)<cutoff && m[k].sheetOk) delete m[k]; });
@@ -2396,7 +2500,10 @@ function initApp() {
       l.textContent = FS.user
         ? ('signed in as '+FS.user.email.split('@')[0]+' · role '+(FS.role||'?')
            +' · '+(STATE.customers||[]).length+' customers, '+(STATE.orders||[]).length+' orders live'
-           +(FS.lastError?(' · last error: '+FS.lastError):''))
+           +' · saved to Firebase: '+FS_WRITES.ok
+           +(FS_WRITES.failed?(', FAILED '+FS_WRITES.failed):'')
+           +(FS_WRITES.lastErr?(' · '+FS_WRITES.lastErr):'')
+           +(FS.lastError?(' · read error: '+FS.lastError):''))
         : 'not signed in';
     }, 2000);
   }catch(e){}
@@ -5388,6 +5495,8 @@ async function syncCustomersFromSheet() {
 }
 
 async function syncCustomerToSheet(customer, retryCount) {
+  try{ fsWriteCustomer(customer); }catch(e){}    // v180 mirror — this is what makes a
+                                                 // rename reach every phone at once
   // Sync a newly created customer to the Customers sheet
   // Includes pricing so the customer is fully usable on all devices
   if(!STATE.sheetUrl) return;
@@ -5511,6 +5620,7 @@ async function syncOneOrder(orderId, orderObj) {
     modNotes:order.modNotes||'',
   });
   const ok = await fireAndWait(url+'?'+params.toString());
+  try{ fsWriteOrder(order); }catch(e){}          // v180 mirror — cannot block the Sheet write
   if(ok) { order.synced=true; saveOrders(); renderOrdersList(); renderDashboard(); }
   return ok;
 }
@@ -9697,6 +9807,7 @@ async function syncPaymentToSheet(p) {
     createdBy: p.createdBy||STATE.role||'',
   });
   await fireAndForget(url+'?'+params.toString());
+  try{ fsWritePayment(p); }catch(e){}            // v180 mirror
 }
 
 // Update order payment info and status in localStorage
