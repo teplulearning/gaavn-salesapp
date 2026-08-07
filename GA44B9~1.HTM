@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Gaavn Fresh — Sheet Reader v1</title>
+<style>
+:root{--ink:#1A1208;--cream:#FBF6EC;--surface:#fff;--border:#E8DFC9;--green:#2E7D32;
+      --red:#C62828;--amber:#C8830A;--blue:#1A527A;--muted:#8A8070;}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--cream);font-family:'Segoe UI',system-ui,sans-serif;color:var(--ink);padding-bottom:80px;}
+header{background:var(--ink);color:#fff;padding:14px 18px;position:sticky;top:0;z-index:50;}
+header h1{font-size:16px;}
+header .sub{font-family:monospace;font-size:10px;color:#C8B89A;margin-top:2px;}
+main{max-width:900px;margin:0 auto;padding:16px 18px;}
+.panel{background:var(--surface);border:1.5px solid var(--border);border-radius:14px;padding:16px;margin-bottom:14px;}
+h3{font-size:14px;margin-bottom:10px;}
+label{display:block;font-family:monospace;font-size:10px;color:var(--muted);margin:8px 0 3px;}
+input,select,textarea{width:100%;padding:10px;border:1.5px solid var(--border);border-radius:9px;
+  background:var(--cream);font-family:monospace;font-size:14px;}
+input[type=file]{background:#fff;padding:14px;}
+button{border:none;border-radius:10px;padding:13px 20px;font-family:monospace;font-size:13px;
+  font-weight:700;cursor:pointer;color:#fff;margin:10px 8px 0 0;}
+button:disabled{opacity:.45;cursor:not-allowed;}
+.b1{background:var(--blue);} .b2{background:var(--green);} .b3{background:var(--ink);}
+.muted{color:var(--muted);font-size:12px;line-height:1.65;}
+pre{background:#12100C;color:#D8E8D0;padding:12px;border-radius:10px;font-size:11px;
+  line-height:1.6;max-height:260px;overflow:auto;white-space:pre-wrap;word-break:break-word;}
+img#prev{max-width:100%;border-radius:10px;border:1.5px solid var(--border);margin-top:10px;display:none;}
+.warn{background:#FFF3CD;border:1.5px solid var(--amber);border-radius:10px;padding:12px;
+  font-size:13px;line-height:1.7;margin-bottom:12px;}
+.bad{background:#FDECEA;border:1.5px solid var(--red);border-radius:10px;padding:12px;
+  font-size:13px;line-height:1.7;margin-bottom:12px;}
+.ok{background:#EAF3EA;border:1.5px solid var(--green);border-radius:10px;padding:12px;
+  font-size:13px;line-height:1.7;margin-bottom:12px;}
+table{width:100%;border-collapse:collapse;font-size:13px;margin-top:6px;}
+th{background:#1A3A1F;color:#fff;padding:7px 8px;text-align:left;font-size:11px;font-family:monospace;}
+td{padding:4px 6px;border-bottom:1px solid var(--border);}
+td.k{font-family:monospace;font-size:11px;color:var(--muted);width:42%;}
+td input{padding:7px 8px;font-size:13px;}
+input.flag{border-color:var(--amber);background:#FFFBF0;}
+input.flag:focus{border-color:var(--amber);}
+.chip{display:inline-block;background:var(--amber);color:#fff;font-size:9px;font-family:monospace;
+  padding:2px 6px;border-radius:20px;margin-left:6px;vertical-align:1px;}
+.sec{margin-top:18px;}
+.sec h4{font-size:13px;color:var(--green);margin-bottom:2px;}
+.spin{display:none;padding:14px;text-align:center;font-family:monospace;font-size:13px;color:var(--blue);}
+</style>
+</head>
+<body>
+<header>
+  <h1>Gaavn Fresh — Sheet Reader</h1>
+  <div class="sub">photo of the plant sheet → checked figures · v1.0</div>
+</header>
+<main>
+
+<div class="panel" id="setup-panel">
+  <h3>⚙ Setup — once per device</h3>
+  <label>READER SCRIPT /exec URL</label>
+  <input id="url" placeholder="https://script.google.com/macros/s/…/exec">
+  <label>READER SECRET <span style="color:#C62828;">(the one you invented in Script Properties)</span></label>
+  <input id="secret" type="password" placeholder="not stored in this file — typed once, saved on this device">
+  <button class="b3" onclick="saveSetup()">Save</button>
+  <span id="setup-msg" class="muted"></span>
+</div>
+
+<div class="panel">
+  <h3>1 · The sheet</h3>
+  <p class="muted">Take a photo of one sheet, straight on, with the whole page in frame. Good light, no shadow across the writing.</p>
+  <input type="file" id="file" accept="image/*" capture="environment" onchange="onPick(event)">
+  <img id="prev">
+  <button class="b1" id="go" onclick="readSheet()" disabled>Read this sheet</button>
+  <span id="size" class="muted"></span>
+  <div class="spin" id="spin">⏳ reading… about 5–15 seconds</div>
+</div>
+
+<div id="out"></div>
+
+<div class="panel" id="raw-panel" style="display:none;">
+  <h3>Raw reply</h3>
+  <p class="muted">Only needed if something looks wrong — send this to Claude and it can tell you what happened.</p>
+  <pre id="raw"></pre>
+</div>
+
+</main>
+
+<script>
+const $=id=>document.getElementById(id);
+let IMG64=null, MIME='image/jpeg', DATA=null;
+
+/* ── setup ─────────────────────────────────────────────────────────── */
+$('url').value    = localStorage.getItem('gf_reader_url')||'';
+$('secret').value = localStorage.getItem('gf_reader_secret')||'';
+function saveSetup(){
+  localStorage.setItem('gf_reader_url', $('url').value.trim().split('?')[0].replace(/\/+$/,''));
+  localStorage.setItem('gf_reader_secret', $('secret').value);
+  $('setup-msg').textContent='saved on this device';
+}
+
+/* ── the photo ─────────────────────────────────────────────────────────
+   Phone photos are 3–5 MB and base64 adds a third on top. Shrinking to a
+   1600 px long edge keeps the upload small without losing the digits —
+   the writing is large relative to the page. */
+function onPick(e){
+  const f=e.target.files[0]; if(!f) return;
+  const img=new Image();
+  img.onload=function(){
+    const MAX=1600;
+    let w=img.width, h=img.height;
+    if(Math.max(w,h)>MAX){ const s=MAX/Math.max(w,h); w=Math.round(w*s); h=Math.round(h*s); }
+    const c=document.createElement('canvas'); c.width=w; c.height=h;
+    c.getContext('2d').drawImage(img,0,0,w,h);
+    const durl=c.toDataURL('image/jpeg',0.88);
+    IMG64=durl.split(',')[1]; MIME='image/jpeg';
+    $('prev').src=durl; $('prev').style.display='block';
+    $('go').disabled=false;
+    $('size').textContent=Math.round(IMG64.length/1365)+' KB after shrinking';
+  };
+  img.src=URL.createObjectURL(f);
+}
+
+/* ── call the proxy ────────────────────────────────────────────────────
+   Content-Type must be text/plain. With application/json the browser sends
+   a CORS preflight, which Apps Script does not answer, and the call fails
+   with an opaque network error. text/plain skips the preflight. */
+async function readSheet(){
+  const url=localStorage.getItem('gf_reader_url')||'';
+  const secret=localStorage.getItem('gf_reader_secret')||'';
+  if(!url||!secret){ show('<div class="bad"><b>Setup first</b> — the script URL and secret are both needed.</div>'); return; }
+  $('go').disabled=true; $('spin').style.display='block'; $('out').innerHTML='';
+  try{
+    const r=await fetch(url,{method:'POST',
+      headers:{'Content-Type':'text/plain;charset=utf-8'},
+      body:JSON.stringify({secret:secret, image:IMG64, mime:MIME})});
+    const j=await r.json();
+    $('raw').textContent=JSON.stringify(j,null,1); $('raw-panel').style.display='block';
+    if(j.error){ show('<div class="bad"><b>'+esc(j.error)+'</b>'+(j.detail?'<br><span class="muted">'+esc(String(j.detail))+'</span>':'')+'</div>'); return; }
+    DATA=j.data; render(j.data, j.model);
+  }catch(e){
+    show('<div class="bad"><b>Could not reach the reader script.</b><br>'+esc(e.message)
+      +'<br><span class="muted">Check the /exec URL, and that the deployment is set to “Anyone”.</span></div>');
+  }finally{ $('go').disabled=false; $('spin').style.display='none'; }
+}
+function show(h){ $('out').innerHTML=h; }
+function esc(s){ return String(s==null?'':s).replace(/[<>&]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c])); }
+
+/* ── the review form ───────────────────────────────────────────────── */
+const LOW=new Set();
+function flagged(path){ for(const p of LOW){ if(p===path||p.indexOf(path)===0||path.indexOf(p)===0) return true; } return false; }
+
+function field(path, label, val){
+  const f=flagged(path);
+  return '<tr><td class="k">'+esc(label)+(f?'<span class="chip">CHECK</span>':'')+'</td>'
+    +'<td><input data-p="'+esc(path)+'" class="'+(f?'flag':'')+'" value="'+esc(val==null?'':val)+'"'
+    +(val==null?' placeholder="not read — type it in"':'')+'></td></tr>';
+}
+
+function render(d, model){
+  LOW.clear(); (d.low_confidence_fields||[]).forEach(p=>LOW.add(p));
+  let h='';
+
+  const warns=d.warnings||[];
+  if(warns.length){
+    h+='<div class="warn"><b>⚠ '+warns.length+' thing'+(warns.length>1?'s':'')+' to look at</b><ul style="margin:8px 0 0 18px;">'
+      + warns.map(w=>'<li>'+esc(w)+'</li>').join('') + '</ul></div>';
+  }
+  if(LOW.size){
+    h+='<div class="warn"><b>'+LOW.size+' field'+(LOW.size>1?'s':'')+' the reader was unsure of</b> — '
+      +'marked <span class="chip">CHECK</span> below. Look at these against the paper before you use anything.</div>';
+  }
+  if(!warns.length && !LOW.size){
+    h+='<div class="ok"><b>Read cleanly</b> — nothing flagged. Still worth a glance at the totals.</div>';
+  }
+
+  h+='<div class="panel"><h3>2 · Check and correct</h3>';
+  h+='<p class="muted">Everything below is editable. Amber boxes are where the reader was unsure.</p>';
+
+  h+='<div class="sec"><h4>Date</h4><table>'+field('date','Date (YYYY-MM-DD)',d.date)+'</table></div>';
+
+  (d.milk_received||[]).forEach((m,i)=>{
+    h+='<div class="sec"><h4>Milk received — '+esc(m.source||('row '+(i+1)))+(m.spoiled?' &nbsp;<span style="color:#C62828;">SPOILED</span>':'')+'</h4><table>'
+      + field('milk_received.'+i+'.source','Source',m.source)
+      + field('milk_received.'+i+'.qty_litres','Quantity (L)',m.qty_litres)
+      + field('milk_received.'+i+'.fat','Fat',m.fat)
+      + field('milk_received.'+i+'.snf','SNF',m.snf)
+      + '</table></div>';
+  });
+
+  const s=d.separation||{};
+  h+='<div class="sec"><h4>Separation</h4><table>'
+    + field('separation.milk_separated_litres','Milk separated (L)',s.milk_separated_litres)
+    + field('separation.skim_out_litres','Skim out (L)',s.skim_out_litres)
+    + field('separation.cream_out_kg','Cream out (kg)',s.cream_out_kg)
+    + '</table></div>';
+
+  (d.products||[]).forEach((p,i)=>{
+    const inp=p.inputs||{}, out=p.output||{};
+    h+='<div class="sec"><h4>'+esc(p.name||('Product '+(i+1)))
+      + (p.made_today===false?' &nbsp;<span style="color:#C62828;">NOT MADE TODAY</span>':'')+'</h4><table>'
+      + field('products.'+i+'.batches','Batches',p.batches);
+    [['bm_litres','BM (L)'],['sm_litres','SM (L)'],['cm_litres','CM (L)'],['cream_kg','Cream (kg)'],
+     ['aa_ml','A.A. (ml)'],['water_litres','Water (L)'],['ps_kg','PS (kg)'],['cacl2_kg','CaCl₂ (kg)'],
+     ['smp_kg','SMP (kg)'],['binder_gm','Binder (gm)'],['sugar_kg','Sugar (kg)']].forEach(([k,l])=>{
+       if(inp[k]!==undefined && inp[k]!==null) h+=field('products.'+i+'.inputs.'+k,l,inp[k]);
+     });
+    [['ladi_count','Ladi count'],['jars','Jars'],['kg','Output (kg)']].forEach(([k,l])=>{
+       if(out[k]!==undefined && out[k]!==null) h+=field('products.'+i+'.output.'+k,l,out[k]);
+    });
+    h+='</table></div>';
+  });
+
+  (d.ladi_weights||[]).forEach((L,i)=>{
+    const ws=L.weights_kg||[];
+    const sum=ws.reduce((a,b)=>a+(parseFloat(b)||0),0);
+    const mismatch = L.written_total!=null && Math.abs(sum-L.written_total)>0.05;
+    h+='<div class="sec"><h4>Ladi weights — '+esc(L.product||'unknown')+'</h4>';
+    if(mismatch){
+      h+='<div class="bad" style="margin:6px 0;"><b>Total does not match.</b> The sheet says <b>'
+        +esc(L.written_total)+'</b>, the '+ws.length+' weights add up to <b>'+sum.toFixed(3)+'</b>.</div>';
+    }
+    h+='<table>';
+    ws.forEach((w,j)=>{ h+=field('ladi_weights.'+i+'.weights_kg.'+j,'#'+(j+1),w); });
+    h+=field('ladi_weights.'+i+'.written_total','Written total',L.written_total);
+    h+='<tr><td class="k">Sum of the above</td><td><input value="'+sum.toFixed(3)+'" readonly style="background:#EEE;"></td></tr>';
+    h+='</table></div>';
+  });
+
+  if(d.notes) h+='<div class="sec"><h4>Notes on the sheet</h4><table>'+field('notes','Notes',d.notes)+'</table></div>';
+
+  h+='<button class="b2" onclick="copyText()">📋 Copy for the tracker</button>'
+   + '<button class="b3" onclick="copyJSON()">Copy as JSON</button>'
+   + '<span id="copied" class="muted"></span>';
+  h+='<p class="muted" style="margin-top:10px;">read by '+esc(model||'')+'</p>';
+  h+='</div>';
+  show(h);
+}
+
+/* corrections are read back out of the inputs, so what you copy is what you fixed */
+function collect(){
+  const o=JSON.parse(JSON.stringify(DATA||{}));
+  document.querySelectorAll('#out input[data-p]').forEach(el=>{
+    const parts=el.dataset.p.split('.');
+    let cur=o;
+    for(let i=0;i<parts.length-1;i++){ if(cur[parts[i]]==null) cur[parts[i]]={}; cur=cur[parts[i]]; }
+    let v=el.value.trim();
+    cur[parts[parts.length-1]] = v==='' ? null : (isNaN(v)||/^\d{4}-\d{2}-\d{2}$/.test(v)? v : parseFloat(v));
+  });
+  return o;
+}
+function copyJSON(){ navigator.clipboard.writeText(JSON.stringify(collect(),null,1)); $('copied').textContent='copied'; }
+function copyText(){
+  const d=collect(); const L=[];
+  L.push('GAAVN FRESH — production  '+(d.date||''));
+  L.push('');
+  (d.milk_received||[]).forEach(m=>L.push('MILK  '+(m.source||'')+'  '+(m.qty_litres||0)+' L'
+    +(m.fat!=null?('  fat '+m.fat):'')+(m.snf!=null?('  snf '+m.snf):'')+(m.spoiled?'  ** SPOILED **':'')));
+  const s=d.separation||{};
+  L.push('SEPARATION  separated '+(s.milk_separated_litres||'-')+' L   skim '+(s.skim_out_litres||'-')
+    +' L   cream '+(s.cream_out_kg||'-')+' kg');
+  L.push('');
+  (d.products||[]).forEach(p=>{
+    if(p.made_today===false){ L.push(p.name+' — NOT MADE'); return; }
+    const i=p.inputs||{}, o=p.output||{};
+    L.push(p.name+(p.batches?('  ('+p.batches+' batches)'):''));
+    Object.keys(i).forEach(k=>{ if(i[k]!=null) L.push('   '+k.replace(/_/g,' ')+' = '+i[k]); });
+    Object.keys(o).forEach(k=>{ if(o[k]!=null) L.push('   ** '+k.replace(/_/g,' ')+' = '+o[k]); });
+    L.push('');
+  });
+  (d.ladi_weights||[]).forEach(w=>{
+    const ws=(w.weights_kg||[]);
+    L.push('LADI '+(w.product||'')+'  ['+ws.join(', ')+']   sum '
+      + ws.reduce((a,b)=>a+(parseFloat(b)||0),0).toFixed(3)
+      + (w.written_total!=null?('   written '+w.written_total):''));
+  });
+  if(d.notes) L.push('\nNOTES: '+d.notes);
+  navigator.clipboard.writeText(L.join('\n')); $('copied').textContent='copied';
+}
+</script>
+</body>
+</html>
