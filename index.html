@@ -269,7 +269,7 @@ body.gf-panel-open #app{ visibility:hidden; }
     <div class="top-bar-left">
       <span class="logo">🐄 GF</span>
       <span class="role-badge" id="role-badge">SALES</span>
-      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v180</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v182</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <button id="del-lang-btn" onclick="toggleDeliveryLang()" style="display:none;background:var(--blue);color:#fff;border:none;border-radius:14px;padding:4px 10px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;">मराठी</button>
@@ -1421,7 +1421,7 @@ const FS_CONFIG = {
 const LS_FS_READS='gf_fs_reads';
 const FS_LOGIN_DOMAIN='@gaavnfresh.invalid';
 let FS={app:null, auth:null, db:null, user:null, role:null, ready:false,
-        unsub:[], custById:{}, lastError:''};
+        unsub:[], custById:{}, lastError:'', ordersUnsub:null, windowFrom:''};
 
 function fsReadsOn(){ return localStorage.getItem(LS_FS_READS)==='1'; }
 function fsInit(){
@@ -1485,28 +1485,70 @@ function fsRepaint(){
 
 function fsStopListening(){ FS.unsub.forEach(function(u){ try{u();}catch(e){} }); FS.unsub=[]; }
 
+/* v181 — bound how far back the orders listener reaches.
+
+   The naive version of this is a plain 60-day cutoff, and it is WRONG here.
+   Dues are opening balance + every unpaid order after that customer's
+   "Balance As Of" date. Cut the window at 60 days and, once those as-of dates
+   are more than 60 days old, unpaid orders from before the window silently
+   stop counting — understated dues, which is the exact bug we have spent this
+   whole project killing.
+
+   So the window is 60 days OR back to the earliest Balance-As-Of date,
+   whichever reaches FURTHER BACK. It can never cut into the dues calculation.
+   Today that means it changes nothing; from October it starts saving real
+   reads, and it can never be the reason a customer looks Clear when they are not. */
+const FS_WINDOW_DAYS = 60;
+function fsOrdersWindowStart(){
+  const d=new Date(); d.setDate(d.getDate()-FS_WINDOW_DAYS);
+  let cut = d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+  const global = localStorage.getItem('gf_cutover')||'2026-07-05';
+  if(global && global < cut) cut = global;
+  Object.keys(FS.custById||{}).forEach(function(id){
+    const b=String(FS.custById[id].balanceAsOf||'').slice(0,10);
+    if(b && b.length===10 && b < cut) cut = b;
+  });
+  return cut;
+}
+
+function fsStartOrdersListener(){
+  if(FS.ordersUnsub){ try{ FS.ordersUnsub(); }catch(e){} FS.ordersUnsub=null; }
+  const from = fsOrdersWindowStart();
+  FS.windowFrom = from;
+  // Single inequality on `date` only — no composite index needed, so there is
+  // nothing for you to create in the console. `deleted` is filtered below.
+  FS.ordersUnsub = FS.db.collection('orders').where('date','>=',from)
+    .onSnapshot(function(snap){
+      const list=[];
+      snap.forEach(function(doc){
+        const dd=doc.data();
+        if(dd && dd.deleted) return;
+        list.push(fsOrderToApp(doc.id, dd));
+      });
+      STATE.orders=list;
+      fsRepaint();
+    }, function(err){ fsShowError('orders', err); });
+  FS.unsub.push(function(){ if(FS.ordersUnsub) FS.ordersUnsub(); });
+}
+
 function fsStartListening(){
   if(!FS.db||!FS.user) return;
   fsStopListening();
-  // customers first — orders resolve their names from this map
+  // customers first — orders resolve their names from this map, and the order
+  // window depends on their Balance-As-Of dates
   FS.unsub.push(FS.db.collection('customers').onSnapshot(function(snap){
     const list=[]; FS.custById={};
     snap.forEach(function(doc){ const c=fsCustToApp(doc.id, doc.data());
       FS.custById[doc.id]=c; list.push(c); });
     STATE.customers=list;
     try{ localStorage.setItem(LS_CUSTS, JSON.stringify(list)); }catch(e){}
+    // (re)start the orders listener once the as-of dates are known
+    const want=fsOrdersWindowStart();
+    if(want!==FS.windowFrom) fsStartOrdersListener();
     fsRepaint();
     if(typeof showToast==='function' && !FS.ready){ FS.ready=true;
       showToast('☁ live from Firebase — '+list.length+' customers'); }
   }, function(err){ fsShowError('customers', err); }));
-
-  FS.unsub.push(FS.db.collection('orders').where('deleted','==',false)
-    .onSnapshot(function(snap){
-      const list=[];
-      snap.forEach(function(doc){ list.push(fsOrderToApp(doc.id, doc.data())); });
-      STATE.orders=list;
-      fsRepaint();
-    }, function(err){ fsShowError('orders', err); }));
 
   FS.unsub.push(FS.db.collection('payments').where('deleted','==',false)
     .onSnapshot(function(snap){
@@ -2500,6 +2542,7 @@ function initApp() {
       l.textContent = FS.user
         ? ('signed in as '+FS.user.email.split('@')[0]+' · role '+(FS.role||'?')
            +' · '+(STATE.customers||[]).length+' customers, '+(STATE.orders||[]).length+' orders live'
+           +' · orders from '+(FS.windowFrom||'?')
            +' · saved to Firebase: '+FS_WRITES.ok
            +(FS_WRITES.failed?(', FAILED '+FS_WRITES.failed):'')
            +(FS_WRITES.lastErr?(' · '+FS_WRITES.lastErr):'')
@@ -8255,27 +8298,53 @@ function openGSTExport() {
   document.getElementById('modal-gst-export').classList.add('open');
 }
 
+/* v182 — this fed the GST report and was counting money that does not exist.
+   Two faults, both of which INFLATED the total:
+
+   1. It never checked isOrderDeleted(). A deleted order stays in this phone's
+      localStorage day-cache, so every order ever deleted was still being
+      billed. The Sales & Collections report filters them; this did not.
+      Result: the GST figure sent to the CA was higher than actual sales.
+
+   2. It merged every localStorage day-cache with STATE.orders. Those caches
+      were written before the Firebase migration and are now stale — old
+      product names, superseded rows, orders since corrected elsewhere. When
+      Firebase is the source of truth those caches must be ignored entirely,
+      not merged in.
+
+   Overstating sales to a tax authority is worse than understating them, so
+   this errs toward the live source and excludes anything deleted. */
 function getAllOrdersInRange(from, to) {
   const orders = [];
   const seen = new Set();
-  // Walk all localStorage date keys
-  for(let i=0; i<localStorage.length; i++) {
-    const key = localStorage.key(i);
-    if(!key || !key.startsWith(LS_PREFIX)) continue;
-    const date = key.replace(LS_PREFIX,'');
-    if(date < from || date > to) continue;
-    try {
-      const dayOrders = JSON.parse(localStorage.getItem(key)||'[]');
-      dayOrders.forEach(o => {
-        if(!seen.has(o.id)) { seen.add(o.id); orders.push(o); }
-      });
-    } catch(e) {}
-  }
-  // Also include STATE.orders in range
-  STATE.orders.forEach(o => {
+  const liveFromFirebase = (typeof fsReadsOn==='function') && fsReadsOn() && FS.user;
+
+  // STATE.orders first — when Firebase is on this is the live, deduped truth
+  (STATE.orders||[]).forEach(o => {
+    if(!o || !o.id) return;
     const d = o.date || TODAY_KEY;
-    if(d >= from && d <= to && !seen.has(o.id)) { seen.add(o.id); orders.push(o); }
+    if(d < from || d > to) return;
+    if(isOrderDeleted(o.id)) return;
+    if(seen.has(o.id)) return;
+    seen.add(o.id); orders.push(o);
   });
+
+  // localStorage day-caches only when Firebase is NOT the source
+  if(!liveFromFirebase){
+    for(let i=0; i<localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if(!key || !key.startsWith(LS_PREFIX)) continue;
+      const date = key.replace(LS_PREFIX,'');
+      if(date < from || date > to) continue;
+      try {
+        JSON.parse(localStorage.getItem(key)||'[]').forEach(o => {
+          if(!o || !o.id || seen.has(o.id)) return;
+          if(isOrderDeleted(o.id)) return;
+          seen.add(o.id); orders.push(o);
+        });
+      } catch(e) {}
+    }
+  }
   return orders.sort((a,b) => (a.date||'').localeCompare(b.date||''));
 }
 
@@ -8304,7 +8373,8 @@ function previewGSTReport() {
   document.getElementById('gst-preview').innerHTML =
     `<div style="background:var(--surface);border:1.5px solid var(--border);border-radius:10px;padding:12px 14px;font-size:13px;">
       <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
-        <span style="color:var(--muted);">${orders.length} orders · ${Object.keys(byProduct).length} products</span>
+        <span style="color:var(--muted);">${orders.length} orders · ${Object.keys(byProduct).length} products
+          &nbsp;·&nbsp;<b>${((typeof fsReadsOn==='function')&&fsReadsOn()&&FS.user)?'live from Firebase':'from this phone'}</b></span>
         <span style="font-weight:700;color:var(--amber);">₹${appTotal.toLocaleString('en-IN',{maximumFractionDigits:2})}</span>
       </div>
       ${manualTotal > 0 ? `<div style="display:flex;justify-content:space-between;padding:4px 0;border-top:1px solid var(--border);font-size:12px;color:var(--muted);">
