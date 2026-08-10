@@ -269,7 +269,7 @@ body.gf-panel-open #app{ visibility:hidden; }
     <div class="top-bar-left">
       <span class="logo">🐄 GF</span>
       <span class="role-badge" id="role-badge">SALES</span>
-      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v184</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v185</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <button id="del-lang-btn" onclick="toggleDeliveryLang()" style="display:none;background:var(--blue);color:#fff;border:none;border-radius:14px;padding:4px 10px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;">मराठी</button>
@@ -524,6 +524,19 @@ body.gf-panel-open #app{ visibility:hidden; }
           ⬆ Copy balances from the Sheet to Firebase
         </button>
         <div id="fs-fix-bal-msg" style="margin-top:8px;font-size:12px;line-height:1.6;"></div>
+      </div>
+      <!-- v185 -->
+      <div style="border-top:1px solid rgba(46,125,50,.25);margin-top:10px;padding-top:10px;">
+        <div style="font-size:12px;line-height:1.6;color:#5D6B5D;">
+          <b>Phone still showing an old version number?</b> The offline cache is serving a stale copy.
+          This clears it and loads the newest build. Your sign-in and settings are kept.
+        </div>
+        <button onclick="forceReinstall()"
+                style="margin-top:8px;background:#C8830A;color:#fff;border:none;border-radius:9px;
+                       padding:10px 16px;font-size:13px;font-weight:700;">
+          ⟳ Force the latest version
+        </button>
+        <div id="force-update-msg" style="margin-top:8px;font-size:12px;"></div>
       </div>
     </div>
 
@@ -1842,6 +1855,26 @@ async function fsRepairBalances(){
   }catch(e){
     show('<b style="color:#C62828;">Could not reach the Sheet — '+e.message+'</b>');
   }finally{ if(btn) btn.disabled=false; }
+}
+
+/* v185 — force the newest build, whatever any cache thinks.
+   Clears every cache, removes the service worker, reloads cache-busted.
+   Sign-in and settings survive (they live in localStorage/IndexedDB). */
+async function forceReinstall(){
+  const el=document.getElementById('force-update-msg');
+  if(el) el.innerHTML='<span style="color:#1A527A;">clearing caches…</span>';
+  try{
+    if(window.caches){
+      const keys=await caches.keys();
+      await Promise.all(keys.map(k=>caches.delete(k)));
+    }
+    if('serviceWorker' in navigator){
+      const regs=await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map(r=>r.unregister().catch(()=>{})));
+    }
+  }catch(e){}
+  const base=location.href.split('#')[0].split('?')[0];
+  location.replace(base+'?_forced='+Date.now());
 }
 
 function fsShowLogin(){
@@ -11054,8 +11087,19 @@ async function checkForAppUpdate(auto){
   if(!navigator.onLine){ if(!auto) showToast('📴 Offline — connect first to check for updates'); return null; }
   const cur=_currentBuild();
   try{
+    /* v185: cache:'no-store' only bypasses the HTTP cache. The service worker
+       sits in front of that and answers from its own cache, so the check kept
+       comparing the stale page against itself and reporting "up to date".
+       Ask every registered worker to re-check itself first, and use
+       cache:'reload' which forces a network round trip. */
+    if('serviceWorker' in navigator){
+      try{
+        const regs=await navigator.serviceWorker.getRegistrations();
+        await Promise.all(regs.map(r=>r.update().catch(()=>{})));
+      }catch(e){}
+    }
     const base=location.href.split('#')[0].split('?')[0];
-    const r=await fetch(base+'?_v='+Date.now(),{cache:'no-store'});
+    const r=await fetch(base+'?_v='+Date.now(),{cache:'reload'});
     const t=await r.text();
     const m=t.match(/id="build-stamp"[^>]*>\s*(v\d+)\s*</);
     const latest=m?m[1]:null;
