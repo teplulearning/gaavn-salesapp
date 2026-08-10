@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Gaavn Fresh — payment backfill v1</title>
+<style>
+:root{--ink:#1A1208;--cream:#FBF6EC;--surface:#fff;--border:#E8DFC9;--green:#2E7D32;
+      --red:#C62828;--amber:#C8830A;--blue:#1A527A;--muted:#8A8070;}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--cream);font-family:'Segoe UI',system-ui,sans-serif;color:var(--ink);padding-bottom:60px;}
+header{background:var(--ink);color:#fff;padding:16px 22px;}
+header h1{font-size:17px;} header .sub{font-family:monospace;font-size:11px;color:#C8B89A;margin-top:3px;}
+main{max-width:1080px;margin:0 auto;padding:18px 22px;}
+.panel{background:var(--surface);border:1.5px solid var(--border);border-radius:14px;padding:16px;margin-bottom:14px;}
+h3{font-size:14px;margin-bottom:10px;}
+label{display:block;font-family:monospace;font-size:10px;color:var(--muted);margin:8px 0 3px;}
+input{width:100%;padding:9px;border:1.5px solid var(--border);border-radius:8px;background:var(--cream);font-family:monospace;font-size:12px;}
+.row{display:flex;gap:10px;flex-wrap:wrap;} .row>div{flex:1;min-width:170px;}
+button{border:none;border-radius:9px;padding:12px 18px;font-family:monospace;font-size:12px;font-weight:700;cursor:pointer;color:#fff;margin:10px 8px 0 0;}
+button:disabled{opacity:.45;cursor:not-allowed;}
+.b1{background:var(--blue);} .b2{background:var(--green);} .b3{background:var(--ink);}
+pre{background:#12100C;color:#D8E8D0;padding:13px;border-radius:10px;font-size:11.5px;line-height:1.65;
+    max-height:440px;overflow:auto;white-space:pre-wrap;word-break:break-word;}
+.muted{color:var(--muted);font-size:12px;line-height:1.65;}
+.warn{background:#FFF3CD;border:1.5px solid var(--amber);border-radius:10px;padding:12px;font-size:12.5px;line-height:1.7;margin-bottom:12px;}
+.bad{background:#FDECEA;border:1.5px solid var(--red);border-radius:10px;padding:12px;font-size:12.5px;line-height:1.7;margin-bottom:12px;}
+.ok{background:#EAF3EA;border:1.5px solid var(--green);border-radius:10px;padding:12px;font-size:12.5px;line-height:1.7;margin-bottom:12px;}
+table{width:100%;border-collapse:collapse;font-family:monospace;font-size:11px;margin-top:8px;}
+th{background:#1A3A1F;color:#fff;padding:6px 8px;text-align:left;position:sticky;top:0;}
+td{padding:4px 8px;border-bottom:1px solid var(--border);}
+.n{text-align:right;}
+.scroll{max-height:380px;overflow:auto;border:1.5px solid var(--border);border-radius:10px;}
+</style>
+</head>
+<body>
+<header>
+  <h1>Gaavn Fresh — payment backfill</h1>
+  <div class="sub">order-level payments → the Payments ledger · v1 · nothing is written until step 3</div>
+</header>
+<main>
+
+<div class="warn">
+  <b>What this does.</b> June's collections were recorded on the order rows (Payment Amt / settled),
+  not as entries in the Payments ledger. That is why Payments In shows nothing before July, and why
+  a customer's dues cannot be rebuilt from their payment history. This finds every order-level
+  payment that has no matching ledger entry and creates one, so every rupee received lives in one place.
+  <br><br>
+  <b>The risk it guards against.</b> Some payments exist in BOTH places already — recorded on the
+  order and entered in the ledger. Creating another entry would count that money twice. Step 2 finds
+  those and excludes them, and shows you the near-misses so you can judge.
+</div>
+
+<div class="panel">
+  <h3>1 · Sign in</h3>
+  <div class="row">
+    <div><label>USERNAME</label><input id="u" placeholder="teplulearning@gmail.com"></div>
+    <div><label>PASSWORD</label><input id="p" type="password"></div>
+  </div>
+  <button class="b1" onclick="doLogin()">Sign in</button>
+  <span id="who" class="muted"></span>
+  <p class="muted" style="margin-top:8px;">Sign in as the <b>owner</b> account — writing payments needs that role.</p>
+</div>
+
+<div class="panel">
+  <h3>2 · Analyse — writes nothing</h3>
+  <div class="row">
+    <div><label>FROM DATE</label><input type="date" id="from" value="2026-06-01"></div>
+    <div><label>TO DATE</label><input type="date" id="to" value="2026-06-30"></div>
+    <div><label>MATCH WINDOW (days)</label><input type="number" id="win" value="7" min="0" max="60"></div>
+  </div>
+  <p class="muted">An order payment counts as “already in the ledger” if a ledger entry exists for the
+     same customer, the same amount (within ₹1), within this many days.</p>
+  <button class="b1" id="b-an" onclick="analyse()" disabled>Analyse</button>
+  <button class="b2" id="b-wr" onclick="writeEntries()" disabled>3 · Create the missing ledger entries</button>
+  <button class="b3" onclick="dlCSV()">⬇ CSV of the plan</button>
+</div>
+
+<div id="out"></div>
+
+<div class="panel"><h3>Log</h3><pre id="log">Sign in to begin.</pre></div>
+</main>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script>
+const firebaseConfig = {
+  apiKey: "AIzaSyAI8NvjxdcmoG2UinhJ0LZ0EdL18b-foZ0",
+  authDomain: "gaavnfresh-sales.firebaseapp.com",
+  projectId: "gaavnfresh-sales",
+  storageBucket: "gaavnfresh-sales.firebasestorage.app",
+  messagingSenderId: "974451495449",
+  appId: "1:974451495449:web:3985b05c49e52b5fbad088"
+};
+firebase.initializeApp(firebaseConfig);
+const auth=firebase.auth(), db=firebase.firestore();
+const $=id=>document.getElementById(id);
+let LOG=[], PLAN=null, CUST={};
+function log(s){ LOG.push(s); $('log').textContent=LOG.join('\n'); $('log').scrollTop=1e9; }
+function esc(x){ return String(x==null?'':x).replace(/[<>&]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c])); }
+function n(v){ const x=parseFloat(v); return isNaN(x)?0:x; }
+function day(x){ return String(x||'').slice(0,10); }
+function dayDiff(a,b){ return Math.abs((new Date(a+'T00:00:00') - new Date(b+'T00:00:00'))/86400000); }
+
+async function doLogin(){
+  const em=$('u').value.trim(), pw=$('p').value;
+  const email = em.indexOf('@')>=0 ? em : em.toLowerCase()+'@gaavnfresh.invalid';
+  try{
+    await auth.signInWithEmailAndPassword(email, pw);
+    $('p').value='';
+    const d=await db.collection('users').doc(auth.currentUser.uid).get();
+    const role=d.exists?(d.data().role||''):'(none)';
+    $('who').innerHTML=' signed in as <b>'+esc(email)+'</b>, role <b>'+esc(role)+'</b>';
+    if(role!=='owner') log('⚠ You are signed in as "'+role+'". Writing payments needs the owner role.');
+    $('b-an').disabled=false;
+    log('signed in.');
+  }catch(e){ log('✗ sign-in failed: '+(e.code||e.message)); }
+}
+
+/* ── the analysis ───────────────────────────────────────────────────── */
+async function analyse(){
+  LOG=[]; PLAN=null; $('out').innerHTML=''; $('b-wr').disabled=true;
+  const from=$('from').value, to=$('to').value, win=n($('win').value);
+  try{
+    log('reading Firestore…');
+    const [cs,os,ps] = await Promise.all([
+      db.collection('customers').get(),
+      db.collection('orders').get(),
+      db.collection('payments').get()
+    ]);
+    CUST={}; cs.forEach(d=>CUST[d.id]=d.data());
+    log('  customers ......... '+cs.size);
+
+    const orders=[]; os.forEach(d=>{ const o=d.data(); o._id=d.id; orders.push(o); });
+    const pays=[];   ps.forEach(d=>{ const p=d.data(); p._id=d.id; pays.push(p); });
+    log('  orders ............ '+orders.length);
+    log('  ledger payments ... '+pays.length);
+
+    // every order in range carrying a payment
+    const withPay = orders.filter(o=>!o.deleted && day(o.date)>=from && day(o.date)<=to && n(o.paidAmount)>0);
+    log('\n  orders in '+from+' → '+to+' with a payment recorded on them: '+withPay.length);
+
+    const ledgerInRange = pays.filter(p=>!p.deleted && day(p.date)>=from && day(p.date)<=to);
+    log('  ledger entries already in that range: '+ledgerInRange.length);
+
+    // match each order payment against the ledger
+    const used=new Set(); const create=[], already=[], near=[];
+    withPay.forEach(o=>{
+      const amt=n(o.paidAmount), cid=o.customerId||null, od=day(o.date);
+      let hit=null, close=null;
+      pays.forEach(p=>{
+        if(p.deleted || used.has(p._id)) return;
+        const sameCust = cid && p.customerId===cid;
+        if(!sameCust) return;
+        const dAmt=Math.abs(n(p.amount)-amt), dDay=dayDiff(day(p.date), od);
+        if(dAmt<=1 && dDay<=win){ if(!hit) hit=p; }
+        else if(dAmt<=1 && dDay<=45){ if(!close) close=p; }
+      });
+      if(hit){ used.add(hit._id); already.push({o,p:hit}); return; }
+      if(close) near.push({o,p:close});
+      create.push(o);
+    });
+
+    PLAN={from,to,win,create,already,near,customers:CUST};
+    log('\n── result ──');
+    log('  already in the ledger, will be SKIPPED ....... '+already.length);
+    log('  no ledger entry, will be CREATED ............. '+create.length);
+    log('  value to be created .......................... Rs '
+        + Math.round(create.reduce((s,o)=>s+n(o.paidAmount),0)).toLocaleString('en-IN'));
+    if(near.length) log('  ⚠ same amount, same customer, but 8–45 days apart: '+near.length+' — check these');
+    render();
+    $('b-wr').disabled = create.length===0;
+  }catch(e){ log('✗ '+e.message); }
+}
+
+function custName(id){ const c=CUST[id]; return c?(c.name||id):(id||'— unlinked —'); }
+
+function render(){
+  const P=PLAN; let h='';
+  const total=P.create.reduce((s,o)=>s+n(o.paidAmount),0);
+
+  h+='<div class="'+(P.create.length?'ok':'warn')+'"><b>'+P.create.length+' ledger entries to create'
+   + '</b> &nbsp;·&nbsp; ₹'+Math.round(total).toLocaleString('en-IN')
+   + ' &nbsp;·&nbsp; '+P.already.length+' skipped because the ledger already has them.</div>';
+
+  if(P.near.length){
+    h+='<div class="bad"><b>⚠ '+P.near.length+' need your eye.</b> Same customer and same amount as an '
+     + 'existing ledger entry, but more than '+P.win+' days apart. It could be the same payment logged '
+     + 'late, or a genuinely separate payment of the same amount. These <b>will be created</b> — widen '
+     + 'the match window and re-analyse if you would rather skip them.<div class="scroll" style="margin-top:8px;">'
+     + '<table><tr><th>order date</th><th>customer</th><th class="n">amount</th><th>ledger entry dated</th><th>days apart</th></tr>';
+    P.near.forEach(x=>{ h+='<tr><td>'+day(x.o.date)+'</td><td>'+esc(custName(x.o.customerId))+'</td>'
+      +'<td class="n">'+Math.round(n(x.o.paidAmount)).toLocaleString('en-IN')+'</td>'
+      +'<td>'+day(x.p.date)+'</td><td class="n">'+dayDiff(day(x.p.date),day(x.o.date))+'</td></tr>'; });
+    h+='</table></div></div>';
+  }
+
+  h+='<div class="panel"><h3>Entries that will be created</h3><div class="scroll"><table>'
+   + '<tr><th>date</th><th>customer</th><th class="n">amount</th><th>mode</th><th>from order</th></tr>';
+  P.create.forEach(o=>{
+    h+='<tr><td>'+day(o.date)+'</td><td>'+esc(custName(o.customerId))
+      +(o.customerId?'':' <span style="color:#C62828;">(no customer link)</span>')+'</td>'
+      +'<td class="n">'+Math.round(n(o.paidAmount)).toLocaleString('en-IN')+'</td>'
+      +'<td>'+esc(o.paymentMode||'—')+'</td><td>'+esc(o._id)+'</td></tr>';
+  });
+  h+='</table></div></div>';
+  $('out').innerHTML=h;
+}
+
+/* ── the write ──────────────────────────────────────────────────────── */
+async function writeEntries(){
+  if(!PLAN || !PLAN.create.length) return;
+  const noLink=PLAN.create.filter(o=>!o.customerId).length;
+  if(!confirm('Create '+PLAN.create.length+' payment ledger entries?\n\n'
+    +'₹'+Math.round(PLAN.create.reduce((s,o)=>s+n(o.paidAmount),0)).toLocaleString('en-IN')+' in total.\n'
+    +(noLink?(noLink+' have no customer link and will be created unlinked.\n'):'')
+    +'\nEach one is tagged so it can be identified and removed later if needed.\n'
+    +'The orders themselves are not changed.')) return;
+
+  $('b-wr').disabled=true;
+  let ok=0, failed=0; const fails=[];
+  for(let i=0;i<PLAN.create.length;i+=400){
+    const slice=PLAN.create.slice(i,i+400);
+    const batch=db.batch();
+    slice.forEach(o=>{
+      const id='BF-'+o._id;                      // deterministic — re-running overwrites, never duplicates
+      batch.set(db.collection('payments').doc(id), {
+        customerId: o.customerId||null,
+        customerNameAtImport: o.customerNameAtImport||'',
+        date: day(o.date),
+        amount: n(o.paidAmount),
+        mode: o.paymentMode||'',
+        notes: 'backfilled from order '+o._id+' — payment was recorded on the order, not in the ledger',
+        createdBy: 'backfill',
+        deleted: false,
+        source: 'order-backfill',
+        sourceOrderId: o._id,
+        backfilledAt: new Date().toISOString()
+      }, {merge:true});
+    });
+    try{ await batch.commit(); ok+=slice.length; log('  written '+ok+'/'+PLAN.create.length); }
+    catch(e){ failed+=slice.length; if(fails.length<5) fails.push(e.code||e.message); }
+  }
+  log('\n✔ '+ok+' ledger entries created'+(failed?(', '+failed+' failed: '+fails.join(', ')):''));
+  log('  Open Payments In in the app — June should now be there.');
+  log('  Every entry has source="order-backfill" and a sourceOrderId, so they can be found or undone.');
+  $('b-wr').disabled=false;
+}
+
+function dlCSV(){
+  if(!PLAN) return;
+  const L=[['BACKFILL PLAN', PLAN.from+' to '+PLAN.to],[],
+           ['ACTION','DATE','CUSTOMER','AMOUNT','MODE','ORDER ID']];
+  PLAN.create.forEach(o=>L.push(['CREATE',day(o.date),custName(o.customerId),Math.round(n(o.paidAmount)),o.paymentMode||'',o._id]));
+  PLAN.already.forEach(x=>L.push(['SKIP (already in ledger)',day(x.o.date),custName(x.o.customerId),Math.round(n(x.o.paidAmount)),'',x.o._id]));
+  PLAN.near.forEach(x=>L.push(['CHECK (near match)',day(x.o.date),custName(x.o.customerId),Math.round(n(x.o.paidAmount)),'ledger '+day(x.p.date),x.o._id]));
+  const csv='﻿'+L.map(r=>r.map(v=>{const s=String(v==null?'':v);return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s;}).join(',')).join('\r\n');
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));
+  a.download='gaavn_payment_backfill_plan.csv'; a.click();
+}
+</script>
+</body>
+</html>
