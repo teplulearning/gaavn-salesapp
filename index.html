@@ -269,7 +269,7 @@ body.gf-panel-open #app{ visibility:hidden; }
     <div class="top-bar-left">
       <span class="logo">🐄 GF</span>
       <span class="role-badge" id="role-badge">SALES</span>
-      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v182</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v184</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <button id="del-lang-btn" onclick="toggleDeliveryLang()" style="display:none;background:var(--blue);color:#fff;border:none;border-radius:14px;padding:4px 10px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;">मराठी</button>
@@ -497,6 +497,34 @@ body.gf-panel-open #app{ visibility:hidden; }
           <span id="fs-status-line" style="display:block;margin-top:6px;font-family:monospace;font-size:11px;color:#2E7D32;"></span>
         </span>
       </label>
+      <!-- v183 -->
+      <div style="border-top:1px solid rgba(46,125,50,.25);margin-top:10px;padding-top:10px;">
+        <div style="font-size:12px;line-height:1.6;color:#5D6B5D;">
+          <b>Orders you deleted before Firebase was switched on</b> are still remembered only on this
+          phone, so other phones — and the GST report — still count them. Send those deletions to
+          Firebase once and every device will agree.
+        </div>
+        <button onclick="fsPushLocalDeletions()" id="fs-push-del-btn"
+                style="margin-top:8px;background:#C62828;color:#fff;border:none;border-radius:9px;
+                       padding:10px 16px;font-size:13px;font-weight:700;">
+          ⬆ Send my deleted orders to Firebase
+        </button>
+        <div id="fs-push-del-msg" style="margin-top:8px;font-size:12px;line-height:1.6;"></div>
+      </div>
+      <!-- v184 -->
+      <div style="border-top:1px solid rgba(46,125,50,.25);margin-top:10px;padding-top:10px;">
+        <div style="font-size:12px;line-height:1.6;color:#5D6B5D;">
+          <b>Clients showing far more outstanding than they owe?</b> Payments made since the
+          migration reduced the balance in your Google Sheet but not in Firebase. This copies
+          every balance from the Sheet — the correct record — into Firebase.
+        </div>
+        <button onclick="fsRepairBalances()" id="fs-fix-bal-btn"
+                style="margin-top:8px;background:#1A527A;color:#fff;border:none;border-radius:9px;
+                       padding:10px 16px;font-size:13px;font-weight:700;">
+          ⬆ Copy balances from the Sheet to Firebase
+        </button>
+        <div id="fs-fix-bal-msg" style="margin-top:8px;font-size:12px;line-height:1.6;"></div>
+      </div>
     </div>
 
     <!-- Step cards -->
@@ -1699,6 +1727,121 @@ async function fsDeleteOrder(orderId){
     }, {merge:true});
     fsWriteOk();
   }catch(e){ fsWriteErr('delete '+orderId, e); }
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   v183 — send this phone's deletion history to Firebase, once.
+
+   Deletions made before v180 were recorded ONLY in this device's local
+   tombstone map (gf_deleted_orders). The Sheet's Deleted_Orders tab was
+   empty at migration time, so those orders were imported into Firestore
+   as deleted:false. Every phone therefore loads them; only the phone that
+   made the deletion hides them, using its local list. Hence two phones
+   reporting different July sales from the same data.
+
+   This writes deleted:true to Firestore for every tombstone held here.
+   It is safe to run twice — writing the same flag again changes nothing.
+   ══════════════════════════════════════════════════════════════════ */
+async function fsPushLocalDeletions(){
+  const msg = document.getElementById('fs-push-del-msg');
+  const btn = document.getElementById('fs-push-del-btn');
+  const show = h => { if(msg) msg.innerHTML = h; };
+
+  if(!fsReadsOn() || !FS.db || !FS.user){
+    show('<b style="color:#C62828;">Turn on “Read data from Firebase” and sign in first.</b>');
+    return;
+  }
+  const map = _deletedMap();
+  const ids = Object.keys(map);
+  if(!ids.length){ show('This phone has no deleted orders to send.'); return; }
+
+  if(!confirm('This phone remembers '+ids.length+' deleted order(s).\n\n'
+    +'Mark them deleted in Firebase so every phone and the GST report stop counting them?\n\n'
+    +'The orders are not erased — they are flagged, exactly as a deletion made today would be.')) return;
+
+  if(btn) btn.disabled = true;
+  let ok=0, missing=0, failed=0; const failIds=[];
+  for(let i=0;i<ids.length;i++){
+    const id = ids[i];
+    show('sending '+(i+1)+' of '+ids.length+'…');
+    try{
+      const ref = FS.db.collection('orders').doc(String(id));
+      const snap = await ref.get();
+      if(!snap.exists){ missing++; continue; }      // never migrated — nothing to flag
+      await ref.set({ deleted:true,
+                      deletedAt: (map[id] && map[id].ts) ? new Date(map[id].ts).toISOString() : new Date().toISOString(),
+                      deletedBy: String(STATE.role||''),
+                      deletedBackfill: true,
+                      updatedAt: new Date().toISOString() }, {merge:true});
+      ok++;
+    }catch(e){ failed++; if(failIds.length<8) failIds.push(id+' ('+(e.code||e.message)+')'); }
+  }
+  if(btn) btn.disabled = false;
+
+  let h = '<b style="color:#2E7D32;">✓ '+ok+' deletion(s) sent to Firebase.</b>';
+  if(missing) h += '<br><span style="color:#8A8070;">'+missing+' were not in Firebase at all — nothing to flag, which is fine.</span>';
+  if(failed)  h += '<br><span style="color:#C62828;"><b>'+failed+' failed:</b><br>'+failIds.join('<br>')
+                 + (failed>failIds.length?'<br>…and more':'') + '</span>';
+  if(ok && !failed) h += '<br>Every phone should now show the same July total. Re-open the report to check.';
+  show(h);
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   v184 — repair the balances already wrong in Firestore.
+
+   Reads the Customers tab of the Google Sheet (the authoritative record —
+   every device has been writing balances there via setBalance) and copies
+   each balance into Firestore. Safe to run repeatedly.
+   ══════════════════════════════════════════════════════════════════ */
+async function fsRepairBalances(){
+  const msg=document.getElementById('fs-fix-bal-msg');
+  const btn=document.getElementById('fs-fix-bal-btn');
+  const show=h=>{ if(msg) msg.innerHTML=h; };
+
+  if(!fsReadsOn() || !FS.db || !FS.user){
+    show('<b style="color:#C62828;">Turn on “Read data from Firebase” and sign in first.</b>'); return; }
+  const url=getSheetUrl();
+  if(!url){ show('<b style="color:#C62828;">No Google Sheet URL set in Setup.</b>'); return; }
+
+  if(!confirm('Read every customer balance from the Google Sheet and copy it into Firebase?\n\n'
+    +'The Sheet is the correct record — it has been updated by every phone on every payment.\n'
+    +'Firebase still holds the balances from migration day, which is why dues look too high.')) return;
+
+  if(btn) btn.disabled=true;
+  try{
+    show('reading the Sheet…');
+    const r=await fetch(_withKey(url+'?action=getCustomers'),{cache:'no-store'});
+    const j=await r.json();
+    if(j && j.error){ show('<b style="color:#C62828;">The Sheet refused: '+j.error+'</b>'); return; }
+    const list=(j&&j.customers)||[];
+    if(!list.length){ show('<b style="color:#C62828;">The Sheet returned 0 customers.</b>'); return; }
+
+    let ok=0, skipped=0, failed=0, changed=0; const fails=[];
+    for(let i=0;i<list.length;i++){
+      const c=list[i];
+      if(!c || !c.id){ skipped++; continue; }
+      if(i%25===0) show('writing '+(i+1)+' of '+list.length+'…');
+      const sheetBal=parseFloat(c.balance)||0;
+      try{
+        const ref=FS.db.collection('customers').doc(String(c.id));
+        const snap=await ref.get();
+        const wasBal = snap.exists ? (parseFloat(snap.data().balance)||0) : null;
+        if(wasBal!==null && Math.abs(wasBal-sheetBal)>0.5) changed++;
+        await ref.set({ balance: sheetBal,
+                        balanceAsOf: c.balanceAsOf || (snap.exists? (snap.data().balanceAsOf||null) : null),
+                        balanceRepairedAt: new Date().toISOString() }, {merge:true});
+        ok++;
+      }catch(e){ failed++; if(fails.length<6) fails.push(c.id+' ('+(e.code||e.message)+')'); }
+    }
+    let h='<b style="color:#2E7D32;">✓ '+ok+' customer balance(s) written to Firebase.</b>'
+        + '<br><b>'+changed+'</b> of them were actually wrong in Firebase and are now corrected.';
+    if(skipped) h+='<br><span style="color:#8A8070;">'+skipped+' skipped (no id).</span>';
+    if(failed)  h+='<br><span style="color:#C62828;"><b>'+failed+' failed:</b><br>'+fails.join('<br>')+'</span>';
+    h+='<br>Open the Clients screen — the outstandings should now match what your customers actually owe.';
+    show(h);
+  }catch(e){
+    show('<b style="color:#C62828;">Could not reach the Sheet — '+e.message+'</b>');
+  }finally{ if(btn) btn.disabled=false; }
 }
 
 function fsShowLogin(){
@@ -9831,6 +9974,17 @@ function applyBalanceChange(cust){
   d[cust.id]={balance:parseFloat(cust.balance)||0, name:cust.name||'', ts:Date.now()};
   _balDirtySave(d);
   try{ flushDirtyBalances(); }catch(e){}
+  /* v184 FIX — this was the whole "clients owe far too much" bug.
+     Every payment reduces the balance through here. It wrote to localStorage
+     and, via flushDirtyBalances(), to the Google Sheet with action=setBalance.
+     It never touched Firestore, because the only fsWriteCustomer() call sat in
+     syncCustomerToSheet(), which is the customer-EDIT path (name, category,
+     pricing) and is not on the payment path at all.
+     Result: since the migration, every collection reduced the balance on the
+     phone and in the Sheet while Firestore kept the opening balance from
+     migration day. Any phone reading Firestore showed dues that had already
+     been paid. */
+  try{ fsWriteCustomer(cust); }catch(e){}
 }
 let _balFlushing=false;
 async function flushDirtyBalances(){
@@ -9850,7 +10004,10 @@ async function flushDirtyBalances(){
       try{
         const r=await fetch(url+'?action=setBalance&id='+encodeURIComponent(id)+'&name='+encodeURIComponent(nm)+'&balance='+encodeURIComponent(bal),{cache:'no-store'});
         const d=await r.json();
-        if(d && d.status==='ok'){ delete dirty[id]; }
+        if(d && d.status==='ok'){
+          delete dirty[id];
+          if(c){ try{ fsWriteCustomer(c); }catch(e){} }   // v184
+        }
         // any error (old script without setBalance, offline blip) → stays
         // dirty: the local value keeps winning until the write succeeds.
       }catch(e){}
