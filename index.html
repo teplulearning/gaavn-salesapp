@@ -269,7 +269,7 @@ body.gf-panel-open #app{ visibility:hidden; }
     <div class="top-bar-left">
       <span class="logo">🐄 GF</span>
       <span class="role-badge" id="role-badge">SALES</span>
-      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v185</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v187</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <button id="del-lang-btn" onclick="toggleDeliveryLang()" style="display:none;background:var(--blue);color:#fff;border:none;border-radius:14px;padding:4px 10px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;">मराठी</button>
@@ -525,7 +525,7 @@ body.gf-panel-open #app{ visibility:hidden; }
         </button>
         <div id="fs-fix-bal-msg" style="margin-top:8px;font-size:12px;line-height:1.6;"></div>
       </div>
-      <!-- v185 -->
+      <!-- v187 -->
       <div style="border-top:1px solid rgba(46,125,50,.25);margin-top:10px;padding-top:10px;">
         <div style="font-size:12px;line-height:1.6;color:#5D6B5D;">
           <b>Phone still showing an old version number?</b> The offline cache is serving a stale copy.
@@ -1465,6 +1465,34 @@ let FS={app:null, auth:null, db:null, user:null, role:null, ready:false,
         unsub:[], custById:{}, lastError:'', ordersUnsub:null, windowFrom:''};
 
 function fsReadsOn(){ return localStorage.getItem(LS_FS_READS)==='1'; }
+
+/* ── v186: STATE.orders single-writer lock ─────────────────────────────────
+   When Firebase is the source of truth, the Firestore listener in
+   fsStartOrdersListener() is the ONLY thing allowed to put orders into
+   STATE.orders. Every other path in this app — the localStorage day-caches,
+   the Sheet loaders, the shared-code importer — was written for the Sheet era
+   and MERGES rather than replaces. With the listener also running they layer
+   extra copies on top of it, which is why this phone reported 1458 orders
+   while Firestore held 912, and why two phones on the same database showed
+   different sales totals.
+
+   localStorage is still written (it is the offline backup and the Sheet-era
+   fallback if the Firebase switch is turned off) — it is simply never read
+   back INTO STATE while Firebase owns the list.
+
+   Offline-created orders are safe: FS.db.enablePersistence() is on, so
+   Firestore queues the write in IndexedDB and onSnapshot reflects it
+   immediately via latency compensation, even with no network. */
+function fsIsLive(){
+  try{ return fsReadsOn() && !!(FS && FS.db && FS.user); }catch(e){ return false; }
+}
+function fsOwnsOrders(){ return fsIsLive(); }   // orders  — listener is sole writer
+function fsOwnsPayments(){ return fsIsLive(); } // payments — listener is sole writer
+let FS_BLOCKED={merges:0, orders:0, where:''};
+function _fsBlock(where, count){
+  if(!count) return;
+  FS_BLOCKED.merges++; FS_BLOCKED.orders+=count; FS_BLOCKED.where=where;
+}
 function fsInit(){
   if(FS.app) return true;
   if(typeof firebase==='undefined'){ FS.lastError='Firebase library did not load'; return false; }
@@ -1522,6 +1550,13 @@ function fsRepaint(){
   try{ if(typeof renderOrdersList==='function')   renderOrdersList();   }catch(e){}
   try{ if(typeof renderDues==='function')         renderDues();         }catch(e){}
   try{ if(typeof renderDashboard==='function')    renderDashboard();    }catch(e){}
+  /* v187 BUG FIX: the payments listener called fsRepaint() after setting
+     STATE.payments, but fsRepaint() never repainted the Payments In screen or
+     the Sales & Collections report. If you were sitting on Payments In when the
+     data arrived — which is exactly what happens after a backfill — the screen
+     kept showing the old list until you navigated away and back. */
+  try{ if(typeof renderPaymentIn==='function')    renderPaymentIn();    }catch(e){}
+  try{ if(typeof renderReport==='function')       renderReport();       }catch(e){}
 }
 
 function fsStopListening(){ FS.unsub.forEach(function(u){ try{u();}catch(e){} }); FS.unsub=[]; }
@@ -2720,6 +2755,7 @@ function initApp() {
            +' · '+(STATE.customers||[]).length+' customers, '+(STATE.orders||[]).length+' orders live'
            +' · orders from '+(FS.windowFrom||'?')
            +' · saved to Firebase: '+FS_WRITES.ok
+           +(FS_BLOCKED.merges?(' · legacy merges blocked: '+FS_BLOCKED.merges):'')
            +(FS_WRITES.failed?(', FAILED '+FS_WRITES.failed):'')
            +(FS_WRITES.lastErr?(' · '+FS_WRITES.lastErr):'')
            +(FS.lastError?(' · read error: '+FS.lastError):''))
@@ -2798,6 +2834,13 @@ function saveOrders() {
     }
   });
 
+  // v186: this merge-back was the single biggest source of order inflation.
+  // Every save re-read the whole localStorage history and pushed it into
+  // STATE on top of whatever the Firestore listener had just set.
+  if(fsOwnsOrders()){
+    _fsBlock('saveOrders', Math.max(0, Object.keys(allOrders).length - STATE.orders.length));
+    return;
+  }
   // Update STATE.orders to include everything (so My Orders shows all)
   const merged = Object.values(allOrders);
   if(merged.length > STATE.orders.length) {
@@ -3148,8 +3191,10 @@ function filterOrders(f, btn) {
 
 function renderOrdersList() {
   // Merge any localStorage orders not yet in STATE.orders (e.g. from previous sessions)
+  // v186: skipped entirely when Firebase owns the list.
   const existingIds = new Set(STATE.orders.map(o=>o.id));
-  for(let i=0; i<localStorage.length; i++) {
+  const _fsOwn = fsOwnsOrders();
+  for(let i=0; !_fsOwn && i<localStorage.length; i++) {
     const key = localStorage.key(i);
     if(!key || !key.startsWith(LS_PREFIX)) continue;
     const date = key.slice(LS_PREFIX.length);
@@ -3176,8 +3221,27 @@ function renderOrdersList() {
   if(currentFilter!=='all') orders = orders.filter(o=>o.status===currentFilter);
 
   const list = document.getElementById('orders-list');
+
+  /* v186 (DevNotes Rule 14): say where this list came from. If the Firebase
+     switch is on but the listener is not live, what you are looking at is this
+     phone's local cache — which is exactly the stale, inflated list we just
+     stopped merging. It must never look like live data. */
+  let _srcBanner = '';
+  if(fsReadsOn() && !fsOwnsOrders()){
+    const _why = !FS.user ? 'not signed in to Firebase'
+               : (FS.lastError ? ('Firebase read error: '+FS.lastError) : 'Firebase still connecting');
+    _srcBanner = '<div style="background:#fdecea;border:1.5px solid #e57373;border-radius:10px;'
+      +'padding:9px 12px;margin-bottom:10px;font-size:12px;color:#b71c1c;line-height:1.45;">'
+      +'<b>⚠ Showing this phone\'s saved copy, not live data</b><br>'+_why
+      +' — these figures may be out of date or duplicated. Do not report from this screen.</div>';
+  }
+
   if(!orders.length) {
-    list.innerHTML = '<div class="empty-state"><div class="empty-icon">📦</div><p>No orders</p></div>';
+    const _emptyWhy = fsOwnsOrders()
+      ? ('Nothing in Firebase from '+(FS.windowFrom||'?')+' onwards for this filter.')
+      : (fsReadsOn() ? 'Waiting for Firebase.' : 'Nothing saved on this phone yet.');
+    list.innerHTML = _srcBanner+'<div class="empty-state"><div class="empty-icon">📦</div>'
+      +'<p>No orders</p><p style="font-size:12px;color:var(--muted);">'+_emptyWhy+'</p></div>';
     return;
   }
 
@@ -3200,7 +3264,7 @@ function renderOrdersList() {
   const totalOrders = orders.length;
   const totalValue  = orders.reduce((s,o)=>s+(o.total||0),0);
   const totalDays   = dates.length;
-  let html = '';
+  let html = _srcBanner;
   if(totalOrders > 0) {
     const scrollHint = totalDays > 1 ? ' · '+totalDays+' days — scroll ↓' : '';
     // v169: the delivery person does not need day/period revenue totals — she
@@ -4023,6 +4087,13 @@ function deleteOrderFromHistory(orderId, orderDate) {
 function openEditOrder(orderId) {
   // First check STATE.orders (in-memory), then fall back to searching all localStorage date keys
   let o = STATE.orders.find(x=>x.id===orderId);
+  // v186: when Firebase owns the list, an order that is not in STATE is not in
+  // the live window. Pulling a stale localStorage copy back in would both
+  // inflate the count and let you edit a version Firebase has never seen.
+  if(!o && fsOwnsOrders()){
+    showToast('That order is outside the live window (from '+(FS.windowFrom||'?')+') — edit it in the Sheet');
+    return;
+  }
   if(!o) {
     // Search all stored date keys - handles orders loaded from sheet or not in STATE
     for(let i=0; i<localStorage.length; i++) {
@@ -7803,6 +7874,13 @@ function openLoadOrders() {
 }
 
 function loadOrdersFromCode() {
+  // v186: the shared-code importer is a Sheet-era transfer mechanism. With
+  // Firebase on, every phone already sees the same orders, and importing a
+  // code would create copies Firestore does not have.
+  if(fsOwnsOrders()){
+    showToast('Not needed — all phones already share the same orders via Firebase');
+    return;
+  }
   const txt = document.getElementById('load-orders-text').value.trim();
   if(!txt){ showToast('Paste the order code first'); return; }
   try {
@@ -8355,6 +8433,13 @@ function renderGSTManualItems() {
 
 // ── LOAD ALL DATES IN GST RANGE FROM SHEET ───────────────────────────
 async function loadRangeFromSheet() {
+  // v186: this pulled Sheet rows for an arbitrary range straight into
+  // STATE.orders. getAllOrdersInRange() treats STATE.orders as the live truth
+  // when Firebase is on, so those rows would have inflated the GST report.
+  if(fsOwnsOrders()){
+    showToast('Firebase is live — the report already covers orders from '+(FS.windowFrom||'?'));
+    return;
+  }
   const from = document.getElementById('gst-from').value;
   const to   = document.getElementById('gst-to').value;
   if(!from || !to) { showToast('Select date range first'); return; }
@@ -9571,6 +9656,7 @@ async function doResubmitDay() {
 
 function loadAllPastOrders() {
   // Load ALL orders from all date keys for sales/owner role
+  if(fsOwnsOrders()) return;   // v186 — listener already holds the full window
   const todayIds = new Set(STATE.orders.map(o => o.id));
   let added = 0;
   const keys = [];
@@ -9599,6 +9685,7 @@ function loadAllPastOrders() {
 }
 
 function loadPastDuesForDelivery() {
+  if(fsOwnsOrders()) return;   // v186 — listener already holds the full window
   const todayIds = new Set(STATE.orders.map(o => o.id));
   let added = 0;
   // Scan all stored date keys
@@ -9693,6 +9780,33 @@ function renderPaymentIn() {
   if(el_m) el_m.textContent = '₹'+(monthTotal/1000).toFixed(1)+'k';
   if(el_c) el_c.textContent = payments.length;
 
+  /* v187 (Rule 14): state plainly what this ledger contains and where it came
+     from, including the earliest entry and a per-month breakdown. After the June
+     backfill the only way to know whether 423 entries actually arrived was to
+     scroll — now the screen says so. */
+  let _piBanner = '';
+  {
+    const _all = STATE.payments || [];
+    const _dates = _all.map(p=>p&&p.date).filter(Boolean).sort();
+    const _byMonth = {};
+    _all.forEach(p=>{ const m=String(p&&p.date||'').slice(0,7); if(m) _byMonth[m]=(_byMonth[m]||0)+1; });
+    const _months = Object.keys(_byMonth).sort().slice(-4)
+                      .map(m=>m+': '+_byMonth[m]).join(' \u00B7 ');
+    const _live = fsOwnsPayments();
+    const _src  = _live ? 'live from Firebase'
+                 : (fsReadsOn() ? (!FS.user ? 'NOT signed in to Firebase — this phone\'s saved copy'
+                                            : 'Firebase connecting — this phone\'s saved copy')
+                                : 'this phone + Sheet');
+    _piBanner = '<div style="background:'+(_live?'var(--surface2)':'#fdecea')
+      +';border:1.5px solid '+(_live?'var(--border)':'#e57373')
+      +';border-radius:10px;padding:8px 12px;margin-bottom:10px;font-size:11.5px;'
+      +'color:'+(_live?'var(--muted)':'#b71c1c')+';line-height:1.5;">'
+      +'<b>'+_all.length+' entries</b> \u00B7 '+_src
+      +(_dates.length ? '<br>earliest '+_dates[0]+' \u00B7 latest '+_dates[_dates.length-1] : '')
+      +(_months ? '<br>'+_months : '')
+      +'</div>';
+  }
+
   // Apply filter
   if(_piFilter==='today')  payments = payments.filter(p=>p.date===todayStr);
   if(_piFilter==='week') {
@@ -9708,7 +9822,7 @@ function renderPaymentIn() {
   const list = document.getElementById('pi-list');
   if(!list) return;
   if(!payments.length) {
-    list.innerHTML = '<div class="empty-state"><div class="empty-icon">💳</div><p>No payments recorded yet</p><p style="font-size:12px;margin-top:8px;">Tap <b>+ Record</b> to add a payment</p></div>';
+    list.innerHTML = _piBanner+'<div class="empty-state"><div class="empty-icon">💳</div><p>No payments in this filter</p><p style="font-size:12px;margin-top:8px;">Tap <b>+ Record</b> to add a payment</p></div>';
     return;
   }
 
@@ -9720,7 +9834,7 @@ function renderPaymentIn() {
     byDate[d].push(p);
   });
 
-  list.innerHTML = Object.entries(byDate).map(([date, entries])=>{
+  list.innerHTML = _piBanner + Object.entries(byDate).map(([date, entries])=>{
     const dayTotal = entries.reduce((s,p)=>s+(p.amount||0),0);
     const d = new Date(date+'T00:00:00');
     const dateLabel = d.toLocaleDateString('en-IN',{weekday:'short',day:'numeric',month:'short',year:'numeric'});
@@ -10243,6 +10357,12 @@ function showPaymentUploadPreview(rows) {
 
 function confirmPaymentUpload() {
   if(!_uploadedPayments.length) return;
+  // v187: same single-writer rule as orders. With Firebase live, an uploaded
+  // sheet would add ledger rows Firestore does not have, on this phone only.
+  if(fsOwnsPayments()){
+    showToast('Firebase is live — record payments in the app so every phone sees them');
+    return;
+  }
   // Merge, avoid duplicates by id
   const existingIds = new Set(STATE.payments.map(p=>p.id));
   let added = 0;
@@ -10856,6 +10976,7 @@ function renderReport(){
 // pull other phones' payment-ledger entries from the Sheet (Payments_ tabs)
 let _repPulling=false;
 async function _repPullPayments(){
+  if(fsOwnsPayments()) return;   // v187 — Sheet must not add ledger rows while Firebase owns them
   if(_repPulling) return; _repPulling=true;
   try{
     const url=getSheetUrl(); if(!url||!navigator.onLine) return;
@@ -11013,7 +11134,8 @@ document.addEventListener('visibilitychange', function() {
   if(document.visibilityState === 'hidden') {
     if(typeof saveOrderDraft === 'function') saveOrderDraft();
   }
-  if(document.visibilityState === 'visible' && STATE && STATE.role) {
+  if(document.visibilityState === 'visible' && STATE && STATE.role && !fsOwnsOrders()) {
+    // v186: with Firebase on, the listener re-delivers on resume by itself.
     var existingIds = new Set(STATE.orders.map(function(o){return o.id;}));
     for(var i=0; i<localStorage.length; i++) {
       var key = localStorage.key(i);
@@ -11204,6 +11326,7 @@ window.addEventListener('pageshow', function(e) {
 
 // ── SYNC ORDERS FROM SHEET ───────────────────────────────────────────
 async function syncOrdersFromSheet() {
+  if(fsOwnsOrders()) return;   // v186 — Sheet must not feed STATE while Firebase owns it
   const url = STATE.sheetUrl || DEFAULT_SHEET_URL;
   if(!url) return;
   try {
