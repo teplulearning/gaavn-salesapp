@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Gaavn Fresh — Merge Duplicate Customers v1</title>
+<style>
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+       max-width:1000px;margin:0 auto;padding:18px;background:#FAF7F2;color:#2B2118;}
+  h1{font-size:20px;margin:0 0 4px;}
+  .sub{font-size:13px;color:#7A6A58;margin-bottom:14px;line-height:1.5;}
+  .warn{background:#FFF8E1;border:1.5px solid #FFB300;border-radius:10px;
+        padding:10px 14px;font-size:13px;margin-bottom:14px;color:#7A5200;line-height:1.5;}
+  .card{background:#fff;border:1.5px solid #E5DCCF;border-radius:12px;padding:16px;margin-bottom:14px;}
+  label{display:block;font-size:12px;font-weight:700;margin:10px 0 4px;color:#5A4A38;}
+  input[type=text],input[type=password]{width:100%;padding:10px;border:1.5px solid #E5DCCF;
+        border-radius:8px;font-size:15px;box-sizing:border-box;}
+  button{background:#C87A2E;color:#fff;border:0;border-radius:8px;padding:12px 18px;
+         font-size:15px;font-weight:700;cursor:pointer;margin-top:12px;margin-right:8px;}
+  button:disabled{opacity:.45;cursor:default;}
+  #apply{background:#B3261E;}
+  .grp{border:1.5px solid #E5DCCF;border-radius:10px;padding:12px;margin-bottom:10px;background:#fff;}
+  .grp.high{border-color:#66BB6A;background:#F6FBF6;}
+  .grp.med{border-color:#FFB300;background:#FFFDF5;}
+  .why{font-size:11px;font-weight:700;margin-bottom:8px;}
+  .high .why{color:#2E7D32;} .med .why{color:#B26A00;}
+  .row{display:flex;align-items:flex-start;gap:8px;padding:6px 0;border-top:1px dashed #E5DCCF;}
+  .row:first-of-type{border-top:0;}
+  .nm{font-weight:700;font-size:14px;}
+  .meta{font-size:11.5px;color:#7A6A58;}
+  pre{background:#22201D;color:#E8E2D8;padding:14px;border-radius:10px;font-size:12px;
+      line-height:1.55;white-space:pre-wrap;overflow:auto;max-height:50vh;}
+</style>
+</head>
+<body>
+
+<h1>Merge duplicate customers</h1>
+<div class="sub">
+  Finds duplicates that the in-app tool misses, and — unlike the in-app tool —
+  actually moves the orders and payments <b>in Firestore</b>, so the merge sticks.
+</div>
+
+<div class="warn">
+  <b>Why your earlier merges came back.</b> The in-app merge reassigns orders and
+  payments in memory only — there is no <code>fsWriteOrder</code> or
+  <code>fsWritePayment</code> in it. And the "⛔ merged" rename only started
+  reaching Firestore in v184. Anything you merged before that was written to this
+  phone and the Sheet, never to Firebase — so the next snapshot restored the
+  originals. Use this tool instead, and do not press Merge in the app.
+</div>
+
+<div class="card">
+  <label>Firebase username</label>
+  <input type="text" id="u" placeholder="your gmail address" autocomplete="username">
+  <label>Firebase password</label>
+  <input type="password" id="p" autocomplete="current-password">
+  <button id="scan">1 · Scan for duplicates</button>
+  <button id="dry" disabled>2 · Dry run</button>
+  <button id="apply" disabled>3 · Apply the merges</button>
+</div>
+
+<div id="groups"></div>
+<pre id="out">Waiting…</pre>
+
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<script>
+const CFG={apiKey:"AIzaSyAI8NvjxdcmoG2UinhJ0LZ0EdL18b-foZ0",
+  authDomain:"gaavnfresh-sales.firebaseapp.com",projectId:"gaavnfresh-sales",
+  storageBucket:"gaavnfresh-sales.firebasestorage.app",
+  messagingSenderId:"974451495449",appId:"1:974451495449:web:3985b05c49e52b5fbad088"};
+const LOGIN_DOMAIN='@gaavnfresh.invalid';
+const out=document.getElementById('out');
+let buf=[]; function log(s){ buf.push(s===undefined?'':s); out.textContent=buf.join('\n'); }
+function rs(n){ return 'Rs '+Math.round(n||0).toLocaleString('en-IN'); }
+function normDay(d){ d=String(d||'').trim();
+  if(d.indexOf('T')>0){const x=new Date(d); if(!isNaN(x)) return x.toISOString().slice(0,10);}
+  const m=d.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if(m) return m[3]+'-'+String(m[2]).padStart(2,'0')+'-'+String(m[1]).padStart(2,'0');
+  return d.slice(0,10); }
+
+let DB=null, CUST={}, ORD=[], PAY=[], GROUPS=[];
+
+/* Words that appear in dozens of names and therefore prove nothing. */
+const STOP=new Set(['hotel','hotels','dairy','dairies','shop','store','stores','sweets',
+  'sweet','farsan','misal','restaurant','resturant','pure','veg','enterprises','enterprise',
+  'and','the','mini','market','sir','mam','katta','corner','new','shree','shri','sree']);
+
+function tokens(name){
+  return String(name||'').toLowerCase().replace(/[^a-z0-9\s]+/g,' ')
+    .split(/\s+/).filter(t=>t.length>=4 && !STOP.has(t));
+}
+function compress(name){
+  return String(name||'').toLowerCase().replace(/[^a-z0-9]+/g,'')
+    .replace(/(hotel|shop|dairy|store|enterprises|enterprise)/g,'');
+}
+
+document.getElementById('scan').onclick=async function(){
+  const btn=this; btn.disabled=true; buf=[]; log('Signing in…');
+  try{
+    if(!DB){ firebase.initializeApp(CFG); }
+    const auth=firebase.auth(); DB=firebase.firestore();
+    let u=document.getElementById('u').value.trim();
+    if(u.indexOf('@')<0) u=u.toLowerCase()+LOGIN_DOMAIN;
+    await auth.signInWithEmailAndPassword(u, document.getElementById('p').value);
+
+    CUST={}; ORD=[]; PAY=[];
+    (await DB.collection('customers').get()).forEach(d=>{ const x=d.data()||{};
+      CUST[d.id]={id:d.id,name:String(x.name||''),balance:parseFloat(x.balance)||0,
+                  area:String(x.area||''),merged:/^⛔/.test(String(x.name||''))}; });
+    (await DB.collection('orders').get()).forEach(d=>{ const x=d.data()||{};
+      if(x.deleted===true) return;
+      ORD.push({id:d.id,cust:x.customerId||'',date:normDay(x.date),total:parseFloat(x.total)||0}); });
+    (await DB.collection('payments').get()).forEach(d=>{ const x=d.data()||{};
+      if(x.deleted===true) return;
+      PAY.push({id:d.id,cust:x.customerId||'',amt:parseFloat(x.amount)||0}); });
+
+    const stat={};
+    Object.keys(CUST).forEach(id=>stat[id]={o:0,ov:0,p:0,pv:0,last:''});
+    ORD.forEach(o=>{ const s=stat[o.cust]; if(!s) return;
+      s.o++; s.ov+=o.total; if(o.date>s.last) s.last=o.date; });
+    PAY.forEach(p=>{ const s=stat[p.cust]; if(!s) return; s.p++; s.pv+=p.amt; });
+
+    // token rarity across the whole book — a shared common word proves nothing
+    const freq={};
+    Object.values(CUST).forEach(c=>{ new Set(tokens(c.name)).forEach(t=>freq[t]=(freq[t]||0)+1); });
+
+    const ids=Object.keys(CUST).filter(id=>!CUST[id].merged);
+    const parent={}; ids.forEach(i=>parent[i]=i);
+    const find=a=>{ while(parent[a]!==a){ parent[a]=parent[parent[a]]; a=parent[a]; } return a; };
+    const uni=(a,b)=>{ a=find(a); b=find(b); if(a!==b) parent[b]=a; };
+    const reason={};
+
+    for(let i=0;i<ids.length;i++){
+      for(let j=i+1;j<ids.length;j++){
+        const A=CUST[ids[i]], B=CUST[ids[j]];
+        const ka=compress(A.name), kb=compress(B.name);
+        let why='';
+        if(ka && ka===kb) why='same name once punctuation and spacing are removed';
+        else {
+          const short=ka.length<=kb.length?ka:kb, long=ka.length<=kb.length?kb:ka;
+          if(short.length>=8 && short!==long && long.indexOf(short)===0)
+            why='one name is the other plus extra words';
+          else {
+            const ta=new Set(tokens(A.name)), tb=tokens(B.name);
+            const shared=tb.filter(t=>ta.has(t));
+            const rare=shared.filter(t=>freq[t]<=3);
+            if(rare.length>=1) why='shares the uncommon word "'+rare.join('", "')+'"';
+            else if(shared.length>=2) why='shares "'+shared.join('", "')+'"';
+          }
+        }
+        if(why){ uni(ids[i],ids[j]); const k=find(ids[i]); reason[k]=reason[k]||why; }
+      }
+    }
+    const comp={};
+    ids.forEach(i=>{ const r=find(i); (comp[r]=comp[r]||[]).push(i); });
+    GROUPS=Object.entries(comp).filter(([r,m])=>m.length>1)
+      .map(([r,m])=>({why:reason[r]||'similar names', members:m, stat:stat}));
+
+    render(stat);
+    log('customers '+Object.keys(CUST).length+' · orders '+ORD.length+' · payments '+PAY.length);
+    log('');
+    log(GROUPS.length+' duplicate group(s) found, covering '
+        +GROUPS.reduce((s,g)=>s+g.members.length,0)+' records.');
+    log('');
+    log('Review each group above. Untick anything that is genuinely a different');
+    log('shop. Then press Dry run — nothing is written until you press Apply.');
+    document.getElementById('dry').disabled=GROUPS.length===0;
+  }catch(e){ log('ERROR: '+(e&&e.message||e)); }
+  btn.disabled=false;
+};
+
+function render(stat){
+  const box=document.getElementById('groups');
+  box.innerHTML=GROUPS.map((g,gi)=>{
+    const high=/same name once/.test(g.why);
+    // default keeper = most recent order, then most orders, then biggest balance
+    let best=g.members[0];
+    g.members.forEach(id=>{
+      const a=stat[id], b=stat[best];
+      if(a.last>b.last || (a.last===b.last && a.o>b.o) ||
+         (a.last===b.last && a.o===b.o && CUST[id].balance>CUST[best].balance)) best=id;
+    });
+    return '<div class="grp '+(high?'high':'med')+'">'
+      +'<div class="why">'+(high?'✔ ':'⚠ ')+g.why+'</div>'
+      +g.members.map(id=>{
+        const c=CUST[id], s=stat[id];
+        return '<div class="row">'
+          +'<input type="checkbox" checked data-g="'+gi+'" data-id="'+id+'" class="inc">'
+          +'<input type="radio" name="keep'+gi+'" value="'+id+'"'+(id===best?' checked':'')+'>'
+          +'<div><div class="nm">'+c.name+'</div>'
+          +'<div class="meta">'+id+' · '+s.o+' order(s) '+rs(s.ov)+' · '+s.p+' payment(s) '
+          +rs(s.pv)+' · balance '+rs(c.balance)
+          +(s.last?(' · last order '+s.last):' · no orders')+'</div></div></div>';
+      }).join('')
+      +'<div class="meta" style="margin-top:6px;">Radio = the record to KEEP. Untick any row that is a different shop.</div>'
+      +'</div>';
+  }).join('');
+}
+
+function plan(){
+  const out=[];
+  GROUPS.forEach((g,gi)=>{
+    const inc=[...document.querySelectorAll('.inc[data-g="'+gi+'"]')]
+      .filter(x=>x.checked).map(x=>x.dataset.id);
+    const keepEl=document.querySelector('input[name="keep'+gi+'"]:checked');
+    if(!keepEl) return;
+    const keep=keepEl.value;
+    if(inc.indexOf(keep)<0) return;
+    const losers=inc.filter(i=>i!==keep);
+    if(!losers.length) return;
+    out.push({keep:keep, losers:losers});
+  });
+  return out;
+}
+
+document.getElementById('dry').onclick=function(){
+  buf=[]; const P=plan();
+  log('════ DRY RUN — nothing has been written ════'); log('');
+  if(!P.length){ log('Nothing selected to merge.'); return; }
+  let tO=0,tP=0,tB=0;
+  P.forEach(x=>{
+    const kc=CUST[x.keep];
+    log('KEEP  '+kc.name+'  ('+x.keep+')');
+    x.losers.forEach(l=>{
+      const o=ORD.filter(r=>r.cust===l).length, p=PAY.filter(r=>r.cust===l).length;
+      tO+=o; tP+=p; tB+=CUST[l].balance;
+      log('  <- '+CUST[l].name+'  ('+l+')   '+o+' order(s), '+p+' payment(s), balance '+rs(CUST[l].balance));
+    });
+    const nb=kc.balance+x.losers.reduce((s,l)=>s+CUST[l].balance,0);
+    log('  new balance on the kept record: '+rs(kc.balance)+' + '
+        +rs(nb-kc.balance)+' = '+rs(nb));
+    log('');
+  });
+  log('────────────────────────────────────────');
+  log('groups to merge ........ '+P.length);
+  log('records to retire ...... '+P.reduce((s,x)=>s+x.losers.length,0));
+  log('orders to reassign ..... '+tO);
+  log('payments to reassign ... '+tP);
+  log('balance moved .......... '+rs(tB));
+  log('');
+  log('Retired records are renamed "⛔ merged → …" and set to zero balance.');
+  log('Nothing is deleted. Press Apply to write this to Firebase.');
+  document.getElementById('apply').disabled=false;
+};
+
+document.getElementById('apply').onclick=async function(){
+  const P=plan();
+  if(!P.length) return;
+  if(!confirm('Write '+P.length+' merge(s) to Firebase?\n\nThis reassigns orders and payments and cannot be undone automatically.')) return;
+  const btn=this; btn.disabled=true;
+  log(''); log('════ APPLYING ════');
+  try{
+    for(const x of P){
+      const kc=CUST[x.keep];
+      const moves=[];
+      x.losers.forEach(l=>{
+        ORD.filter(r=>r.cust===l).forEach(r=>moves.push({col:'orders',id:r.id}));
+        PAY.filter(r=>r.cust===l).forEach(r=>moves.push({col:'payments',id:r.id}));
+      });
+      for(let i=0;i<moves.length;i+=400){
+        const b=DB.batch();
+        moves.slice(i,i+400).forEach(m=>{
+          b.set(DB.collection(m.col).doc(m.id),
+                {customerId:x.keep, mergedAt:new Date().toISOString()},{merge:true});
+        });
+        await b.commit();
+        log('  '+kc.name+' — reassigned '+Math.min(i+400,moves.length)+'/'+moves.length);
+      }
+      const nb=kc.balance+x.losers.reduce((s,l)=>s+CUST[l].balance,0);
+      const b2=DB.batch();
+      b2.set(DB.collection('customers').doc(x.keep),
+        {balance:nb, updatedAt:new Date().toISOString()},{merge:true});
+      x.losers.forEach(l=>{
+        b2.set(DB.collection('customers').doc(l),
+          {name:'⛔ merged → '+kc.name+' ('+CUST[l].name+')', balance:0,
+           mergedInto:x.keep, updatedAt:new Date().toISOString()},{merge:true});
+      });
+      await b2.commit();
+      log('✓ '+kc.name+' — balance now '+rs(nb)+', '+x.losers.length+' record(s) retired');
+    }
+    log(''); log('════ DONE ════');
+    log('Re-run the export tool before filling the worksheet — the balances have moved.');
+  }catch(e){ log('ERROR: '+(e&&e.message||e)); btn.disabled=false; }
+};
+</script>
+</body>
+</html>
