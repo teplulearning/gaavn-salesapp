@@ -105,12 +105,12 @@ function onPick(e){
   const f=e.target.files[0]; if(!f) return;
   const img=new Image();
   img.onload=function(){
-    const MAX=1600;
+    const MAX=1100;
     let w=img.width, h=img.height;
     if(Math.max(w,h)>MAX){ const s=MAX/Math.max(w,h); w=Math.round(w*s); h=Math.round(h*s); }
     const c=document.createElement('canvas'); c.width=w; c.height=h;
     c.getContext('2d').drawImage(img,0,0,w,h);
-    const durl=c.toDataURL('image/jpeg',0.88);
+    const durl=c.toDataURL('image/jpeg',0.8);
     IMG64=durl.split(',')[1]; MIME='image/jpeg';
     $('prev').src=durl; $('prev').style.display='block';
     $('go').disabled=false;
