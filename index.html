@@ -3893,6 +3893,23 @@ function _orderSignature(custId, dateStr, items, total){
   return [custId||'', dateStr||'', Math.round(total||0), parts.join('|')].join('#');
 }
 
+// ===== LOCATION CAPTURE (v191) — geo-stamp visits on order/payment save =====
+var GF_GEO=null, GF_GEO_WATCH=null;
+function gfGeoStart(){
+  if(!('geolocation' in navigator)) return;
+  if(GF_GEO_WATCH!==null) return;
+  try{
+    GF_GEO_WATCH=navigator.geolocation.watchPosition(function(pos){
+      GF_GEO={lat:+pos.coords.latitude.toFixed(6),lng:+pos.coords.longitude.toFixed(6),acc:Math.round(pos.coords.accuracy||0),ts:Date.now()};
+    },function(err){/* denied/unavailable: never blocks a sale */},
+    {enableHighAccuracy:true,timeout:10000,maximumAge:30000});
+  }catch(e){}
+}
+function gfGeoFresh(maxAgeMs){ if(!GF_GEO) return null; if(maxAgeMs&&(Date.now()-GF_GEO.ts)>maxAgeMs) return null; return GF_GEO; }
+function gfGeoMaps(g){ return g?('https://maps.google.com/?q='+g.lat+','+g.lng):''; }
+function gfGeoTag(g){ return g?('\u{1F4CD}'+g.lat+','+g.lng+'(\u00B1'+g.acc+'m) '+gfGeoMaps(g)):''; }
+try{ gfGeoStart(); }catch(e){}
+
 function submitOrder() {
   // layer 1 — re-entry lock
   if (_submitting) { showToast('⏳ Already submitting — please wait'); return; }
@@ -3965,6 +3982,7 @@ function _submitOrderInner(_release) {
     payment:{mode:'',amount:0,received:false},
     notes:document.getElementById('order-notes').value||'',
     createdAt:Date.now(), synced:false,
+    geo: gfGeoFresh(6*60*1000),
     backdated: isBackdated,
   };
 
@@ -3983,16 +4001,17 @@ function _submitOrderInner(_release) {
   }
 
   // Auto-sync to sheet if URL is set
+  const _locMsg = order.geo ? ('  \u{1F4CD}\u00B1'+order.geo.acc+'m') : '  \u{1F4CD}GPS off';
   const urlForSync = getSheetUrl();
   if(urlForSync) {
     syncOneOrder(orderId);
     if(isBackdated) {
       const d = new Date(orderDate+'T00:00:00');
       const label = d.toLocaleDateString('en-IN',{day:'numeric',month:'short'});
-      showToast('✓ Back-dated order for '+label+' — syncing...');
+      showToast('✓ Back-dated order for '+label+' — syncing...'+_locMsg);
     } else {
-      showToast(_isRepeat ? '✓ Same order re-sent — updated #'+orderId+' (no duplicate created)'
-                          : '✓ Order submitted — syncing to Sheet...');
+      showToast((_isRepeat ? '✓ Same order re-sent — updated #'+orderId+' (no duplicate created)'
+                          : '✓ Order submitted — syncing to Sheet...')+_locMsg);
     }
   } else {
     showToast('✓ Order saved locally — ⚠ Sheet URL not set!', 4000);
@@ -6008,6 +6027,7 @@ async function syncOneOrder(orderId, orderObj) {
     createdBy:order.createdBy||'',
     modNotes:order.modNotes||'',
   });
+  try{ var _g=order.geo; if(_g){ params.set('notes',(order.notes||'')+(order.notes?'  ':'')+gfGeoTag(_g)); params.set('lat',String(_g.lat)); params.set('lng',String(_g.lng)); params.set('acc',String(_g.acc)); } }catch(e){}
   const ok = await fireAndWait(url+'?'+params.toString());
   try{ fsWriteOrder(order); }catch(e){}          // v180 mirror — cannot block the Sheet write
   if(ok) { order.synced=true; saveOrders(); renderOrdersList(); renderDashboard(); }
@@ -10122,6 +10142,7 @@ function savePaymentIn() {
     const newEntry = {
       id: 'PAY'+Date.now().toString().slice(-8),
       custName, custId, date, amount, mode, ref, notes,
+      geo: gfGeoFresh(6*60*1000),
       createdAt: Date.now(), createdBy: STATE.role
     };
     STATE.payments.unshift(newEntry);
@@ -10179,7 +10200,7 @@ function savePaymentIn() {
   else if(activeScreen?.id==='screen-payment-in') renderPaymentIn();
   else renderPaymentIn();
   renderDues();
-  showToast(editId?'✓ Payment updated — balance adjusted':'✓ Payment recorded — ₹'+amount.toLocaleString('en-IN'));
+  showToast((editId?'✓ Payment updated — balance adjusted':'✓ Payment recorded — ₹'+amount.toLocaleString('en-IN'))+(gfGeoFresh(6*60*1000)?'  \u{1F4CD}\u00B1'+gfGeoFresh(6*60*1000).acc+'m':'  \u{1F4CD}GPS off'));
 }
 
 // Helper: persist a single customer's balance to localStorage extras
@@ -10296,6 +10317,7 @@ async function syncPaymentToSheet(p) {
     notes:   p.notes||'',
     createdBy: p.createdBy||STATE.role||'',
   });
+  try{ var _g=p.geo; if(_g){ params.set('notes',(p.notes||'')+(p.notes?'  ':'')+gfGeoTag(_g)); params.set('lat',String(_g.lat)); params.set('lng',String(_g.lng)); params.set('acc',String(_g.acc)); } }catch(e){}
   await fireAndForget(url+'?'+params.toString());
   try{ fsWritePayment(p); }catch(e){}            // v180 mirror
 }
