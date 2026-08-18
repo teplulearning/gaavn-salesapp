@@ -921,6 +921,7 @@ body.gf-panel-open #app{ visibility:hidden; }
       <div style="font-size:17px;font-weight:800;">📈 Sales &amp; Collections</div>
       <div id="rep-sub" style="font-size:11px;color:var(--muted);"></div>
     </div>
+    <button onclick="reloadPaymentsFromSheet()" title="Replace this phone's payments with the Sheet" style="background:#0B7A3B;color:#fff;border:none;border-radius:8px;padding:7px 10px;font-size:11px;font-weight:700;cursor:pointer;flex-shrink:0;">🔄 Reload</button>
     <button onclick="downloadReportPDF()" style="background:#1A527A;color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:11px;font-weight:700;cursor:pointer;flex-shrink:0;">📄 PDF</button>
   </div>
   <div style="padding:12px 16px;">
@@ -11025,7 +11026,7 @@ function _repModeGroup(m){
   m=String(m||'').toLowerCase();
   if(!m) return 'Other';
   if(m.indexOf('cash')>=0) return 'Cash';
-  if(m.indexOf('phonepe')>=0||m.indexOf('gpay')>=0||m.indexOf('upi')>=0||m.indexOf('paytm')>=0||m.indexOf('qr')>=0||m.indexOf('online')>=0) return 'UPI/Online';
+  if(m.indexOf('phonep')>=0||m.indexOf('gpay')>=0||m.indexOf('googlepay')>=0||m.indexOf('upi')>=0||m.indexOf('paytm')>=0||m.indexOf('qr')>=0||m.indexOf('online')>=0) return 'UPI/Online';
   if(m.indexOf('neft')>=0||m.indexOf('imps')>=0||m.indexOf('rtgs')>=0||m.indexOf('bank')>=0||m.indexOf('cheque')>=0||m.indexOf('chq')>=0||m.indexOf('idbi')>=0) return 'Bank/Cheque';
   return 'Other';
 }
@@ -11138,6 +11139,37 @@ async function _repPullPayments(){
     }
     if(added){ savePaymentLedger(); renderReport(); showToast('☁ '+added+' payment entries pulled from Sheet'); }
   } finally { _repPulling=false; }
+}
+// v192 — force a full REPLACE reload of payments from the Sheet (fixes stale
+// local entries after the Sheet is edited directly). Unlike _repPullPayments
+// (which only adds new ids), this rebuilds the last 4 months from the Sheet.
+async function reloadPaymentsFromSheet(){
+  const url=getSheetUrl();
+  if(!url){ showToast('Set the Sheet URL in Setup first'); return; }
+  if(!navigator.onLine){ showToast('You are offline — connect and retry'); return; }
+  if(!confirm('Reload payments from the Sheet for the last 4 months?\n\nThis REPLACES this phone\'s payment entries for those months with exactly what is in the Sheet. Any payment entered on THIS phone but not yet synced up will be removed. Sync pending entries first if unsure.\n\nProceed?')) return;
+  showToast('\u23F3 Reloading payments from the Sheet…');
+  const now=new Date(); const monthsWanted=[];
+  for(let i=0;i<4;i++){ const m=new Date(now.getFullYear(),now.getMonth()-i,1); monthsWanted.push(_repISO(m).slice(0,7)); }
+  const fresh=[]; let ok=true;
+  for(const tag of monthsWanted){
+    try{
+      const r=await fetch(url+'?action=getMonthPayments&month='+tag,{cache:'no-store'});
+      const d=await r.json();
+      (d&&Array.isArray(d.payments)?d.payments:[]).forEach(row=>{
+        const id=String(row['Pay ID']||'').trim(); if(!id) return;
+        fresh.push({id:id,date:_normDayStr(row['Date']),custName:String(row['Customer']||''),
+          custId:String(row['Cust ID']||''),amount:parseFloat(row['Amount (Rs)'])||0,
+          mode:String(row['Mode']||''),ref:String(row['Reference']||''),notes:String(row['Notes']||''),
+          createdBy:String(row['Created By']||''),fromSheet:true});
+      });
+    }catch(e){ ok=false; }
+  }
+  const inWindow=(dt)=>{ const mm=String(_normDayStr(dt)||'').slice(0,7); return monthsWanted.indexOf(mm)>=0; };
+  const kept=STATE.payments.filter(p=>!inWindow(p.date));
+  STATE.payments=kept.concat(fresh);
+  savePaymentLedger(); renderReport();
+  showToast((ok?'\u2705 ':'\u26A0 partial — ')+'Reloaded '+fresh.length+' payments from the Sheet');
 }
 function downloadReportPDF(){
   const {from,to,orders,ledger,direct}=_repData();
