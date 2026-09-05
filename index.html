@@ -52,8 +52,12 @@ body.gf-panel-open #app{ visibility:hidden; }
 .notif-btn{position:relative;background:none;border:none;font-size:20px;cursor:pointer;padding:4px;}
 .notif-dot{position:absolute;top:2px;right:2px;width:8px;height:8px;background:var(--red);border-radius:50%;display:none;}
 .notif-dot.show{display:block;}
-.bottom-nav{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:480px;background:var(--surface);border-top:1.5px solid var(--border);display:flex;z-index:100;padding-bottom:env(safe-area-inset-bottom,0px);}
-.nav-btn{flex:1;padding:10px 4px 8px;background:none;border:none;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:2px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:10px;color:var(--muted);font-weight:500;transition:color 0.15s;}
+/* v195: sales now has 9 tabs (Manage was added). flex:1 alone squeezed them to
+   ~38px on a 360px phone and the labels wrapped into unreadable stacks. Give
+   every button a minimum width and let the bar scroll sideways instead. */
+.bottom-nav{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:480px;background:var(--surface);border-top:1.5px solid var(--border);display:flex;z-index:100;padding-bottom:env(safe-area-inset-bottom,0px);overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;}
+.bottom-nav::-webkit-scrollbar{display:none;}
+.nav-btn{flex:1 0 auto;min-width:52px;padding:10px 4px 8px;background:none;border:none;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:2px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:10px;color:var(--muted);font-weight:500;transition:color 0.15s;white-space:nowrap;}
 .nav-btn.active{color:var(--amber);}
 .nav-btn .nav-icon{font-size:20px;}
 .screen{display:none;padding:16px;}
@@ -271,7 +275,7 @@ body.gf-panel-open #app{ visibility:hidden; }
     <div class="top-bar-left">
       <span class="logo">🐄 GF</span>
       <span class="role-badge" id="role-badge">SALES</span>
-      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v194</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v195</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <button id="del-lang-btn" onclick="toggleDeliveryLang()" style="display:none;background:var(--blue);color:#fff;border:none;border-radius:14px;padding:4px 10px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;">मराठी</button>
@@ -358,6 +362,17 @@ body.gf-panel-open #app{ visibility:hidden; }
         <div class="card-head"><h3>Order Summary</h3><span style="font-family:'DM Serif Display',serif;font-size:20px;color:var(--amber);" id="order-total">₹0</span></div>
         <div class="card-body">
           <div id="order-summary-items"></div>
+          <!-- v195: rates typed on this screen have always been saved back as the
+               client's new standing rate, but nothing on screen said so — which is
+               why a rate seemed to "stick" unexpectedly. Say it plainly, and give
+               a way out for a one-off price. -->
+          <div id="rate-change-note" style="display:none;background:#FFF8E1;border:1.5px solid var(--amber);border-radius:10px;padding:10px 12px;margin-top:12px;">
+            <div id="rate-change-text" style="font-size:12px;font-weight:700;color:#795548;line-height:1.5;"></div>
+            <label style="display:flex;align-items:center;gap:7px;margin-top:8px;font-size:12px;color:#795548;cursor:pointer;">
+              <input type="checkbox" id="rate-once-only" style="width:16px;height:16px;flex-shrink:0;">
+              Just this order — keep the client's old rate
+            </label>
+          </div>
           <div class="field" style="margin-top:12px;margin-bottom:8px;">
             <label>Notes (optional)</label>
             <input type="text" id="order-notes" placeholder="e.g. deliver by 9am">
@@ -436,6 +451,10 @@ body.gf-panel-open #app{ visibility:hidden; }
           <div id="client-detail-name" style="font-size:16px;font-weight:800;color:var(--ink);"></div>
           <div id="client-detail-sub" style="font-size:11px;color:var(--muted);"></div>
         </div>
+        <!-- v195: edit the client (rates, phone, category, balance) right here,
+             instead of hunting for them again on the Manage screen. Hidden for
+             the delivery role by applyRoleUI(). -->
+        <button id="client-edit-btn" onclick="openManageCustomer(currentClientId)" style="background:var(--amber);color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:12px;font-weight:700;cursor:pointer;margin-right:6px;">✏️ Edit</button>
         <button onclick="sendStatement(currentClientId)" style="background:#1A527A;color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:12px;font-weight:700;cursor:pointer;">📄 Statement</button>
       </div>
 
@@ -691,7 +710,9 @@ body.gf-panel-open #app{ visibility:hidden; }
   <div class="screen" id="screen-manage">
     <div class="page-title">✏️ Manage Customers</div>
     <div class="page-sub">Edit rates, contact, category, balance</div>
-    <button onclick="findDuplicateCustomers()" style="background:#C62828;color:#fff;border:none;border-radius:8px;padding:8px 16px;font-size:12px;font-weight:700;cursor:pointer;margin:8px 0;">🔗 Find duplicate customers</button>
+    <!-- v195: id added so applyRoleUI() can keep the merge tool owner-only now
+         that the salesperson can reach this screen. A merge cannot be undone. -->
+    <button id="btn-find-dupes" onclick="findDuplicateCustomers()" style="background:#C62828;color:#fff;border:none;border-radius:8px;padding:8px 16px;font-size:12px;font-weight:700;cursor:pointer;margin:8px 0;">🔗 Find duplicate customers</button>
     <div id="dup-cust-out" style="display:none;margin-bottom:12px;"></div>
     <div class="search-box">
       <span class="search-icon">🔍</span>
@@ -1020,6 +1041,33 @@ body.gf-panel-open #app{ visibility:hidden; }
     </div>
 
     <div class="section-label">Custom Rates (leave blank = standard)</div>
+    <!-- v195: rates go up and down for everything at once far more often than
+         for one product, so give that its own control instead of making the
+         salesperson re-type twelve boxes. Nothing is saved until Save Changes. -->
+    <div style="background:var(--cream);border:1.5px solid var(--amber);border-radius:10px;padding:10px 12px;margin-bottom:12px;">
+      <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;">Change all rates at once</div>
+      <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+        <select id="mc-adj-dir" style="background:var(--surface);border:1.5px solid var(--border);border-radius:8px;padding:8px 6px;font-family:inherit;font-size:13px;">
+          <option value="up">▲ Increase</option>
+          <option value="down">▼ Decrease</option>
+        </select>
+        <input type="number" id="mc-adj-val" min="0" step="0.5" placeholder="0"
+          style="width:70px;background:var(--surface);border:1.5px solid var(--border);border-radius:8px;padding:8px;font-family:inherit;font-size:13px;text-align:right;">
+        <select id="mc-adj-unit" style="background:var(--surface);border:1.5px solid var(--border);border-radius:8px;padding:8px 6px;font-family:inherit;font-size:13px;">
+          <option value="rs">₹</option>
+          <option value="pct">%</option>
+        </select>
+        <button onclick="adjustAllRates()" ontouchstart="" style="background:var(--amber);color:#fff;border:none;border-radius:8px;padding:9px 14px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;">Apply</button>
+      </div>
+      <label style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:11px;color:var(--muted);cursor:pointer;">
+        <input type="checkbox" id="mc-adj-blanks" checked style="width:15px;height:15px;">
+        Also apply to products still on the standard rate
+      </label>
+      <div style="display:flex;gap:8px;margin-top:8px;">
+        <button onclick="resetAllRates()" ontouchstart="" style="flex:1;background:none;border:1.5px solid var(--border);color:var(--muted);border-radius:8px;padding:7px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;">↺ Clear all — back to standard</button>
+      </div>
+      <div id="mc-adj-note" style="font-size:11px;color:var(--green);font-weight:700;margin-top:6px;display:none;"></div>
+    </div>
     <div id="mc-rates"></div>
 
     <div class="btn-row">
@@ -1515,7 +1563,9 @@ function fsEmail(u){ u=String(u||'').trim(); return u.indexOf('@')>=0?u:u.toLowe
 function fsCustToApp(id, d){
   return {id:id, name:String(d.name||''), category:String(d.category||''),
           area:String(d.area||''), phone:String(d.phone||''),
-          pricing:d.pricing||{}, balance:parseFloat(d.balance)||0,
+          // v195: a rate changed on this phone and not yet confirmed by
+          // Firestore must win, or the next snapshot silently undoes it.
+          pricing:_guardPricing(id, d.pricing||{}), balance:parseFloat(d.balance)||0,
           balanceAsOf:d.balanceAsOf||'', synced:true, fromFirestore:true};
 }
 function fsOrderToApp(id, d){
@@ -1806,6 +1856,23 @@ async function fsWriteCustomer(c){
     }, {merge:true});
     fsWriteOk();
   }catch(e){ fsWriteErr('customer '+c.id, e); }
+}
+
+/* v195: pricing-only write, used by every rate change.
+   Note the two writes. set({pricing:{…}}, {merge:true}) MERGES nested maps, so
+   a rate the user CLEARED (blank = back to standard) would survive in Firestore
+   and come straight back. update() replaces the map wholesale, which is the
+   behaviour this screen promises. The update is attempted second and swallowed
+   so a not-yet-existing doc still gets its pricing from the set above. */
+async function fsWriteCustomerPricing(c){
+  if(!fsCanWrite() || !c || !c.id) return;
+  try{
+    const ref=FS.db.collection('customers').doc(String(c.id));
+    await ref.set({pricing:c.pricing||{}, source:'app',
+                   updatedAt:new Date().toISOString()}, {merge:true});
+    try{ await ref.update({pricing:c.pricing||{}}); }catch(e){}
+    fsWriteOk();
+  }catch(e){ fsWriteErr('rates for '+(c.name||c.id), e); }
 }
 
 async function fsWritePayment(p){
@@ -2650,9 +2717,14 @@ const NAV_CONFIG = {
              {id:'orders',icon:'📋',label:'Orders'},{id:'history',icon:'📅',label:'History'},
              {id:'manage',icon:'✏️',label:'Manage'},
              {id:'payment-in',icon:'💳',label:'Payments'},{id:'dues',icon:'💰',label:'Dues'},{id:'setup',icon:'⚙',label:'Setup'}],
+  // v195: the salesperson is the one standing in front of the shop when a rate
+  // is negotiated or a phone number changes, so Manage (edit customer, rates,
+  // contact, category, balance) is no longer owner-only. The destructive part
+  // of that screen — duplicate merge — stays owner-only, hidden by applyRoleUI.
   sales:    [{id:'home',icon:'🏠',label:'Home'},{id:'customers',icon:'🏢',label:'Clients'},
              {id:'new-order',icon:'➕',label:'New Order'},
              {id:'orders',icon:'📋',label:'My Orders'},{id:'history',icon:'📅',label:'History'},
+             {id:'manage',icon:'✏️',label:'Manage'},
              {id:'payment-in',icon:'💳',label:'Payments'},{id:'dues',icon:'💰',label:'Dues'},{id:'setup',icon:'⚙',label:'Setup'}],
   // v189: the delivery role had NO History tab at all, which is why he could
   // not open a past order to correct it. He now gets the same date-by-date
@@ -3878,6 +3950,33 @@ function updateOrderSummary() {
         : '₹'+i.amount.toLocaleString('en-IN')}</div>
     </div>`).join('')
     : '<div style="color:var(--muted);font-size:13px;padding:8px 0;">No items added yet</div>';
+
+  /* v195: flag every line whose rate differs from what this client is on today,
+     and say what will happen to it. getRate() is the client's current rate for
+     the unit selected on the line, so this is an apples-to-apples comparison. */
+  const noteBox  = document.getElementById('rate-change-note');
+  const noteText = document.getElementById('rate-change-text');
+  if(noteBox && noteText){
+    const moved = items.map(function(i){
+      const was = getRate(i.product);
+      const now = parseFloat(i.rate)||0;
+      if(!was || !now || Math.abs(was-now) < 0.01) return null;
+      return {name:i.name, was:was, now:now, up:now>was};
+    }).filter(Boolean);
+    if(!moved.length){
+      noteBox.style.display = 'none';
+      const cb = document.getElementById('rate-once-only');
+      if(cb) cb.checked = false;
+    } else {
+      noteBox.style.display = 'block';
+      noteText.innerHTML = moved.map(function(m){
+        return (m.up?'▲':'▼')+' <b>'+m.name+'</b> ₹'+m.was+' → ₹'+m.now;
+      }).join('<br>')
+        + '<div style="font-weight:500;margin-top:6px;">This becomes '
+        + (STATE.selectedCustomer ? STATE.selectedCustomer.name : 'the client')
+        + '’s new rate and will be used on every future order.</div>';
+    }
+  }
 }
 
 // ── v160: DOUBLE-SUBMIT PREVENTION ──────────────────────────────────
@@ -4032,7 +4131,11 @@ function _submitOrderInner(_release) {
   }
   if (_release) _release();   // v160: work done, re-enable the button
   // ── Auto-save any rates changed during this order back to customer profile ──
+  // v195: unless the salesperson ticked "just this order" on the summary card.
+  try{ STATE.rateOnceOnly = !!document.getElementById('rate-once-only')?.checked; }catch(e){}
   saveCustomerRates(STATE.selectedCustomer, STATE.cart);
+  try{ const _rc=document.getElementById('rate-once-only'); if(_rc) _rc.checked=false;
+       const _rn=document.getElementById('rate-change-note'); if(_rn) _rn.style.display='none'; }catch(e){}
 
   clearOrderDraft();
   renderDashboard();
@@ -4050,6 +4153,10 @@ function _submitOrderInner(_release) {
 // to the customer's profile so they auto-fill next time.
 function saveCustomerRates(customer, cart) {
   if(!customer || !cart) return;
+  // v195: the salesperson can now tick "just this order" on the New Order screen
+  // when a rate is a one-off (a festival deal, a clearance batch) and the shop's
+  // standing rate must not move.
+  if(STATE.rateOnceOnly){ STATE.rateOnceOnly = false; return; }
   let changed = false;
   if(!customer.pricing) customer.pricing = {};
 
@@ -4091,8 +4198,19 @@ function saveCustomerRates(customer, cart) {
   }
   localStorage.setItem(LS_CUSTS, JSON.stringify(extras));
 
+  /* v195 — THE FIX for "the rate I entered keeps coming back as the old one".
+     This function only ever pushed to the Google Sheet. Firebase is the live
+     source of truth: its customers listener replaces STATE.customers wholesale
+     on every snapshot, so the rate this function had just changed was handed
+     back at the old value seconds later. Write it to Firestore too, and hold it
+     locally until a remote copy confirms it. */
+  markPriceDirty(customer.id, customer.pricing);
+  try{ fsWriteCustomerPricing(customer); }catch(e){}
+
   // Sync updated pricing to Google Sheet Customers tab
   syncCustomerPricingToSheet(customer);
+
+  try{ showToast('★ Rate saved for '+customer.name+' — used from the next order'); }catch(e){}
 }
 
 async function syncCustomerPricingToSheet(customer) {
@@ -4105,6 +4223,11 @@ async function syncCustomerPricingToSheet(customer) {
       name:      customer.name,
       phone:     customer.phone||'',
       pricing:   JSON.stringify(customer.pricing||{}),
+      // v195: this object is the customer's COMPLETE rate list, so the Sheet
+      // should write it as-is. Older deployed scripts ignore this param and
+      // keep merging — everything still works, a cleared rate just needs the
+      // Apps Script re-deployed from Setup before it sticks.
+      pricingMode: 'replace',
       updatedBy: STATE.role||'sales',
     });
     await fireAndForget(url + '?' + params.toString());
@@ -5827,7 +5950,13 @@ async function syncCustomersFromSheet() {
         // Always merge pricing, balance and phone from sheet into existing customer
         const existing = STATE.customers[idx];
         if(c.pricing && Object.keys(c.pricing).length > 0) {
-          existing.pricing = Object.assign({}, existing.pricing||{}, c.pricing);
+          // v195: a rate changed on this phone and still waiting for the Sheet
+          // to confirm must NOT be overwritten by the Sheet's stale copy — the
+          // push and this pull run 600ms apart on app start, so the pull won
+          // roughly every time and the new rate vanished.
+          const _pd = _priceDirtyMap()[existing.id];
+          if(_pd) existing.pricing = _guardPricing(existing.id, c.pricing);
+          else    existing.pricing = Object.assign({}, existing.pricing||{}, c.pricing);
         }
         // v149.1: a locally-changed balance awaiting Sheet confirmation must
         // NOT be overwritten by the (still stale) sheet value — this exact
@@ -5926,6 +6055,7 @@ async function syncCustomerToSheet(customer, retryCount) {
       balance: customer.balance||0,
       createdBy: STATE.role||'',
       pricing: JSON.stringify(customer.pricing||{}),
+      pricingMode: 'replace',   // v195 — see syncCustomerPricingToSheet()
     });
     const res = await fetch(STATE.sheetUrl + '?' + params.toString());
     const json = await res.json().catch(()=>({}));
@@ -7409,10 +7539,15 @@ function getAppsScriptCode() {
     '    var rowId=String(data[r][idCol]||"").trim();',
     '    var rowPhone=String(data[r][phoneCol]||"").replace(/\\D/g,"").slice(-10);',
     '    if(rowId===custId || (custPhone && rowPhone===custPhone)){',
-    '      // Merge new pricing with existing (dont overwrite unrelated products)',
+    '      // v195: the app always sends the customers COMPLETE rate list, so',
+    '      // pricingMode=replace writes it as-is. Merging (the old behaviour,',
+    '      // kept as the default for older app builds) meant a rate the sales',
+    '      // person CLEARED to go back to standard was never removed here and',
+    '      // came straight back on the next pull.',
     '      var existing={};',
     '      try{existing=JSON.parse(String(data[r][pricingCol]||"{}"));}catch(ex){}',
-    '      var merged=Object.assign({},existing,newPricing);',
+    '      var merged=(String(p.pricingMode||"")==="replace")',
+    '        ? newPricing : Object.assign({},existing,newPricing);',
     '      sh.getRange(r+1,pricingCol+1).setValue(JSON.stringify(merged));',
     '      return jsonOut({status:"ok",updated:r+1});',
     '    }',
@@ -7449,7 +7584,8 @@ function getAppsScriptCode() {
     '    if(matchById||matchByName){',
     '      var existingPricing={};',
     '      try{existingPricing=JSON.parse(String(data[r][col["Pricing"]-1]||"{}"));}catch(ex){}',
-    '      var merged=Object.assign({},existingPricing,newPricing);',
+    '      var merged=(String(p.pricingMode||"")==="replace")',
+    '        ? newPricing : Object.assign({},existingPricing,newPricing);',   // v195
     '      sh.getRange(r+2,col["Category"]).setValue(p.category||data[r][col["Category"]-1]||"");',
     '      sh.getRange(r+2,col["Phone"]).setValue(p.phone||data[r][col["Phone"]-1]||"");',
     '      sh.getRange(r+2,col["Area"]).setValue(p.area||data[r][col["Area"]-1]||"");',
@@ -7756,18 +7892,82 @@ function openManageCustomer(id) {
   document.getElementById('mc-balance').value = c.balance||0;
 
   // Rates
+  // v195: each row now shows what this client is actually paying today, so an
+  // increase or a decrease is a judgement made against a visible number rather
+  // than against a blank box. The ✕ clears the row back to the standard rate.
   const ratesEl = document.getElementById('mc-rates');
   ratesEl.innerHTML = PRODUCTS.map(p=>{
     const cur = c.pricing?.[p.id]||'';
-    return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
-      <span style="font-size:13px;flex:1;">${p.emoji} ${p.name}</span>
+    const eff = cur!=='' ? cur : p.stdRate;
+    return `<div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">
+      <span style="font-size:13px;flex:1;min-width:0;">${p.emoji} ${p.name}
+        <span style="display:block;font-size:10px;color:${cur!==''?'var(--amber)':'var(--muted)'};">
+          ${cur!==''?'★ now ₹'+eff:'standard ₹'+p.stdRate}/${p.unit}</span></span>
       <input type="number" id="mcr-${p.id}" value="${cur}" placeholder="₹${p.stdRate} (std)"
-        step="1" min="0"
-        style="width:90px;background:var(--cream);border:1.5px solid var(--border);border-radius:8px;padding:6px 8px;font-family:'DM Sans',sans-serif;font-size:13px;text-align:right;">
-      <span style="font-size:11px;color:var(--muted);width:36px;">/${p.unit}</span>
+        step="1" min="0" data-std="${p.stdRate}"
+        style="width:84px;background:var(--cream);border:1.5px solid var(--border);border-radius:8px;padding:6px 8px;font-family:'DM Sans',sans-serif;font-size:13px;text-align:right;">
+      <span style="font-size:11px;color:var(--muted);width:30px;">/${p.unit}</span>
+      <button onclick="clearOneRate('${p.id}')" ontouchstart="" title="Back to standard rate"
+        style="background:none;border:none;color:var(--muted);font-size:15px;cursor:pointer;padding:2px 4px;line-height:1;">&#10005;</button>
     </div>`;
   }).join('');
+  const _note = document.getElementById('mc-adj-note');
+  if(_note){ _note.style.display='none'; _note.textContent=''; }
+  const _av = document.getElementById('mc-adj-val'); if(_av) _av.value='';
   document.getElementById('modal-manage-cust').classList.add('open');
+}
+
+/* ── v195: RATE ADJUSTMENT ────────────────────────────────────────────────
+   These only rewrite the boxes on screen. Nothing reaches the customer, the
+   Sheet or Firebase until Save Changes is tapped, so a wrong tap is undone by
+   Cancel. A blank box means "use the standard rate", so an across-the-board
+   change has to decide what to do with blanks — hence the checkbox: ticked, the
+   blank rows are filled from the standard rate and then adjusted; unticked,
+   only rates already agreed with this client move. */
+function adjustAllRates() {
+  const dir  = document.getElementById('mc-adj-dir').value;
+  const val  = parseFloat(document.getElementById('mc-adj-val').value);
+  const unit = document.getElementById('mc-adj-unit').value;
+  const doBlanks = document.getElementById('mc-adj-blanks').checked;
+  const note = document.getElementById('mc-adj-note');
+  if(!(val > 0)){ showToast('Enter how much to increase or decrease by'); return; }
+  const sign = (dir === 'down') ? -1 : 1;
+  let touched = 0;
+  PRODUCTS.forEach(function(p){
+    const el = document.getElementById('mcr-'+p.id);
+    if(!el) return;
+    const isBlank = String(el.value).trim() === '';
+    if(isBlank && !doBlanks) return;
+    const base = isBlank ? (parseFloat(el.dataset.std)||0) : (parseFloat(el.value)||0);
+    if(!(base > 0)) return;
+    let next = (unit === 'pct') ? base * (1 + sign*val/100) : base + sign*val;
+    next = Math.round(next * 100) / 100;         // keep paise, drop float noise
+    if(next < 0) next = 0;
+    el.value = next;
+    touched++;
+  });
+  if(note){
+    note.style.display = 'block';
+    note.style.color = sign > 0 ? 'var(--red)' : 'var(--green)';
+    note.textContent = (sign>0?'▲ Increased ':'▼ Decreased ') + touched + ' rate(s) by '
+      + (unit==='pct' ? val+'%' : '₹'+val) + ' — tap 💾 Save Changes to confirm';
+  }
+}
+
+function clearOneRate(pid) {
+  const el = document.getElementById('mcr-'+pid);
+  if(el) el.value = '';
+}
+
+function resetAllRates() {
+  if(!confirm('Clear every custom rate for this client?\n\nThey go back to the standard rate. Nothing is saved until you tap Save Changes.')) return;
+  PRODUCTS.forEach(function(p){
+    const el = document.getElementById('mcr-'+p.id);
+    if(el) el.value = '';
+  });
+  const note = document.getElementById('mc-adj-note');
+  if(note){ note.style.display='block'; note.style.color='var(--muted)';
+    note.textContent = 'All rates cleared — tap 💾 Save Changes to confirm'; }
 }
 
 
@@ -7955,6 +8155,12 @@ function saveManageCustomer() {
   // syncCustomerToSheet(), so a renamed customer stayed renamed on the owner's
   // device and nowhere else. Push it now.
   if(_oldName && _oldName !== c.name) markNameDirty(c.id, c.name);   // v178
+  /* v195: the rate write must not depend on a Sheet URL being set, and must not
+     depend on syncCustomerToSheet() being reached — with Firebase live, the
+     customers listener overwrites STATE.customers on the next snapshot and an
+     unwritten rate is simply lost. Protect and push the pricing on its own. */
+  markPriceDirty(c.id, pricing);
+  try{ fsWriteCustomerPricing(c); }catch(e){}
   if(getSheetUrl()){
     try{
       c.synced = false;
@@ -10254,6 +10460,72 @@ async function flushDirtyNames(){
   }
   _nameDirtySave(_nameDirtyMap());
 }
+/* ── v195: LOCALLY-CHANGED RATES, PROTECTED THE SAME WAY ─────────────────────
+   This is the "I change a rate and it comes back as the old one" bug.
+
+   Two separate paths were putting the old rate back:
+
+   1. Firestore. The customers listener does `STATE.customers = list` — it
+      REPLACES every customer with the Firestore copy. saveCustomerRates()
+      (which runs after every order and is the main way a rate gets changed)
+      only ever called syncCustomerPricingToSheet(). It never wrote the new
+      pricing to Firestore, so the very next snapshot — which arrives seconds
+      later — handed the old rate straight back. The rate looked saved, the
+      Sheet even had it, and the app still showed the old number forever.
+
+   2. The Sheet. syncCustomersFromSheet() does
+        existing.pricing = Object.assign({}, existing.pricing, sheetPricing)
+      with no protection, so a pull that starts before the push lands (they run
+      600ms apart on app start) overwrites the new rate with the stale one.
+
+   Fix: write pricing to Firestore on every rate change (below), and hold the
+   locally-changed pricing in a dirty map that wins over both sources until the
+   remote copy actually comes back with the same numbers. Same pattern v149.1
+   used for balances and v178 for names. Entries self-expire after 14 days so a
+   customer can never get frozen on a stale local rate. */
+const LS_PRICE_DIRTY='gf_price_dirty';
+const PRICE_DIRTY_TTL = 14*24*60*60*1000;
+function _priceDirtyMap(){ try{ return JSON.parse(localStorage.getItem(LS_PRICE_DIRTY)||'{}'); }catch(e){ return {}; } }
+function _priceDirtySave(m){ try{ localStorage.setItem(LS_PRICE_DIRTY, JSON.stringify(m)); }catch(e){} }
+function _priceKey(p){
+  // stable comparison key: {paneer:300, lc:270} must equal {lc:270, paneer:300}
+  const o=p||{};
+  return Object.keys(o).sort().map(function(k){ return k+'='+(parseFloat(o[k])||0); }).join('|');
+}
+function markPriceDirty(id, pricing){
+  if(!id) return;
+  const d=_priceDirtyMap();
+  d[id]={pricing:Object.assign({}, pricing||{}), ts:Date.now()};
+  _priceDirtySave(d);
+}
+function clearPriceDirty(id){
+  const d=_priceDirtyMap(); if(!(id in d)) return;
+  delete d[id]; _priceDirtySave(d);
+}
+/* Called on every customer object built from a remote source (Firestore doc or
+   Sheet row). Returns the pricing that should actually be used. */
+function _guardPricing(id, remotePricing){
+  const e=_priceDirtyMap()[id];
+  if(!e) return remotePricing||{};
+  if(Date.now()-(e.ts||0) > PRICE_DIRTY_TTL){ clearPriceDirty(id); return remotePricing||{}; }
+  // remote has caught up — stop holding it
+  if(_priceKey(e.pricing) === _priceKey(remotePricing)){ clearPriceDirty(id); return remotePricing||{}; }
+  return Object.assign({}, e.pricing);
+}
+/* Re-push any rate change whose write never landed (offline, tab closed). */
+async function flushDirtyPricing(){
+  const d=_priceDirtyMap(); const ids=Object.keys(d);
+  if(!ids.length) return;
+  for(const id of ids){
+    if(Date.now()-(d[id].ts||0) > PRICE_DIRTY_TTL){ clearPriceDirty(id); continue; }
+    const c=(STATE.customers||[]).find(x=>x.id===id);
+    if(!c){ clearPriceDirty(id); continue; }
+    c.pricing = Object.assign({}, d[id].pricing);
+    try{ fsWriteCustomerPricing(c); }catch(e){}
+    try{ syncCustomerPricingToSheet(c); }catch(e){}
+  }
+}
+
 function _balDirtyMap(){ try{ return JSON.parse(localStorage.getItem(LS_BAL_DIRTY)||'{}'); }catch(e){ return {}; } }
 function _balDirtySave(m){ try{ localStorage.setItem(LS_BAL_DIRTY, JSON.stringify(m)); }catch(e){} }
 function applyBalanceChange(cust){
@@ -10918,6 +11190,14 @@ function applyRoleUI() {
   const dlBtn = document.getElementById('btn-download-custs');
   if(dlBtn) dlBtn.style.display = (STATE.role==='owner') ? 'inline-block' : 'none';
   if(btnSheet) btnSheet.style.display = isDelivery?'none':'';
+  // v195: customer editing is open to sales + owner. Only the ✏️ Edit button on
+  // the client card is role-gated here; the Manage tab itself is gated by
+  // NAV_CONFIG, which does not give it to delivery.
+  const edBtn = document.getElementById('client-edit-btn');
+  if(edBtn) edBtn.style.display = isSalesOrOwner ? '' : 'none';
+  // Duplicate merge rewrites order history and cannot be undone — owner only.
+  const dupBtn = document.getElementById('btn-find-dupes');
+  if(dupBtn) dupBtn.style.display = (STATE.role==='owner') ? 'inline-block' : 'none';
   // Start polling for delivery
   if(isDelivery && getSheetUrl()) startDeliveryPoll();
 }
@@ -11281,7 +11561,7 @@ async function autoSyncHistory(force){
   }
 }
 
-window.addEventListener('online', function(){ updateOnlineIndicator(); showToast('🟢 Back online — syncing pending orders...'); setTimeout(function(){ try{ fsResume(true); }catch(e){} }, 800); autoSyncPending(false); setTimeout(function(){ try{ autoSyncHistory(true); }catch(e){} }, 1500); setTimeout(function(){ try{ flushDirtyBalances(); }catch(e){} }, 2500); setTimeout(function(){ try{ pullDeletedOrders(true); }catch(e){} }, 3500); });
+window.addEventListener('online', function(){ updateOnlineIndicator(); showToast('🟢 Back online — syncing pending orders...'); setTimeout(function(){ try{ fsResume(true); }catch(e){} }, 800); autoSyncPending(false); setTimeout(function(){ try{ autoSyncHistory(true); }catch(e){} }, 1500); setTimeout(function(){ try{ flushDirtyBalances(); }catch(e){} }, 2500); setTimeout(function(){ try{ flushDirtyPricing(); }catch(e){} }, 3000); setTimeout(function(){ try{ pullDeletedOrders(true); }catch(e){} }, 3500); });
 window.addEventListener('offline', function(){ updateOnlineIndicator(); showToast('📴 Offline — orders are saved on this device'); });
 setTimeout(function(){ try{ updateOnlineIndicator(); autoSyncPending(true); }catch(e){} }, 2500);
 setTimeout(function(){ try{ autoSyncHistory(false); }catch(e){} }, 5000);       // v149: pull on startup
@@ -11291,6 +11571,8 @@ setTimeout(function(){ try{ flushDirtyBalances(); }catch(e){} }, 6000);         
 setInterval(function(){ try{ flushDirtyBalances(); }catch(e){} }, 5*60*1000);
 setInterval(function(){ try{ flushDirtyNames(); }catch(e){} }, 5*60*1000);       // v178
 setTimeout(function(){ try{ flushDirtyNames(); }catch(e){} }, 9000);             // v178
+setInterval(function(){ try{ flushDirtyPricing(); }catch(e){} }, 5*60*1000);     // v195
+setTimeout(function(){ try{ flushDirtyPricing(); }catch(e){} }, 11000);          // v195
 setInterval(function(){ try{ autoSyncHistory(false); }catch(e){} }, 15*60*1000); // v149: and every 15 min
 setInterval(function(){ try{ updateOnlineIndicator(); }catch(e){} }, 5000);
 
