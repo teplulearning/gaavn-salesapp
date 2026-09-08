@@ -276,10 +276,16 @@ body.gf-panel-open #app{ visibility:hidden; }
     <div class="top-bar-left">
       <span class="logo">🐄 GF</span>
       <span class="role-badge" id="role-badge">SALES</span>
-      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v195</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v196</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
-      <button id="del-lang-btn" onclick="toggleDeliveryLang()" style="display:none;background:var(--blue);color:#fff;border:none;border-radius:14px;padding:4px 10px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;">मराठी</button>
+      <!-- v196: this used to be a single button showing the language you would
+           switch TO. Reading "मराठी" on an English screen looks exactly like a
+           label saying the app IS in Marathi, so it was never actually turned
+           on. It is now a two-state switch: the active side is filled in. -->
+      <span id="del-lang-btn" onclick="toggleDeliveryLang()" style="display:none;border:1.5px solid var(--blue);border-radius:14px;overflow:hidden;cursor:pointer;font-size:11px;font-weight:700;font-family:inherit;line-height:1;user-select:none;">
+        <span id="del-lang-en" style="display:inline-block;padding:5px 9px;">EN</span><span id="del-lang-mr" style="display:inline-block;padding:5px 9px;">मराठी</span>
+      </span>
       <span class="date-chip" id="today-chip"></span>
       <span id="sheet-status-dot" title="Tap to open Setup" style="font-size:16px;cursor:pointer;" onclick="showScreen('setup')">⚪</span>
       <button class="notif-btn" onclick="showScreen('approvals')" title="Pending Approvals">
@@ -2662,6 +2668,16 @@ const MR_DELIVERY = {
   // labels
   'Total weight':'एकूण वजन',
   'MODIFIED':'बदल केला',
+  // v196 - strings the delivery person meets that were never listed
+  '⚠️ Report Shortfall':'⚠️ माल कमी पडला',
+  'Collect Payment':'पैसे घ्या',
+  'Record Payment':'पैसे नोंदवा',
+  'All':'सर्व',
+  'Cancel':'रद्द करा', 'Close':'बंद करा', 'Save':'साठवा', 'Submit':'पाठवा',
+  'Confirm':'नक्की करा', 'Done':'झाले', 'Back':'मागे',
+  'Cash':'रोख', 'UPI':'यूपीआय', 'Amount':'रक्कम', 'Notes':'नोंद',
+  'No orders':'ऑर्डर नाहीत',
+  'Today':'आज', 'Total':'एकूण', 'Pending':'बाकी',
 };
 function delLangIsMR(){ try{ return localStorage.getItem(LS_DEL_LANG)==='mr'; }catch(e){ return false; } }
 function dtr(t){
@@ -2669,11 +2685,20 @@ function dtr(t){
   const k=String(t==null?'':t).trim();
   return Object.prototype.hasOwnProperty.call(MR_DELIVERY,k) ? MR_DELIVERY[k] : t;
 }
+/* v196: paint the two-state switch so the CURRENT language is obvious. */
+function _paintLangSwitch(){
+  const en=document.getElementById('del-lang-en'), mr=document.getElementById('del-lang-mr');
+  if(!en||!mr) return;
+  const isMR=delLangIsMR();
+  en.style.background = isMR ? 'transparent' : 'var(--blue)';
+  en.style.color      = isMR ? 'var(--blue)' : '#fff';
+  mr.style.background = isMR ? 'var(--blue)' : 'transparent';
+  mr.style.color      = isMR ? '#fff' : 'var(--blue)';
+}
 function toggleDeliveryLang(){
   const on = !delLangIsMR();
   try{ localStorage.setItem(LS_DEL_LANG, on?'mr':'en'); }catch(e){}
-  const b=document.getElementById('del-lang-btn');
-  if(b) b.textContent = on ? 'English' : 'मराठी';
+  _paintLangSwitch();
   // re-render whatever is on screen, then translate
   try{ if(typeof renderOrdersList==='function') renderOrdersList(); }catch(e){}
   try{ if(typeof renderDues==='function') renderDues(); }catch(e){}
@@ -2685,12 +2710,18 @@ function toggleDeliveryLang(){
 function applyDeliveryMarathi(){
   if(STATE.role!=='delivery') return;
   const b=document.getElementById('del-lang-btn');
-  if(b){ b.style.display='inline-block'; b.textContent = delLangIsMR() ? 'English' : 'मराठी'; }
+  if(b){ b.style.display='inline-block'; }
+  _paintLangSwitch();
   if(!delLangIsMR()) return;
   try{
-    ['screen-orders','screen-dues','screen-home','screen-history'].forEach(function(sid){
-      const root=document.getElementById(sid); if(!root) return;
-      root.querySelectorAll('button, .status-pill').forEach(function(el){
+    /* v196: modals were never in this list, so tapping a translated button
+       opened an English dialog. Open modals are now translated too. */
+    const _roots=['screen-orders','screen-dues','screen-home','screen-history']
+      .map(function(sid){ return document.getElementById(sid); })
+      .concat([].slice.call(document.querySelectorAll('.modal-overlay.open')))
+      .filter(Boolean);
+    _roots.forEach(function(root){
+      root.querySelectorAll('button, .status-pill, .filter-btn, label, h3').forEach(function(el){
         if(el.children.length) return;            // leave composite nodes alone
         const k=el.textContent.trim();
         if(Object.prototype.hasOwnProperty.call(MR_DELIVERY,k)) el.textContent=MR_DELIVERY[k];
@@ -2971,7 +3002,11 @@ function saveOrders() {
   // Group merged orders by date and write back
   const byDate = {};
   Object.values(allOrders).forEach(o => {
-    const dateKey = (o.date && o.date !== 'undefined') ? o.date : TODAY_KEY;
+    /* v196: normalise before it becomes a storage key. A malformed key is
+       silently unreadable - the order is written and then invisible. */
+    let dateKey = (o.date && o.date !== 'undefined') ? _normDayStr(o.date) : TODAY_KEY;
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) dateKey = TODAY_KEY;
+    if(o.date !== dateKey) o.date = dateKey;   // repair the record too
     if(!byDate[dateKey]) byDate[dateKey] = [];
     byDate[dateKey].push(o);
   });
@@ -3386,9 +3421,14 @@ function renderOrdersList() {
   }
 
   if(!orders.length) {
+    /* v196 (Rule 14): "Nothing saved on this phone yet" was true but useless -
+       it never said that Firebase is switched OFF on this handset, which is the
+       actual reason a delivery phone sees nothing the sales phone can see. */
     const _emptyWhy = fsOwnsOrders()
       ? ('Nothing in Firebase from '+(FS.windowFrom||'?')+' onwards for this filter.')
-      : (fsReadsOn() ? 'Waiting for Firebase.' : 'Nothing saved on this phone yet.');
+      : (fsReadsOn()
+          ? (FS.user ? 'Firebase connecting...' : 'Firebase is ON but this phone is NOT signed in - open Setup and sign in.')
+          : 'Firebase is OFF on this phone, so it only sees orders from the Google Sheet. Open Setup and tick "Read data from Firebase".');
     list.innerHTML = _srcBanner+'<div class="empty-state"><div class="empty-icon">📦</div>'
       +'<p>No orders</p><p style="font-size:12px;color:var(--muted);">'+_emptyWhy+'</p></div>';
     return;
@@ -11138,7 +11178,22 @@ async function pollOrdersFromSheet() {
       }
       const orderData = {
         id: orderId,
-        date: String(row['Date']||TODAY_KEY),
+        /* v196 FIX — THIS is why the delivery phone showed zero orders.
+           Apps Script getOrders() returns the raw row, and a date-typed cell
+           comes back from getValues() as a Date, which JSON-encodes to
+           "2026-09-08T18:30:00.000Z". This line kept that whole timestamp as
+           the order's date. Consequences, in order:
+             - saveOrders() wrote it to gf_orders_2026-09-08T18:30:00.000Z
+             - every reader requires /^\d{4}-\d{2}-\d{2}$/, so that key is
+               never read back: the order was saved where nothing looks
+             - renderDashboard compares o.date === TODAY_KEY, so Today's
+               Summary counted zero
+             - the ISO string is UTC, so in IST it can even read as yesterday
+           The toast fired because the order really was added; it just landed
+           somewhere no screen reads from, and vanished on the next reload.
+           Every other Sheet reader here already normalises. This was the only
+           one that did not. */
+        date: _normDayStr(row._date || row['Date']) || TODAY_KEY,
         customerName: String(row['Customer']||''),
         customerCategory: String(row['Category']||''),
         customerArea: String(row['Area']||''),
