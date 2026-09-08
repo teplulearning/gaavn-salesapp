@@ -276,7 +276,7 @@ body.gf-panel-open #app{ visibility:hidden; }
     <div class="top-bar-left">
       <span class="logo">🐄 GF</span>
       <span class="role-badge" id="role-badge">SALES</span>
-      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v196</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v197</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <!-- v196: this used to be a single button showing the language you would
@@ -2646,9 +2646,17 @@ const MR_DELIVERY = {
   'Confirmed orders shown expanded · tap Delivered when done':'ऑर्डर उघड्या दाखवल्या आहेत · माल दिल्यावर “डिलिव्हरी झाली” दाबा',
   'Payment Dues':'पैसे बाकी',
   // status pills
-  'Draft':'ड्राफ्ट', 'Confirmed':'डिलिव्हरी बाकी', 'Modified ⚠':'बदल केला ⚠',
+  /* v197: 'Confirmed' was 'डिलिव्हरी बाकी'. Literally that is "delivery
+     pending", which is true — but बाकी is the same word used for Dues in the
+     nav and for 'Due', so on the order card it read as MONEY owed. Changed to
+     'कन्फर्म', the word actually used in trade, which cannot be confused with
+     बाकी. 'Due' keeps बाकी, where it is correct. */
+  'Draft':'ड्राफ्ट', 'Confirmed':'कन्फर्म', 'Modified ⚠':'बदल केला ⚠',
   'Delivered':'पोहोच झाली', 'Paid ✓':'पैसे मिळाले ✓', 'Due 💰':'पैसे बाकी 💰',
   'Partial':'अर्धे पैसे',
+  /* v197: the filter chips are plain words with no symbol, so they never
+     matched the keys above and stayed in English. */
+  'Modified':'बदल केला', 'Due':'पैसे बाकी', 'Paid':'पैसे मिळाले',
   // buttons
   '✅ Submit Delivered':'✅ डिलिव्हरी झाली',
   '⚠️ Shortfall':'⚠️ माल कमी पडला',
@@ -9203,6 +9211,18 @@ function renderHistory() {
     if(todayOrders.length) dates = [TODAY_KEY, ...dates];
   }
 
+  /* v197: the delivery person sees the last 31 days only. He was given History
+     so he could correct a recent order — nobody comes back about 14 June.
+     IMPORTANT: this filters the LIST OF DATES SHOWN, nothing else. STATE.orders
+     is untouched, so Dues, outstanding balances, bills and statements still see
+     the customer's full history. Restricting the view must never restrict the
+     data the money is computed from. */
+  if(STATE.role==='delivery'){
+    const _c=new Date(); _c.setDate(_c.getDate()-31);
+    const _cut=_c.getFullYear()+'-'+String(_c.getMonth()+1).padStart(2,'0')+'-'+String(_c.getDate()).padStart(2,'0');
+    dates = dates.filter(d => d >= _cut);
+  }
+
   if(filterDate) dates = dates.filter(d => d === filterDate);
 
   const listEl  = document.getElementById('hist-list');
@@ -9232,6 +9252,11 @@ function renderHistory() {
   // are computed from, so History now uses it too — and any order whose item
   // lines disagree with its total is counted and surfaced instead of silently
   // smoothed over.
+  /* v197: renderHistory never checked the role, so it showed the delivery
+     person a period revenue total — the very figure v169 hides from him on the
+     Orders screen (_hideMoney). Same rule applied here. Per-order amounts stay
+     visible; he needs those to collect. */
+  const _histHideMoney = (STATE.role === 'delivery');
   let totalRev = 0, totalOrders = 0, totalCustomers = new Set();
   let mismatchN = 0, mismatchAmt = 0;
   dates.forEach(d => {
@@ -9247,9 +9272,9 @@ function renderHistory() {
   });
 
   summEl.innerHTML = `
-    <div style="background:var(--amber-soft,#FFF8E1);border:1.5px solid var(--amber,#C8830A);border-radius:20px;padding:4px 12px;font-size:11px;font-weight:700;color:var(--amber,#C8830A);">
+    ${_histHideMoney ? '' : `<div style="background:var(--amber-soft,#FFF8E1);border:1.5px solid var(--amber,#C8830A);border-radius:20px;padding:4px 12px;font-size:11px;font-weight:700;color:var(--amber,#C8830A);">
       ₹${totalRev.toLocaleString('en-IN')} total
-    </div>
+    </div>`}
     <div style="background:var(--surface);border:1.5px solid var(--border);border-radius:20px;padding:4px 12px;font-size:11px;font-weight:600;color:var(--muted);">
       ${totalOrders} orders
     </div>
@@ -9304,7 +9329,7 @@ function renderHistory() {
             <div style="font-size:12px;color:var(--muted);margin-top:2px;">${dayCount} orders${statusBar}</div>
           </div>
           <div style="text-align:right;flex-shrink:0;">
-            <div style="font-family:'DM Serif Display',serif;font-size:20px;color:var(--amber);">₹${dayRev.toLocaleString('en-IN')}</div>
+            ${_histHideMoney ? '' : `<div style="font-family:'DM Serif Display',serif;font-size:20px;color:var(--amber);">₹${dayRev.toLocaleString('en-IN')}</div>`}
             <div style="font-size:10px;color:var(--muted);margin-top:2px;" id="hday-${date}-chevron">▼ tap to view</div>
           </div>
         </div>
@@ -9312,6 +9337,7 @@ function renderHistory() {
         <div id="hday-${date}" style="display:${isToday?'block':'none'};border-top:1px solid var(--border);padding:10px 12px;">
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;align-items:center;">
             <button onclick="copyWhatsAppForDate('${date}')" style="background:#25D366;color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;">💬 WhatsApp</button>
+            ${STATE.role==='delivery' ? '' : `
             <button onclick="rebuildDateFromSheet('${date}')" style="background:#6A1B9A;color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;" title="Replace this device's copy of this day with the Sheet's version">🔄 Rebuild from Sheet</button>
             <button onclick="showSheetRowsForDate('${date}')" style="background:#455A64;color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;" title="Show exactly what the Google Sheet holds for this date">🔍 What's in the Sheet?</button>
             <button onclick="findDuplicatesForDate('${date}')" style="background:#C62828;color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;" title="Find orders that look entered twice">🧬 Find duplicates</button>
@@ -9321,7 +9347,7 @@ function renderHistory() {
               const loc=orders.length-fs;
               return '☁ '+fs+' from Sheet'+(loc?' · 📱 '+loc+' local only':'');
             })()}</span>
-            <button onclick="openResubmitDay('${date}')" style="background:var(--blue);color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;">🔄 Resubmit to Sheet</button>
+            <button onclick="openResubmitDay('${date}')" style="background:var(--blue);color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;">🔄 Resubmit to Sheet</button>`}
           </div>
           <div id="sheet-rows-${date}" style="display:none;background:var(--surface);border:1.5px solid var(--border);border-radius:10px;padding:12px;margin-bottom:10px;overflow-x:auto;"></div>
           ${renderHistoryOrders(orders, date)}
