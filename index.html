@@ -280,7 +280,7 @@ body.gf-panel-open #app{ visibility:hidden; }
     <div class="top-bar-left">
       <span class="logo">🐄 GF</span>
       <span class="role-badge" id="role-badge">SALES</span>
-      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v200</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v201</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <!-- v196: this used to be a single button showing the language you would
@@ -1725,6 +1725,22 @@ function fsStartOrdersListener(){
   // nothing for you to create in the console. `deleted` is filtered below.
   FS.ordersUnsub = FS.db.collection('orders').where('date','>=',from)
     .onSnapshot(function(snap){
+      /* v201 — THE ZERO-THEN-CORRECT FLICKER.
+         Firestore persistence makes onSnapshot fire TWICE: first from the local
+         IndexedDB cache, then from the server. On a phone whose cache is cold
+         the first callback arrives within milliseconds carrying ZERO documents,
+         and this code took it as truth and emptied STATE.orders. Seconds later
+         the server snapshot arrived with the real 873 and it filled back in.
+         That is the "1182 -> 0 -> correct after 15 seconds" you watched.
+         An empty snapshot that is only from the cache now proves nothing and is
+         ignored until the server has spoken at least once. */
+      const _fromCache = !!(snap.metadata && snap.metadata.fromCache);
+      if(_fromCache && snap.size===0 && !FS.ordersServerSeen){
+        FS.lastSnapSize=0; FS.lastSnapFromCache=true;
+        return;                       // keep what is on screen; wait for the server
+      }
+      if(!_fromCache) FS.ordersServerSeen=true;
+      FS.lastSnapFromCache=_fromCache;
       const list=[];
       let _del=0;
       snap.forEach(function(doc){
@@ -1746,7 +1762,14 @@ function fsStartOrdersListener(){
 function fsStartListening(){
   if(!FS.db||!FS.user) return;
   fsStopListening();
-  // customers first — orders resolve their names from this map, and the order
+  FS.ordersServerSeen=false;
+  /* v201: the orders listener used to be started INSIDE the customers snapshot
+     callback, so orders could not begin loading until all 634 customer records
+     had come down — the bulk of the wait you were seeing. Start it immediately
+     with the default window; the customers callback below still restarts it if
+     their Balance-As-Of dates turn out to need a wider one. */
+  try{ fsStartOrdersListener(); }catch(e){}
+  // customers next — orders resolve their names from this map, and the order
   // window depends on their Balance-As-Of dates
   FS.unsub.push(FS.db.collection('customers').onSnapshot(function(snap){
     const list=[]; FS.custById={};
@@ -1802,6 +1825,7 @@ function fsBoot(){
   if(!fsReadsOn()) return;             // switch is off — app is untouched
   if(!fsInit()) return;
   FS.auth.onAuthStateChanged(async function(u){
+    FS.authResolved=true;   // v201 — distinguishes "still booting" from "signed out"
     FS.user=u||null;
     if(!u){ fsStopListening(); fsShowLogin(); return; }
     try{ const d=await FS.db.collection('users').doc(u.uid).get();
@@ -2990,7 +3014,8 @@ function initApp() {
            +' · '+(STATE.customers||[]).length+' customers, '+(STATE.orders||[]).length+' orders live'
            +' · orders from '+(FS.windowFrom||'?')
            +' (Firebase returned '+(FS.lastSnapSize===undefined?'?':FS.lastSnapSize)
-           +(FS.lastSnapDeleted?(', '+FS.lastSnapDeleted+' deleted'):'')+')'
+           +(FS.lastSnapDeleted?(', '+FS.lastSnapDeleted+' deleted'):'')
+           +(FS.ordersServerSeen?', from server':', cache only — server not answered yet')+')'
            +' · saved to Firebase: '+FS_WRITES.ok
            +(FS_BLOCKED.merges?(' · legacy merges blocked: '+FS_BLOCKED.merges):'')
            +(FS_WRITES.failed?(', FAILED '+FS_WRITES.failed):'')
@@ -3483,8 +3508,12 @@ function renderOrdersList() {
      stopped merging. It must never look like live data. */
   let _srcBanner = '';
   if(fsReadsOn() && !fsOwnsOrders()){
-    const _why = !FS.user ? 'not signed in to Firebase'
-               : (FS.lastError ? ('Firebase read error: '+FS.lastError) : 'Firebase still connecting');
+    /* v201: during the first seconds after launch, auth has not resolved yet,
+       so FS.user is null and this said "not signed in" — which reads like a
+       fault when it is just the normal boot. */
+    const _why = FS.lastError ? ('Firebase read error: '+FS.lastError)
+               : (!FS.authResolved ? 'connecting to Firebase — one moment'
+               : (!FS.user ? 'not signed in to Firebase' : 'Firebase still connecting'));
     _srcBanner = '<div style="background:#fdecea;border:1.5px solid #e57373;border-radius:10px;'
       +'padding:9px 12px;margin-bottom:10px;font-size:12px;color:#b71c1c;line-height:1.45;">'
       +'<b>⚠ Showing this phone\'s saved copy, not live data</b><br>'+_why
