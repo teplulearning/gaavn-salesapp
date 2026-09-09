@@ -280,7 +280,7 @@ body.gf-panel-open #app{ visibility:hidden; }
     <div class="top-bar-left">
       <span class="logo">🐄 GF</span>
       <span class="role-badge" id="role-badge">SALES</span>
-      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v207</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v208</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <!-- v196: this used to be a single button showing the language you would
@@ -9783,8 +9783,8 @@ function renderHistory() {
         <div id="hday-${date}" style="display:${isToday?'block':'none'};border-top:1px solid var(--border);padding:10px 12px;">
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;align-items:center;">
             <button onclick="copyWhatsAppForDate('${date}')" style="background:#25D366;color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;">💬 WhatsApp</button>
-            ${STATE.role==='delivery' ? '' : `
-            <button onclick="rebuildDateFromSheet('${date}')" style="background:#6A1B9A;color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;" title="Replace this device's copy of this day with the Sheet's version">🔄 Rebuild from Sheet</button>
+            ${STATE.role!=='owner' ? '' : `
+            <button onclick="rebuildDateFromSheet('${date}')" style="background:#6A1B9A;color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;" title="CAUTION — Firebase is the record now. This replaces this day with the Sheet's older copy and can undo corrections.">🔄 Rebuild from Sheet</button>
             <button onclick="showSheetRowsForDate('${date}')" style="background:#455A64;color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;" title="Show exactly what the Google Sheet holds for this date">🔍 What's in the Sheet?</button>
             <button onclick="findDuplicatesForDate('${date}')" style="background:#C62828;color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;" title="Find orders that look entered twice">🧬 Find duplicates</button>
             <button onclick="findMissingFromSheet('${date}')" style="background:#00695C;color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;" title="Orders on this phone that never reached the Sheet">📤 Missing from Sheet?</button>
