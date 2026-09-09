@@ -280,7 +280,7 @@ body.gf-panel-open #app{ visibility:hidden; }
     <div class="top-bar-left">
       <span class="logo">🐄 GF</span>
       <span class="role-badge" id="role-badge">SALES</span>
-      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v201</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v202</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <!-- v196: this used to be a single button showing the language you would
@@ -1597,7 +1597,17 @@ function fsOrderToApp(id, d){
     payment:{mode:String(d.paymentMode||''), amount:parseFloat(d.paidAmount)||0,
              received:(parseFloat(d.paidAmount)||0)>0},
     notes:String(d.notes||''), createdBy:String(d.createdBy||''),
-    synced:true, fromSheet:true, fromFirestore:true
+    /* v202 — THIS is why a month of missing Sheet writes went unnoticed.
+       fsOrderToApp hard-coded synced:true, so from the moment reads moved to
+       Firestore (v179) EVERY order displayed "✓ Synced" whether or not the
+       Google Sheet had ever received it. The one visual signal that would have
+       caught this was switched off by the read layer.
+       Now: only claim synced when the Sheet write is known to have succeeded.
+       Orders written before this version carry no flag, so they are left alone
+       rather than lighting up the whole screen. */
+    synced: (d.sheetSynced===false ? false : true),
+    sheetSynced: (d.sheetSynced===undefined ? null : !!d.sheetSynced),
+    fromSheet:true, fromFirestore:true
   };
 }
 function fsPayToApp(id, d){
@@ -1884,6 +1894,7 @@ async function fsWriteOrder(o){
       paidAmount: parseFloat(o.payment&&o.payment.amount)||0,
       paymentMode: String((o.payment&&o.payment.mode)||''),
       // the app calls it "name", Firestore calls it "product" — inverse of fsOrderToApp
+      sheetSynced: (o.sheetSynced===undefined ? null : !!o.sheetSynced),   // v202
       items: (o.items||[]).map(function(i){ return {product:String(i.name||''),
         qty:parseFloat(i.qty)||0, unit:String(i.unit||''),
         rate:parseFloat(i.rate)||0, amount:parseFloat(i.amount)||0}; }),
@@ -3009,6 +3020,11 @@ function initApp() {
     setInterval(function(){
       const l=document.getElementById('fs-status-line'); if(!l) return;
       if(!fsReadsOn()){ l.textContent=''; return; }
+      // v202: Sheet health sits alongside the Firebase line, not hidden behind it
+      try{
+        const sl=document.getElementById('gf-sheet-health');
+        if(sl) sl.textContent = sheetHealthLine();
+      }catch(e){}
       l.textContent = FS.user
         ? ('signed in as '+FS.user.email.split('@')[0]+' · role '+(FS.role||'?')
            +' · '+(STATE.customers||[]).length+' customers, '+(STATE.orders||[]).length+' orders live'
@@ -3017,6 +3033,7 @@ function initApp() {
            +(FS.lastSnapDeleted?(', '+FS.lastSnapDeleted+' deleted'):'')
            +(FS.ordersServerSeen?', from server':', cache only — server not answered yet')+')'
            +' · saved to Firebase: '+FS_WRITES.ok
+           +'\n'+sheetHealthLine()
            +(FS_BLOCKED.merges?(' · legacy merges blocked: '+FS_BLOCKED.merges):'')
            +(FS_WRITES.failed?(', FAILED '+FS_WRITES.failed):'')
            +(FS_WRITES.lastErr?(' · '+FS_WRITES.lastErr):'')
@@ -5989,6 +6006,45 @@ function morningRemindSend(custId){
 
 function getSheetUrl() { return STATE.sheetUrl||localStorage.getItem(LS_URL)||''; }
 
+/* ── v202: Google Sheet write health ──────────────────────────────────────
+   The app was deliberately built so a Sheet failure can never block a sale.
+   That was right when the Sheet was the only store. Once Firebase became the
+   source of truth it meant a device could stop writing to the Sheet entirely
+   and nothing on screen would change. This records every attempt so the
+   Setup screen can show the truth. */
+const LS_SHEET_HEALTH='gf_sheet_health';
+function _sheetHealthGet(){
+  try{ return JSON.parse(localStorage.getItem(LS_SHEET_HEALTH)||'{}'); }catch(e){ return {}; }
+}
+function _sheetHealth(ok, err){
+  const h=_sheetHealthGet();
+  if(ok){ h.lastOk=Date.now(); h.okCount=(h.okCount||0)+1; h.failStreak=0; h.lastErr=''; }
+  else  { h.lastFail=Date.now(); h.failCount=(h.failCount||0)+1;
+          h.failStreak=(h.failStreak||0)+1; h.lastErr=String(err||'failed'); }
+  try{ localStorage.setItem(LS_SHEET_HEALTH, JSON.stringify(h)); }catch(e){}
+}
+/* Last 8 characters of the saved deployment, so two devices pointing at
+   different Apps Script deployments can be spotted by eye. */
+function sheetDeployTag(){
+  const u=getSheetUrl();
+  const m=u.match(/\/macros\/s\/([A-Za-z0-9_\-]+)\/exec/);
+  return m ? ('…'+m[1].slice(-8)) : '(none)';
+}
+function sheetHealthLine(){
+  const h=_sheetHealthGet(), u=getSheetUrl();
+  if(!u) return '⛔ No Google Sheet URL on this device — nothing you record here reaches the Sheet.';
+  const ago=function(t){ if(!t) return 'never';
+    const m=Math.round((Date.now()-t)/60000);
+    if(m<60) return m+' min ago';
+    const hr=Math.round(m/60); if(hr<48) return hr+' hr ago';
+    return Math.round(hr/24)+' days ago'; };
+  const stale = !h.lastOk || (Date.now()-h.lastOk) > 24*60*60*1000;
+  return (stale?'⚠ ':'✓ ')+'Sheet '+sheetDeployTag()
+    +' · last successful write '+ago(h.lastOk)
+    +(h.failStreak?(' · '+h.failStreak+' failed in a row'):'')
+    +(h.lastErr?(' · '+h.lastErr):'');
+}
+
 // ═══ v145: ACCESS-CODE LAYER ═══════════════════════════════════════
 // Appends &key=<code> to every request aimed at our Apps Script.
 // The code lives only in this device's localStorage (Setup screen) —
@@ -6324,7 +6380,15 @@ async function pushAllCustomersToSheet() {
 }
 
 async function syncOneOrder(orderId, orderObj) {
-  const url=getSheetUrl(); if(!url) return false;
+  const url=getSheetUrl();
+  if(!url){
+    /* v202: this used to return false in silence. A device with no Sheet URL
+       kept taking orders happily, mirrored them to Firebase, and the Sheet sat
+       frozen — for a month, in the end. Record it so Setup and Home can say so. */
+    try{ _sheetHealth(false,'no Sheet URL saved on this device'); }catch(e){}
+    if(orderObj) orderObj.sheetSynced=false;
+    return false;
+  }
   const order=orderObj||STATE.orders.find(o=>o.id===orderId); if(!order) return false;
   // v142 FIX: block malformed orders (prevents "undefined" junk rows in the Sheet)
   if(!order.id || String(order.id).trim()==='' || String(order.id)==='undefined') return false;
@@ -6349,6 +6413,8 @@ async function syncOneOrder(orderId, orderObj) {
   });
   try{ var _g=order.geo; if(_g){ params.set('notes',(order.notes||'')+(order.notes?'  ':'')+gfGeoTag(_g)); params.set('lat',String(_g.lat)); params.set('lng',String(_g.lng)); params.set('acc',String(_g.acc)); } }catch(e){}
   const ok = await fireAndWait(url+'?'+params.toString());
+  order.sheetSynced = !!ok;                      // v202
+  try{ _sheetHealth(ok, ok?'':'logOrder failed'); }catch(e){}
   try{ fsWriteOrder(order); }catch(e){}          // v180 mirror — cannot block the Sheet write
   if(ok) { order.synced=true; saveOrders(); renderOrdersList(); renderDashboard(); }
   return ok;
