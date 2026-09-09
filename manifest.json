@@ -1,0 +1,37 @@
+{
+  "id": "/gaavn-salesapp/",
+  "name": "Gaavn Fresh Sales",
+  "short_name": "Gaavn Sales",
+  "start_url": "/gaavn-salesapp/?sheetUrl=https://script.google.com/macros/s/AKfycbzbCsGNASVFCDZ8nnx42r3YgtLGTPEaEtswoYCsloVKyuKpyxzcjY4rNTAFx5tp2KASpg/exec",
+  "scope": "/gaavn-salesapp/",
+  "display": "standalone",
+  "background_color": "#F5F0E8",
+  "theme_color": "#C8830A",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
