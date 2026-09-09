@@ -280,7 +280,7 @@ body.gf-panel-open #app{ visibility:hidden; }
     <div class="top-bar-left">
       <span class="logo">🐄 GF</span>
       <span class="role-badge" id="role-badge">SALES</span>
-      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v202</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v203</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <!-- v196: this used to be a single button showing the language you would
@@ -515,20 +515,27 @@ body.gf-panel-open #app{ visibility:hidden; }
       <span id="conn-dot">⚪</span>&nbsp;<span id="conn-text">Google Sheet not yet tested</span>
     </div>
 
-    <!-- v179 -->
+    <!-- v179, simplified v203 -->
     <div style="background:#EAF3EA;border:1.5px solid #2E7D32;border-radius:10px;padding:12px 14px;margin:12px 0;">
-      <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;">
-        <input type="checkbox" id="fs-reads-chk" onchange="fsToggleReads(this.checked)"
-               style="width:20px;height:20px;margin-top:2px;flex-shrink:0;">
-        <span style="font-size:13px;line-height:1.6;">
-          <b>Read data from Firebase</b><br>
-          <span style="color:#5D6B5D;">Customers, orders and dues arrive live, on every phone, the moment they change —
-          no waiting, no refresh. <b>Every save still goes to the Google Sheet exactly as now, and is copied to
-          Firebase as well</b>, so the two stay in step. Turn this off at any time to go straight back to how the
-          app works today.</span>
-          <span id="fs-status-line" style="display:block;margin-top:6px;font-family:monospace;font-size:11px;color:#2E7D32;"></span>
-        </span>
-      </label>
+      <!-- v203: one plain line, no jargon. This is all sales and delivery see. -->
+      <div style="font-size:14px;font-weight:700;color:#1B5E20;" id="fs-plain-state">Connecting…</div>
+      <div style="font-size:12px;color:#5D6B5D;margin-top:4px;" id="fs-plain-note"></div>
+
+      <!-- v203: switch and technical read-out are owner-only. The class sits on
+           this WRAPPER, not on the label — applySetupRoleUI() sets display:''
+           for the owner, which would wipe the label's own display:flex. -->
+      <div class="owner-only" style="margin-top:10px;padding-top:10px;border-top:1px solid rgba(46,125,50,.25);">
+        <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;">
+          <input type="checkbox" id="fs-reads-chk" onchange="fsToggleReads(this.checked)"
+                 style="width:20px;height:20px;margin-top:2px;flex-shrink:0;">
+          <span style="font-size:12px;line-height:1.6;color:#5D6B5D;">
+            <b>Advanced — read data from Firebase</b><br>
+            Leave this on. It is how the app works. Turning it off makes this device read the
+            Google Sheet only, and it will fall out of step with every other device.
+            <span id="fs-status-line" style="display:block;margin-top:6px;font-family:monospace;font-size:11px;color:#2E7D32;white-space:pre-line;"></span>
+          </span>
+        </label>
+      </div>
       <!-- v183 -->
       <div class="owner-only" style="border-top:1px solid rgba(46,125,50,.25);margin-top:10px;padding-top:10px;">
         <div style="font-size:12px;line-height:1.6;color:#5D6B5D;">
@@ -1526,7 +1533,28 @@ const FS_LOGIN_DOMAIN='@gaavnfresh.invalid';
 let FS={app:null, auth:null, db:null, user:null, role:null, ready:false,
         unsub:[], custById:{}, lastError:'', ordersUnsub:null, windowFrom:''};
 
-function fsReadsOn(){ return localStorage.getItem(LS_FS_READS)==='1'; }
+/* v203 — Firebase is no longer optional.
+   The checkbox was a migration safety valve from August: opt-in, so a phone
+   that was reset, reinstalled or handed over came back with it OFF and quietly
+   fell back to reading the Google Sheet, with nothing on screen to say so.
+   That is how one tablet spent a month out of step with everyone else.
+   The migration is finished. Firebase is ON unless the owner deliberately
+   turns it off, and only the owner can see the switch. */
+const LS_FS_DEFAULTED='gf_fs_default_v203';
+(function _fsDefaultOnce(){
+  /* One-time: clear any stale "off" left by an old reset or a half-finished
+     setup, so every device lands on the new default exactly once. After this,
+     an explicit off by the owner is respected. */
+  try{
+    if(localStorage.getItem(LS_FS_DEFAULTED)!=='1'){
+      localStorage.removeItem(LS_FS_READS);
+      localStorage.setItem(LS_FS_DEFAULTED,'1');
+    }
+  }catch(e){}
+})();
+function fsReadsOn(){
+  try{ return localStorage.getItem(LS_FS_READS) !== '0'; }catch(e){ return true; }
+}
 
 /* ── v186: STATE.orders single-writer lock ─────────────────────────────────
    When Firebase is the source of truth, the Firestore listener in
@@ -3020,6 +3048,22 @@ function initApp() {
     setInterval(function(){
       const l=document.getElementById('fs-status-line'); if(!l) return;
       if(!fsReadsOn()){ l.textContent=''; return; }
+      /* v203: the line staff actually read. */
+      try{
+        const ps=document.getElementById('fs-plain-state');
+        const pn=document.getElementById('fs-plain-note');
+        if(ps){
+          if(!fsReadsOn()){ ps.textContent='⛔ Live sync is OFF on this device'; ps.style.color='#B3261E';
+            if(pn) pn.textContent='This device is not sharing data with the others. Tell the owner.'; }
+          else if(!FS.authResolved){ ps.textContent='Connecting…'; ps.style.color='#1B5E20';
+            if(pn) pn.textContent=''; }
+          else if(!FS.user){ ps.textContent='Please sign in'; ps.style.color='#B26A00';
+            if(pn) pn.textContent='Sign in with your username to start.'; }
+          else { ps.textContent='✓ Connected — live on every device'; ps.style.color='#1B5E20';
+            if(pn) pn.textContent='Signed in as '+String(FS.user.email||'').split('@')[0]
+                   +' · '+((STATE.orders||[]).length)+' orders'; }
+        }
+      }catch(e){}
       // v202: Sheet health sits alongside the Firebase line, not hidden behind it
       try{
         const sl=document.getElementById('gf-sheet-health');
@@ -11500,8 +11544,10 @@ function applyRoleUI() {
    Sheet, so it should never be sitting on a screen he can reach.
 
    Everything marked .owner-only is hidden for sales and delivery. What is left
-   is what those two actually need: whether the Sheet is reachable, the Firebase
-   switch, the force-update button, reminder language and UPI, and Switch Role.
+   is what those two actually need: whether the Sheet is reachable, a one-line
+   plain-words connection state (v203 — the Firebase switch itself is now
+   owner-only), the force-update button, reminder language and UPI, and
+   Switch Role.
    Hiding is a UI courtesy, not a security boundary — the real protection is the
    access code and the Firebase rules. It stops a shoulder-glance and a
    mistaken tap, which is the risk that actually exists here. */
