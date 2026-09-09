@@ -280,7 +280,7 @@ body.gf-panel-open #app{ visibility:hidden; }
     <div class="top-bar-left">
       <span class="logo">🐄 GF</span>
       <span class="role-badge" id="role-badge">SALES</span>
-      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v206</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v207</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <!-- v196: this used to be a single button showing the language you would
@@ -2473,7 +2473,7 @@ function allocatePaymentFIFO(custId, amountReceived) {
     });
     allocated.push({orderId: o.id, applied: apply, newStatus});
     remaining -= apply;
-    if(STATE.sheetUrl) syncOneOrder(o.id);
+    syncOneOrder(o.id);
   }
   return {allocated, surplus: remaining};
 }
@@ -3691,7 +3691,7 @@ function inlineMarkDelivered(orderId) {
   Object.assign(o, {status:'delivered', items:newItems, total:newTotal,
     deliveredBy:'delivery', deliveredAt:Date.now(), synced:false});
   saveOrders();
-  if(STATE.sheetUrl) syncOneOrder(orderId);
+  syncOneOrder(orderId);
   showToast('✅ Delivered! Now record payment.');
   renderOrdersList();
   // Immediately open payment modal
@@ -4937,7 +4937,7 @@ function saveEditOrder() {
 
   saveOrders();
   closeModal('modal-edit-order');
-  if(STATE.sheetUrl) syncOneOrder(orderId);
+  syncOneOrder(orderId);
   renderDashboard();
   renderOrdersList();
   // Also refresh History if it's open
@@ -5001,7 +5001,7 @@ function saveModification(orderId) {
 function approveModification(orderId) {
   const o=STATE.orders.find(x=>x.id===orderId); if(!o) return;
   Object.assign(o,{status:'delivered',approvedBy:STATE.role,synced:false});
-  saveOrders(); if(STATE.sheetUrl) syncOneOrder(orderId);
+  saveOrders(); syncOneOrder(orderId);
   showToast('✓ Approved'); renderApprovals(); renderDashboard();
 }
 
@@ -5067,7 +5067,7 @@ function savePayment(orderId) {
     payment:{mode,amount,received:!isDue,chequeNo,remarks,receivedAt:Date.now()},
     dueDate:isDue?TODAY_KEY:null,daysOverdue:0,synced:false});
   saveOrders(); closeModal('modal-order');
-  if(STATE.sheetUrl) syncOneOrder(orderId);
+  syncOneOrder(orderId);
   // Reduce opening balance if customer has one
   if(!isDue && amount > 0) {
     const cust = STATE.customers.find(c=>c.id===order.customerId);
@@ -5083,7 +5083,7 @@ function savePayment(orderId) {
 function finaliseOrder(orderId) {
   const o=STATE.orders.find(x=>x.id===orderId); if(!o) return;
   Object.assign(o,{status:'paid',finalisedBy:STATE.role,synced:false});
-  saveOrders(); if(STATE.sheetUrl) syncOneOrder(orderId);
+  saveOrders(); syncOneOrder(orderId);
   showToast('✓ Order finalised'); renderDashboard(); renderOrdersList();
 }
 
@@ -6610,6 +6610,23 @@ async function pushAllCustomersToSheet() {
 }
 
 async function syncOneOrder(orderId, orderObj) {
+  /* ── v207 THE BUG BEHIND THE WHOLE MONTH ──────────────────────────────
+     fsWriteOrder() had exactly one call site: further down this function,
+     after the Sheet write. And every one of the eleven callers of
+     syncOneOrder() was written as `syncOneOrder(...)`.
+     So on a device with no Sheet URL, NOTHING reached Firebase either — not
+     a new order, not an edit, not a status change. The edit lived in that
+     phone's memory until the next Firestore snapshot silently replaced it,
+     which is why corrections "disappeared" and were entered again, and why
+     there are duplicates.
+     Firebase is the record. It is written FIRST, always, whatever the Sheet
+     is doing. The Sheet is a copy and may fail without taking the record
+     with it. */
+  const _o = orderObj || (STATE.orders||[]).find(o=>o.id===orderId);
+  if(_o && _o.id && String(_o.id)!=='undefined' && !isOrderDeleted(_o.id)){
+    if(!_o.date || _o.date==='undefined') _o.date = TODAY_KEY;
+    try{ fsWriteOrder(_o); }catch(e){ console.warn('fsWriteOrder', e); }
+  }
   const url=getSheetUrl();
   if(!url){
     /* v202: this used to return false in silence. A device with no Sheet URL
@@ -6645,7 +6662,8 @@ async function syncOneOrder(orderId, orderObj) {
   const ok = await fireAndWait(url+'?'+params.toString());
   order.sheetSynced = !!ok;                      // v202
   try{ _sheetHealth(ok, ok?'':'logOrder failed'); }catch(e){}
-  try{ fsWriteOrder(order); }catch(e){}          // v180 mirror — cannot block the Sheet write
+  /* v207: the mirror moved to the top of this function so it runs even when
+     there is no Sheet URL. Kept here as a no-op comment for the history. */
   if(ok) { order.synced=true; saveOrders(); renderOrdersList(); renderDashboard(); }
   return ok;
 }
@@ -8788,7 +8806,7 @@ function markDelivered(orderId) {
   Object.assign(o,{status:'delivered', items:newItems, total:newTotal,
     deliveredBy:'delivery', deliveredAt:Date.now(), synced:false});
   saveOrders();
-  if(STATE.sheetUrl) syncOneOrder(orderId);
+  syncOneOrder(orderId);
   closeModal('modal-order');
   showToast('✅ Marked as delivered');
   // Open payment modal
@@ -8833,7 +8851,7 @@ function submitApprovalRequest() {
   });
   saveOrders();
   // Sync to sheet — sales person's app polls sheet and will see modified status
-  if(STATE.sheetUrl) syncOneOrder(orderId);
+  syncOneOrder(orderId);
   closeModal('modal-approval-request');
   closeModal('modal-order');
   renderOrdersList();
@@ -8894,7 +8912,7 @@ function saveDeliveryPayment() {
     }
   }
   saveOrders();
-  if(STATE.sheetUrl) syncOneOrder(orderId);
+  syncOneOrder(orderId);
   closeModal('modal-delivery-payment');
   showToast(isPending?'⏰ Marked as pending payment':isPart?`💰 Partial ₹${amount} recorded`:`✓ ₹${amount} collected via ${mode}`);
   renderDashboard(); renderOrdersList();
@@ -11084,6 +11102,9 @@ async function flushDirtyBalances(){
 
 // Sync a payment entry to Google Sheet (Payments tab)
 async function syncPaymentToSheet(p) {
+  /* v207: same fault as orders — the Firestore mirror sat after this guard,
+     so a device without a Sheet URL never recorded a payment in Firebase. */
+  try{ fsWritePayment(p); }catch(e){ console.warn('fsWritePayment', e); }
   const url = getSheetUrl(); if(!url) return;
   const params = new URLSearchParams({
     action:'logPayment',
@@ -11099,7 +11120,7 @@ async function syncPaymentToSheet(p) {
   });
   try{ var _g=p.geo; if(_g){ params.set('notes',(p.notes||'')+(p.notes?'  ':'')+gfGeoTag(_g)); params.set('lat',String(_g.lat)); params.set('lng',String(_g.lng)); params.set('acc',String(_g.acc)); } }catch(e){}
   await fireAndForget(url+'?'+params.toString());
-  try{ fsWritePayment(p); }catch(e){}            // v180 mirror
+  /* v207: mirror moved above the URL guard. */
 }
 
 // Update order payment info and status in localStorage
