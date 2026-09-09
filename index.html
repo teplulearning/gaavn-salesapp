@@ -280,7 +280,7 @@ body.gf-panel-open #app{ visibility:hidden; }
     <div class="top-bar-left">
       <span class="logo">🐄 GF</span>
       <span class="role-badge" id="role-badge">SALES</span>
-      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v205</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v206</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <!-- v196: this used to be a single button showing the language you would
@@ -1801,6 +1801,15 @@ function fsOrdersWindowStart(){
     const d2=new Date(); d2.setDate(d2.getDate()-FS_WINDOW_DAYS);
     cut = d2.getFullYear()+'-'+String(d2.getMonth()+1).padStart(2,'0')+'-'+String(d2.getDate()).padStart(2,'0');
   }
+  /* v206: a stale gf_cutover or one old balanceAsOf could drag this back
+     months — the window was running from 2026-01-07, so every launch pulled
+     all 1,175 orders. Floor it. 150 days still covers every Balance-As-Of in
+     use today, so no customer's dues lose an order; once you re-baseline,
+     this can come down to 45 and the reads drop again. */
+  const FLOOR_DAYS=150;
+  const f=new Date(); f.setDate(f.getDate()-FLOOR_DAYS);
+  const floor=f.getFullYear()+'-'+String(f.getMonth()+1).padStart(2,'0')+'-'+String(f.getDate()).padStart(2,'0');
+  if(cut < floor){ FS.windowFloored=cut; cut=floor; } else { FS.windowFloored=''; }
   return cut;
 }
 
@@ -1929,10 +1938,55 @@ function fsStartListening(){
   try{ fsStartOrdersListener(); }catch(e){}
   // customers next — orders resolve their names from this map, and the order
   // window depends on their Balance-As-Of dates
-  FS.unsub.push(FS.db.collection('customers').onSnapshot(function(snap){
-    const list=[]; FS.custById={};
-    snap.forEach(function(doc){ const c=fsCustToApp(doc.id, doc.data());
-      FS.custById[doc.id]=c; list.push(c); });
+  /* ── v206 READ COST ──────────────────────────────────────────────────
+     This listener re-read all 634 customer documents on every single app
+     launch, on every device. Firestore bills per document returned, so four
+     phones opening the app five times each cost 12,680 reads before anyone
+     did any work — and that is what pushed the project past the free daily
+     ceiling and stopped it serving.
+     Now: the list is kept in localStorage and only documents CHANGED since
+     the last visit are fetched. fsWriteCustomer() has always stamped
+     updatedAt, so any edit is picked up. A full reload still happens on the
+     first run, if the cache is empty, and once a week so it can self-heal. */
+  let _custSeed=[], _custSince='';
+  try{
+    _custSeed=JSON.parse(localStorage.getItem(LS_CUSTS)||'[]')||[];
+    const mark=JSON.parse(localStorage.getItem('gf_cust_sync')||'{}');
+    const weekOld=(Date.now()-(mark.at||0))>7*24*60*60*1000;
+    if(_custSeed.length && mark.max && !weekOld) _custSince=mark.max;
+  }catch(e){ _custSeed=[]; _custSince=''; }
+
+  if(_custSince){
+    FS.custById={};
+    _custSeed.forEach(function(c){ if(c&&c.id) FS.custById[c.id]=c; });
+    STATE.customers=_custSeed.slice();
+    FS.custDelta=true;
+  } else { FS.custDelta=false; }
+
+  const _custQ = _custSince
+    ? FS.db.collection('customers').where('updatedAt','>',_custSince)
+    : FS.db.collection('customers');
+
+  FS.unsub.push(_custQ.onSnapshot(function(snap){
+    let list, maxUpd=_custSince||'';
+    if(_custSince){
+      snap.forEach(function(doc){
+        const c=fsCustToApp(doc.id, doc.data());
+        FS.custById[doc.id]=c;
+        const u=String((doc.data()||{}).updatedAt||'');
+        if(u>maxUpd) maxUpd=u;
+      });
+      list=Object.keys(FS.custById).map(function(k){ return FS.custById[k]; });
+      FS.custFetched=snap.size;
+    } else {
+      list=[]; FS.custById={};
+      snap.forEach(function(doc){ const c=fsCustToApp(doc.id, doc.data());
+        FS.custById[doc.id]=c; list.push(c);
+        const u=String((doc.data()||{}).updatedAt||'');
+        if(u>maxUpd) maxUpd=u; });
+      FS.custFetched=snap.size;
+    }
+    try{ localStorage.setItem('gf_cust_sync', JSON.stringify({max:maxUpd, at:Date.now()})); }catch(e){}
     STATE.customers=list;
     try{ localStorage.setItem(LS_CUSTS, JSON.stringify(list)); }catch(e){}
     // (re)start the orders listener once the as-of dates are known
@@ -3197,6 +3251,10 @@ function initApp() {
            +(FS.lastSnapDeleted?(', '+FS.lastSnapDeleted+' deleted'):'')
            +(FS.ordersServerSeen?', from server':', cache only — server not answered yet')+')'
            +(FS.pendingShown?('\n⚠ '+FS.pendingShown+' order(s) on this device have NOT reached Firebase — tap Submit All'):'')
+           +'\nreads this launch: '+((FS.custFetched===undefined?'?':FS.custFetched)
+             +' customer'+(FS.custDelta?' (changed only)':' (full load)')
+             +' + '+(FS.lastSnapSize===undefined?'?':FS.lastSnapSize)+' order')
+           +(FS.windowFloored?(' · window floored from '+FS.windowFloored):'')
            +' · saved to Firebase: '+FS_WRITES.ok
            +'\n'+sheetHealthLine()
            +(FS_BLOCKED.merges?(' · legacy merges blocked: '+FS_BLOCKED.merges):'')
