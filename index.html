@@ -280,7 +280,7 @@ body.gf-panel-open #app{ visibility:hidden; }
     <div class="top-bar-left">
       <span class="logo">🐄 GF</span>
       <span class="role-badge" id="role-badge">SALES</span>
-      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v203</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v205</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <!-- v196: this used to be a single button showing the language you would
@@ -520,6 +520,18 @@ body.gf-panel-open #app{ visibility:hidden; }
       <!-- v203: one plain line, no jargon. This is all sales and delivery see. -->
       <div style="font-size:14px;font-weight:700;color:#1B5E20;" id="fs-plain-state">Connecting…</div>
       <div style="font-size:12px;color:#5D6B5D;margin-top:4px;" id="fs-plain-note"></div>
+
+      <!-- v205 -->
+      <div class="owner-only" style="margin-top:10px;padding-top:10px;border-top:1px solid rgba(46,125,50,.25);">
+        <div style="font-size:12px;line-height:1.6;color:#5D6B5D;margin-bottom:8px;">
+          <b>Send these settings to every device</b><br>
+          Publishes this device's Sheet URL and access code to all phones and tablets signed in
+          with a Gaavn username. They pick it up automatically — nothing to type on their side,
+          and a reinstalled phone is configured the moment it signs in.
+        </div>
+        <button class="btn btn-primary" onclick="fsPublishConfig()" style="background:#1A527A;">⚙ Send settings to all devices</button>
+        <div id="publish-cfg-msg" style="font-size:12px;margin-top:8px;line-height:1.5;"></div>
+      </div>
 
       <!-- v203: switch and technical read-out are owner-only. The class sits on
            this WRAPPER, not on the label — applySetupRoleUI() sets display:''
@@ -1679,10 +1691,38 @@ function fsMirrorToDayCache(list){
       const d=(o && o.date && o.date!=='undefined') ? String(o.date).slice(0,10) : TODAY_KEY;
       (byDate[d]=byDate[d]||[]).push(o);
     });
+    /* ── v204 DATA-LOSS FIX ────────────────────────────────────────────────
+       This used to overwrite each day's key with Firestore's list outright.
+       An order created on this device that had NOT yet reached Firebase — no
+       signal, no Sheet URL, Firebase switched off — existed ONLY in that key,
+       and was destroyed the moment the listener delivered. On a device holding
+       a morning's unsent work that is real, unrecoverable data loss.
+       Now: anything local that Firestore does not have AND that is not marked
+       synced is carried over, so it survives to be pushed. */
+    const fsIds=new Set(); (list||[]).forEach(function(o){ if(o&&o.id) fsIds.add(String(o.id)); });
+    let _kept=0;
     Object.keys(byDate).forEach(function(d){
-      try{ localStorage.setItem(LS_PREFIX+d, JSON.stringify(byDate[d])); }catch(e){}
+      let keep=[];
+      try{
+        const prev=JSON.parse(localStorage.getItem(LS_PREFIX+d)||'[]');
+        keep=(prev||[]).filter(function(o){
+          return o && o.id && !fsIds.has(String(o.id)) && o.synced!==true && !isOrderDeleted(o.id);
+        });
+      }catch(e){}
+      _kept+=keep.length;
+      try{ localStorage.setItem(LS_PREFIX+d, JSON.stringify(byDate[d].concat(keep))); }catch(e){}
     });
-    try{ localStorage.setItem(LS_ORDERS, JSON.stringify(byDate[TODAY_KEY]||[])); }catch(e){}
+    try{
+      let keepToday=[];
+      try{
+        const prevT=JSON.parse(localStorage.getItem(LS_ORDERS)||'[]');
+        keepToday=(prevT||[]).filter(function(o){
+          return o && o.id && !fsIds.has(String(o.id)) && o.synced!==true && !isOrderDeleted(o.id);
+        });
+      }catch(e){}
+      localStorage.setItem(LS_ORDERS, JSON.stringify((byDate[TODAY_KEY]||[]).concat(keepToday)));
+    }catch(e){}
+    FS.pendingKept=_kept;
     // Prune days INSIDE the Firestore window that no longer have any order, so a
     // deletion made on another phone disappears here too. Days before the window
     // are left alone — Firestore was never asked about them.
@@ -1693,7 +1733,16 @@ function fsMirrorToDayCache(list){
         if(!k || k.indexOf(LS_PREFIX)!==0) continue;
         const d=k.slice(LS_PREFIX.length);
         if(!/^\d{4}-\d{2}-\d{2}$/.test(d)) continue;
-        if(d>=from && !byDate[d]){ try{ localStorage.removeItem(k); }catch(e){} }
+        if(d>=from && !byDate[d]){
+          /* v204: never prune a day that still holds unsent local orders. */
+          let hasPending=false;
+          try{
+            hasPending=(JSON.parse(localStorage.getItem(k)||'[]')||[]).some(function(o){
+              return o && o.id && o.synced!==true && !isOrderDeleted(o.id);
+            });
+          }catch(e){}
+          if(!hasPending){ try{ localStorage.removeItem(k); }catch(e){} }
+        }
       }
     }
     FS.lastMirror=Date.now();
@@ -1790,6 +1839,19 @@ function fsStartOrdersListener(){
          matched nothing, or that everything it matched was tombstoned. Record
          both so the Setup line can say which. */
       FS.lastSnapSize=snap.size; FS.lastSnapDeleted=_del;
+      /* v204: a narrow, deliberate exception to the single-writer rule. Orders
+         this device created but has not yet pushed are invisible to Firestore,
+         so the listener's list would hide them and she could not tell they were
+         still waiting. Only orders that are BOTH absent from Firestore AND not
+         marked synced are added back — never Sheet-era cached copies, which is
+         what inflated the count to 1458 before v186. */
+      try{
+        const have=new Set(list.map(function(o){return String(o.id);}));
+        const pend=(typeof getPendingOrders==='function'?getPendingOrders():[])
+          .filter(function(o){ return o && o.id && !have.has(String(o.id)); });
+        if(pend.length){ list.push.apply(list, pend); FS.pendingShown=pend.length; }
+        else FS.pendingShown=0;
+      }catch(e){ FS.pendingShown=0; }
       STATE.orders=list;
       fsMirrorToDayCache(list);   // v188 — keep History and the day views alive
       fsRepaint();
@@ -1797,9 +1859,67 @@ function fsStartOrdersListener(){
   FS.unsub.push(function(){ if(FS.ordersUnsub) FS.ordersUnsub(); });
 }
 
+/* ── v205: THE SETTINGS BELONG TO THE ACCOUNT, NOT THE DEVICE ─────────────
+   Everything that went wrong this week traces to one decision: the Google
+   Sheet URL and the access code were kept in each handset's localStorage.
+   A phone that was reset, reinstalled, handed over or opened from a stale
+   install link came back without them — and then:
+     · orders were written to Firebase and never to the Sheet
+     · deletions were never sent, leaving rows behind (the "zombies")
+     · nothing on screen said so
+   So the settings now live in Firestore at config/app. Every signed-in device
+   reads them and keeps working. Sign in with the same username on a new phone
+   and it is configured before you reach the Setup screen. There is nothing to
+   type and nothing to get wrong. */
+function fsStartConfigListener(){
+  try{
+    FS.unsub.push(FS.db.collection('config').doc('app').onSnapshot(function(doc){
+      if(!doc.exists) return;
+      const c=doc.data()||{};
+      let changed=false;
+      if(c.sheetUrl && String(c.sheetUrl).indexOf('https://script.google.com')===0){
+        if(localStorage.getItem(LS_URL)!==c.sheetUrl){
+          localStorage.setItem(LS_URL, c.sheetUrl); changed=true;
+        }
+        STATE.sheetUrl=c.sheetUrl;
+      }
+      if(c.apiKey && localStorage.getItem('gf_api_key')!==c.apiKey){
+        localStorage.setItem('gf_api_key', c.apiKey); changed=true;
+      }
+      FS.configSeen=true;
+      if(changed){
+        try{ updateSheetDot(); }catch(e){}
+        try{ showToast('⚙ Settings received — this device is configured'); }catch(e){}
+        /* anything that failed to reach the Sheet for want of a URL can go now */
+        try{ setTimeout(function(){ autoSyncPending(false); }, 1200); }catch(e){}
+      }
+    }, function(err){ console.warn('config', err); }));
+  }catch(e){ console.warn('config listener', e); }
+}
+/* Owner pushes the current device's settings to every other device. */
+async function fsPublishConfig(){
+  const out=document.getElementById('publish-cfg-msg');
+  const say=function(h){ if(out) out.innerHTML=h; };
+  if(!FS.db||!FS.user){ say('<span style="color:#C62828;">Not signed in to Firebase.</span>'); return; }
+  if(STATE.role!=='owner'){ say('<span style="color:#C62828;">Owner only.</span>'); return; }
+  const url=getSheetUrl(), key=localStorage.getItem('gf_api_key')||'';
+  if(!url){ say('<span style="color:#C62828;">No Sheet URL on this device to publish.</span>'); return; }
+  say('publishing…');
+  try{
+    await FS.db.collection('config').doc('app').set({
+      sheetUrl:url, apiKey:key,
+      updatedAt:new Date().toISOString(),
+      updatedBy:(FS.user.email||'')
+    },{merge:true});
+    say('<b style="color:#2E7D32;">✓ Sent to every device.</b> Any phone signed in with a Gaavn '
+       +'username now uses this Sheet URL and code automatically — including new phones and reinstalls.');
+  }catch(e){ say('<span style="color:#C62828;">Failed: '+(e.message||e)+'</span>'); }
+}
+
 function fsStartListening(){
   if(!FS.db||!FS.user) return;
   fsStopListening();
+  fsStartConfigListener();   // v205 — settings first, so writes have somewhere to go
   FS.ordersServerSeen=false;
   /* v201: the orders listener used to be started INSIDE the customers snapshot
      callback, so orders could not begin loading until all 634 customer records
@@ -3076,6 +3196,7 @@ function initApp() {
            +' (Firebase returned '+(FS.lastSnapSize===undefined?'?':FS.lastSnapSize)
            +(FS.lastSnapDeleted?(', '+FS.lastSnapDeleted+' deleted'):'')
            +(FS.ordersServerSeen?', from server':', cache only — server not answered yet')+')'
+           +(FS.pendingShown?('\n⚠ '+FS.pendingShown+' order(s) on this device have NOT reached Firebase — tap Submit All'):'')
            +' · saved to Firebase: '+FS_WRITES.ok
            +'\n'+sheetHealthLine()
            +(FS_BLOCKED.merges?(' · legacy merges blocked: '+FS_BLOCKED.merges):'')
@@ -4527,6 +4648,13 @@ async function executeDeleteOrder(orderId, orderDate) {
 
   // 3. Delete from Google Sheet if URL is set
   const url = getSheetUrl();
+  if(!url){
+    /* v205: previously this simply skipped, and nothing ever retried — the row
+       stayed in the Sheet for good. That is where the stale "zombie" rows came
+       from. The tombstone is already recorded above with sheetOk unset, so the
+       retry in autoSyncHistory will send it once a URL arrives from config. */
+    try{ _sheetHealth(false,'deletion queued — no Sheet URL yet'); }catch(e){}
+  }
   if(url) {
     try {
       const params = new URLSearchParams({ action: 'deleteOrder', orderId, date: orderDate||TODAY_KEY });
