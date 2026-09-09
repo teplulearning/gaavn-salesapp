@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Gaavn Fresh — Sheet repair</title>
+<style>
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+       max-width:1000px;margin:0 auto;padding:18px;background:#FAF7F2;color:#2B2118;}
+  h1{font-size:20px;margin:0 0 4px;}
+  .sub{font-size:13px;color:#7A6A58;margin-bottom:14px;line-height:1.5;}
+  .warn{background:#FFF8E1;border:1.5px solid #FFB300;border-radius:10px;
+        padding:10px 14px;font-size:13px;margin-bottom:14px;color:#7A5200;line-height:1.5;}
+  .card{background:#fff;border:1.5px solid #E5DCCF;border-radius:12px;padding:16px;margin-bottom:14px;}
+  label{display:block;font-size:12px;font-weight:700;margin:10px 0 4px;color:#5A4A38;}
+  input{width:100%;padding:10px;border:1.5px solid #E5DCCF;border-radius:8px;font-size:15px;box-sizing:border-box;}
+  .hint{font-size:11.5px;color:#7A6A58;margin-top:3px;line-height:1.4;}
+  button{background:#C87A2E;color:#fff;border:0;border-radius:8px;padding:12px 18px;
+         font-size:15px;font-weight:700;cursor:pointer;margin-top:12px;margin-right:8px;}
+  button:disabled{opacity:.45;cursor:default;}
+  #apply{background:#B3261E;}
+  pre{background:#22201D;color:#E8E2D8;padding:14px;border-radius:10px;font-size:12px;
+      line-height:1.55;white-space:pre;overflow:auto;max-height:70vh;}
+</style>
+</head>
+<body>
+
+<h1>Sheet repair v2 — bring the Sheet back in line with Firebase</h1>
+<div class="sub">
+  Firebase is the record. This finds every order the Google Sheet is missing or has
+  wrong, pushes it in, and removes rows for orders that were deleted in the app.
+  Day totals rebuild themselves as it goes.
+</div>
+
+<div class="warn">
+  <b>This writes to the Google Sheet.</b> It does not touch Firebase at all —
+  Firebase is only read. Nothing is written until you press <b>Apply</b>, and the
+  dry run shows you every single change first.
+</div>
+
+<div class="card">
+  <label>Apps Script web app URL</label>
+  <input id="url" placeholder="https://script.google.com/macros/s/…/exec">
+  <label>Access code</label>
+  <input id="key" placeholder="the code from the app's Setup screen">
+  <label>Months to repair (comma separated)</label>
+  <input id="month" value="2026-08,2026-09">
+  <label>Firebase username</label>
+  <input id="u" placeholder="your gmail address" autocomplete="username">
+  <label>Firebase password</label>
+  <input id="p" type="password" autocomplete="current-password">
+  <label>What to apply</label>
+  <select id="mode" style="width:100%;padding:10px;border:1.5px solid #E5DCCF;border-radius:8px;font-size:15px;">
+    <option value="safe" selected>Safe only — missing orders, wrong amounts, deleted rows (skip date changes)</option>
+    <option value="all">Everything, including the date corrections</option>
+  </select>
+  <div class="hint">Start with Safe. Only choose Everything once you have checked a few
+    of the date differences against your own records.</div>
+  <button id="dry">1 · Dry run</button>
+  <button id="apply" disabled>2 · Apply to the Sheet</button>
+</div>
+
+<pre id="out">Waiting…</pre>
+
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<script>
+const CFG={apiKey:"AIzaSyAI8NvjxdcmoG2UinhJ0LZ0EdL18b-foZ0",
+  authDomain:"gaavnfresh-sales.firebaseapp.com",projectId:"gaavnfresh-sales",
+  storageBucket:"gaavnfresh-sales.firebasestorage.app",
+  messagingSenderId:"974451495449",appId:"1:974451495449:web:3985b05c49e52b5fbad088"};
+const LOGIN_DOMAIN='@gaavnfresh.invalid';
+const out=document.getElementById('out');
+let buf=[]; function log(s){ buf.push(s===undefined?'':s); out.textContent=buf.join('\n'); out.scrollTop=out.scrollHeight; }
+function rs(n){ return 'Rs '+Math.round(n||0).toLocaleString('en-IN'); }
+function pad(s,w){ s=String(s); return s.length>=w?s.slice(0,w):s+' '.repeat(w-s.length); }
+function lpad(s,w){ s=String(s); return s.length>=w?s:' '.repeat(w-s.length)+s; }
+function normDay(d){
+  d=String(d||'').trim();
+  if(d.indexOf('T')>0){ const x=new Date(d); if(!isNaN(x))
+    return x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0')+'-'+String(x.getDate()).padStart(2,'0'); }
+  const m=d.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if(m) return m[3]+'-'+String(m[2]).padStart(2,'0')+'-'+String(m[1]).padStart(2,'0');
+  return d.slice(0,10);
+}
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+let PLAN=null, URL_='', KEY_='';
+
+async function build(){
+  URL_=document.getElementById('url').value.trim();
+  KEY_=document.getElementById('key').value.trim();
+  const months=document.getElementById('month').value.split(',').map(x=>x.trim().slice(0,7)).filter(Boolean);
+  if(!URL_){ log('Paste the Apps Script URL first.'); return null; }
+
+  const q=URL_+'?action=ping'+(KEY_?('&key='+encodeURIComponent(KEY_)):'')+'&_='+Date.now();
+  let ping; try{ ping=await (await fetch(q,{cache:'no-store'})).json(); }catch(e){ log('Sheet unreachable: '+e.message); return null; }
+  if(!ping||ping.error){ log('Sheet refused: '+JSON.stringify(ping)); return null; }
+  log('Sheet responding.');
+
+  if(!firebase.apps.length) firebase.initializeApp(CFG);
+  const auth=firebase.auth(), db=firebase.firestore();
+  let u=document.getElementById('u').value.trim();
+  if(u.indexOf('@')<0) u=u.toLowerCase()+LOGIN_DOMAIN;
+  await auth.signInWithEmailAndPassword(u, document.getElementById('p').value);
+
+  const cust={};
+  (await db.collection('customers').get()).forEach(d=>{ const x=d.data()||{};
+    cust[d.id]={name:String(x.name||''),cat:String(x.category||''),area:String(x.area||'')}; });
+
+  const live={}, dead={};
+  (await db.collection('orders').get()).forEach(d=>{
+    const x=d.data()||{};
+    const day=normDay(x.date);
+    if(months.indexOf(day.slice(0,7))<0) return;
+    const c=cust[x.customerId]||{};
+    const rec={id:d.id, date:day, cid:x.customerId||'',
+      name:c.name||x.customerNameAtImport||'', cat:c.cat||'', area:c.area||'',
+      status:String(x.status||'confirmed'), total:parseFloat(x.total)||0,
+      paidAmount:parseFloat(x.paidAmount)||0, paymentMode:String(x.paymentMode||''),
+      notes:String(x.notes||''), createdBy:String(x.createdBy||''),
+      items:(x.items||[]).map(i=>({name:String(i.product||i.name||''),qty:parseFloat(i.qty)||0,
+        unit:String(i.unit||''),rate:parseFloat(i.rate)||0,amount:parseFloat(i.amount)||0}))};
+    if(x.deleted===true) dead[d.id]=rec; else live[d.id]=rec;
+  });
+  log('Firebase: '+Object.keys(live).length+' live, '+Object.keys(dead).length+' deleted, in '+months.join(' + '));
+
+  const sheet={};
+  for(const m of months){
+    const sq=URL_+'?action=getMonthOrders&month='+m+(KEY_?('&key='+encodeURIComponent(KEY_)):'')+'&_='+Date.now();
+    const sd=await (await fetch(sq,{cache:'no-store'})).json();
+    if(sd.error){ log('Sheet error for '+m+': '+sd.error); return null; }
+    (sd.orders||[]).forEach(row=>{
+      const id=String(row['Order ID']||'').trim();
+      if(!id||id.indexOf('TOTAL:')===0||id.indexOf('RESUBMIT:')===0) return;
+      const t=parseFloat(row['Order Total (Rs)'])||0;
+      if(!sheet[id]) sheet[id]={date:normDay(row._date||row['Date']),total:0};
+      if(t>sheet[id].total) sheet[id].total=t;
+    });
+  }
+  log('Sheet: '+Object.keys(sheet).length+' orders in those months.');
+  log('');
+
+  const push=[], drop=[];
+  Object.values(live).forEach(o=>{
+    const s=sheet[o.id];
+    if(!s) push.push({o:o, kind:'missing', why:'missing from the Sheet'});
+    else if(Math.abs(s.total-o.total)>=1) push.push({o:o, kind:'amount', why:'Sheet says '+rs(s.total)+', Firebase says '+rs(o.total)});
+    else if(s.date!==o.date) push.push({o:o, kind:'date', why:'Sheet has it on '+s.date+', Firebase on '+o.date});
+  });
+  Object.values(dead).forEach(o=>{ if(sheet[o.id]) drop.push(o); });
+  return {push:push, drop:drop};
+}
+
+document.getElementById('dry').onclick=async function(){
+  const b=this; b.disabled=true; buf=[]; log('Reading both sides…');
+  try{
+    PLAN=await build();
+    if(!PLAN){ b.disabled=false; return; }
+    log('════ DRY RUN — nothing written ════'); log('');
+    const K=function(k){ return PLAN.push.filter(x=>x.kind===k); };
+    const miss=K('missing'), amt=K('amount'), dat=K('date');
+    log('  A · missing from the Sheet ......... '+miss.length+'   '+rs(miss.reduce((s,x)=>s+x.o.total,0)));
+    log('  B · amounts disagree ............... '+amt.length+'   '+rs(amt.reduce((s,x)=>s+x.o.total,0)));
+    log('  C · same order, DIFFERENT DATE ..... '+dat.length+'   '+rs(dat.reduce((s,x)=>s+x.o.total,0)));
+    log('  D · deleted in app, still in Sheet . '+PLAN.drop.length+'   '+rs(PLAN.drop.reduce((s,o)=>s+o.total,0)));
+    log('');
+    log('  A, B and D are unambiguous — Firebase is the record and the Sheet is wrong.');
+    log('  C is NOT. It is the same order carrying two different dates, and nothing');
+    log('  in the data says which is correct. Verify a few against your own book');
+    log('  before letting anything rewrite them.');
+    log('');
+    log('ORDERS TO PUSH INTO THE SHEET: '+PLAN.push.length+'   '+rs(PLAN.push.reduce((s,x)=>s+x.o.total,0)));
+    const byDay={};
+    PLAN.push.forEach(x=>{ byDay[x.o.date]=byDay[x.o.date]||[]; byDay[x.o.date].push(x); });
+    Object.keys(byDay).sort().forEach(d=>{
+      log('');
+      log('  '+d+'   ('+byDay[d].length+' order(s))');
+      byDay[d].forEach(x=>log('     '+pad(x.o.id,16)+pad(x.o.name.slice(0,26),27)+lpad(rs(x.o.total),11)+'   '+x.why));
+    });
+    log('');
+    log('ROWS TO REMOVE (deleted in the app, still in the Sheet): '+PLAN.drop.length+'   '+rs(PLAN.drop.reduce((s,o)=>s+o.total,0)));
+    PLAN.drop.slice(0,30).forEach(o=>log('     '+pad(o.id,16)+pad(o.date,12)+pad(o.name.slice(0,26),27)+lpad(rs(o.total),11)));
+    log('');
+    log('Each push replaces any existing rows for that order id and rebuilds that');
+    log('day\'s TOTAL row, so running this twice changes nothing the second time.');
+    log('');
+    log('Press Apply to write it.');
+    document.getElementById('apply').disabled=(PLAN.push.length+PLAN.drop.length)===0;
+  }catch(e){ log('ERROR: '+(e&&e.message||e)); }
+  b.disabled=false;
+};
+
+document.getElementById('apply').onclick=async function(){
+  if(!PLAN) return;
+  const mode=document.getElementById('mode').value;
+  const todo = (mode==='safe') ? PLAN.push.filter(x=>x.kind!=='date') : PLAN.push;
+  const skipped = PLAN.push.length - todo.length;
+  if(!confirm('Write '+todo.length+' order(s) into the Sheet and remove '+PLAN.drop.length+' row(s)?'
+      +(skipped?('\n\n'+skipped+' date-only difference(s) will be LEFT ALONE.'):''))) return;
+  const b=this; b.disabled=true;
+  log(''); log('════ APPLYING ════');
+  let ok=0, fail=0;
+  const days=new Set();
+  if(skipped) log('   leaving '+skipped+' date-only difference(s) untouched');
+  for(const x of todo){
+    const o=x.o; days.add(o.date);
+    const p=new URLSearchParams({action:'logOrder', orderId:o.id, date:o.date,
+      customerName:o.name, customerCategory:o.cat, customerArea:o.area,
+      status:o.status, total:o.total, paymentMode:o.paymentMode,
+      paymentAmount:o.paidAmount, notes:o.notes, createdBy:o.createdBy,
+      items:JSON.stringify(o.items)});
+    if(KEY_) p.set('key',KEY_);
+    try{
+      const r=await (await fetch(URL_+'?'+p.toString(),{cache:'no-store'})).json();
+      if(r && (r.status==='ok'||r.row)) { ok++; } else { fail++; log('   ! '+o.id+' -> '+JSON.stringify(r)); }
+    }catch(e){ fail++; log('   ! '+o.id+' -> '+e.message); }
+    if((ok+fail)%10===0) log('   pushed '+(ok+fail)+'/'+todo.length);
+    await sleep(120);
+  }
+  log('   pushed '+ok+' ok, '+fail+' failed');
+  let dok=0, dfail=0;
+  for(const o of PLAN.drop){
+    days.add(o.date);
+    const p=new URLSearchParams({action:'deleteOrder', orderId:o.id, date:o.date});
+    if(KEY_) p.set('key',KEY_);
+    try{ await fetch(URL_+'?'+p.toString(),{cache:'no-store'}); dok++; }
+    catch(e){ dfail++; }
+    await sleep(120);
+  }
+  if(PLAN.drop.length) log('   removed '+dok+' row(s), '+dfail+' failed');
+  log('');
+  log('   rebuilding day totals…');
+  for(const d of [...days].sort()){
+    const p=new URLSearchParams({action:'rebuildDayTotal', date:d});
+    if(KEY_) p.set('key',KEY_);
+    try{ await fetch(URL_+'?'+p.toString(),{cache:'no-store'}); }catch(e){}
+    await sleep(120);
+  }
+  log('   '+days.size+' day total(s) rebuilt.');
+  log('');
+  log('════ DONE ════');
+  log('Re-run the Dry run — it should now find nothing to do.');
+};
+</script>
+</body>
+</html>
