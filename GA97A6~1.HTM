@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Gaavn Fresh — link orphan payments</title>
+<style>
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+       max-width:1000px;margin:0 auto;padding:18px;background:#FAF7F2;color:#2B2118;}
+  h1{font-size:20px;margin:0 0 4px;}
+  .sub{font-size:13px;color:#7A6A58;margin-bottom:14px;line-height:1.5;}
+  .warn{background:#FFF8E1;border:1.5px solid #FFB300;border-radius:10px;padding:10px 14px;
+        font-size:13px;margin-bottom:14px;color:#7A5200;line-height:1.5;}
+  .card{background:#fff;border:1.5px solid #E5DCCF;border-radius:12px;padding:16px;margin-bottom:14px;}
+  label{display:block;font-size:12px;font-weight:700;margin:10px 0 4px;color:#5A4A38;}
+  input{width:100%;padding:10px;border:1.5px solid #E5DCCF;border-radius:8px;font-size:15px;box-sizing:border-box;}
+  button{background:#C87A2E;color:#fff;border:0;border-radius:8px;padding:12px 18px;
+         font-size:15px;font-weight:700;cursor:pointer;margin-top:12px;margin-right:8px;}
+  button:disabled{opacity:.45;cursor:default;}
+  #apply{background:#B3261E;}
+  .grp{border:1.5px solid #E5DCCF;border-radius:10px;padding:12px;margin-bottom:10px;background:#fff;}
+  .grp.sure{border-color:#66BB6A;background:#F6FBF6;}
+  .nm{font-weight:700;font-size:14px;}
+  .meta{font-size:11.5px;color:#7A6A58;}
+  select{width:100%;padding:8px;border:1.5px solid #E5DCCF;border-radius:8px;font-size:14px;margin-top:6px;}
+  pre{background:#22201D;color:#E8E2D8;padding:14px;border-radius:10px;font-size:12px;
+      line-height:1.55;white-space:pre-wrap;overflow:auto;max-height:60vh;}
+</style>
+</head>
+<body>
+
+<h1>Link orphan payments to customers</h1>
+<div class="sub">
+  Finds every payment in Firebase that is attached to no customer, groups them by
+  the name on the payment, and suggests who it belongs to. You confirm each name
+  once — not each payment.
+</div>
+
+<div class="warn">
+  <b>Do not re-import the file.</b> The payments are already in — they simply have no
+  customer attached. Importing again would duplicate all 168. This repairs them in place.
+</div>
+
+<div class="card">
+  <label>Firebase username</label>
+  <input id="u" placeholder="your gmail address" autocomplete="username">
+  <label>Firebase password</label>
+  <input id="p" type="password" autocomplete="current-password">
+  <button id="scan">1 · Find them</button>
+  <button id="apply" disabled>2 · Link the confirmed ones</button>
+</div>
+
+<div id="groups"></div>
+<pre id="out">Waiting…</pre>
+
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<script>
+const CFG={apiKey:"AIzaSyAI8NvjxdcmoG2UinhJ0LZ0EdL18b-foZ0",
+  authDomain:"gaavnfresh-sales.firebaseapp.com",projectId:"gaavnfresh-sales",
+  storageBucket:"gaavnfresh-sales.firebasestorage.app",
+  messagingSenderId:"974451495449",appId:"1:974451495449:web:3985b05c49e52b5fbad088"};
+const LOGIN_DOMAIN='@gaavnfresh.invalid';
+const out=document.getElementById('out');
+let buf=[]; function log(s){ buf.push(s===undefined?'':s); out.textContent=buf.join('\n'); }
+function rs(n){ return 'Rs '+Math.round(n||0).toLocaleString('en-IN'); }
+
+/* Normalise hard: case, punctuation, spaces, and the spelling drift that
+   actually occurs here — Kudale/Kaudle, Bhairavnath/Bhairvnath, Ramkrishna/
+   Ram Krishna. Doubled letters and vowels are the usual culprits. */
+function norm(s){
+  return String(s||'').toLowerCase()
+    .replace(/[^a-z0-9]+/g,'')
+    .replace(/(.)\1+/g,'$1');          // collapse doubles: shivshambhoo -> shivshambho
+}
+function skel(s){                       // consonant skeleton — vowels drift most
+  return norm(s).replace(/[aeiou]/g,'');
+}
+function lev(a,b){
+  if(a===b) return 0;
+  const m=a.length,n=b.length; if(!m||!n) return Math.max(m,n);
+  let prev=Array.from({length:n+1},(_,i)=>i), cur=new Array(n+1);
+  for(let i=1;i<=m;i++){ cur[0]=i;
+    for(let j=1;j<=n;j++) cur[j]=Math.min(prev[j]+1,cur[j-1]+1,prev[j-1]+(a[i-1]===b[j-1]?0:1));
+    [prev,cur]=[cur,prev]; }
+  return prev[n];
+}
+function score(a,b){
+  const na=norm(a), nb=norm(b);
+  if(!na||!nb) return 0;
+  if(na===nb) return 100;
+  if(skel(a)===skel(b)) return 95;
+  const d=lev(na,nb), L=Math.max(na.length,nb.length);
+  let sc=Math.round((1-d/L)*100);
+  if(na.indexOf(nb)>=0||nb.indexOf(na)>=0) sc=Math.max(sc,88);
+  return sc;
+}
+
+let DB=null, CUSTS=[], GROUPS=[];
+
+document.getElementById('scan').onclick=async function(){
+  const b=this; b.disabled=true; buf=[]; log('Loading…');
+  try{
+    if(!firebase.apps.length) firebase.initializeApp(CFG);
+    const auth=firebase.auth(); DB=firebase.firestore();
+    let u=document.getElementById('u').value.trim();
+    if(u.indexOf('@')<0) u=u.toLowerCase()+LOGIN_DOMAIN;
+    await auth.signInWithEmailAndPassword(u, document.getElementById('p').value);
+
+    CUSTS=[];
+    (await DB.collection('customers').get()).forEach(d=>{
+      const x=d.data()||{}; const nm=String(x.name||'');
+      if(nm && nm.indexOf('⛔')!==0) CUSTS.push({id:d.id,name:nm});
+    });
+    const valid=new Set(CUSTS.map(c=>c.id));
+
+    const orphans=[];
+    (await DB.collection('payments').get()).forEach(d=>{
+      const x=d.data()||{}; if(x.deleted===true) return;
+      if(x.customerId && valid.has(x.customerId)) return;      // already linked
+      orphans.push({id:d.id, name:String(x.customerNameAtImport||x.custName||''),
+                    amt:parseFloat(x.amount)||0, date:String(x.date||'').slice(0,10)});
+    });
+    buf=[];
+    log('customers '+CUSTS.length+' · payments with no customer: '+orphans.length
+        +'  '+rs(orphans.reduce((s,o)=>s+o.amt,0)));
+
+    const by={};
+    orphans.forEach(o=>{ const k=o.name||'(blank)'; (by[k]=by[k]||[]).push(o); });
+    GROUPS=Object.keys(by).sort().map(nm=>{
+      const cands=CUSTS.map(c=>({c:c,s:score(nm,c.name)}))
+        .sort((a,b)=>b.s-a.s).slice(0,6);
+      return {name:nm, pays:by[nm], cands:cands, best:cands[0]};
+    });
+    render();
+    log('');
+    log(GROUPS.length+' distinct name(s) to decide — not '+orphans.length+' payments.');
+    log('Green = near certain. Check the amber ones, or pick "leave it" if unsure.');
+    document.getElementById('apply').disabled = GROUPS.length===0;
+  }catch(e){ log('ERROR: '+(e&&e.message||e)); }
+  b.disabled=false;
+};
+
+function render(){
+  document.getElementById('groups').innerHTML = GROUPS.map((g,i)=>{
+    const sure = g.best && g.best.s>=90;
+    const tot=g.pays.reduce((s,p)=>s+p.amt,0);
+    const opts = g.cands.map(x=>'<option value="'+x.c.id+'">'+x.c.name+'   ('+x.s+'% match)</option>').join('')
+      + CUSTS.filter(c=>!g.cands.some(x=>x.c.id===c.id))
+             .sort((a,b)=>a.name.localeCompare(b.name))
+             .map(c=>'<option value="'+c.id+'">'+c.name+'</option>').join('');
+    return '<div class="grp '+(sure?'sure':'')+'">'
+      +'<div class="nm">'+(sure?'✔ ':'⚠ ')+g.name+'</div>'
+      +'<div class="meta">'+g.pays.length+' payment(s) · '+rs(tot)
+      +' · '+g.pays.slice(0,4).map(p=>p.date+' '+rs(p.amt)).join(' · ')
+      +(g.pays.length>4?(' … +'+(g.pays.length-4)):'')+'</div>'
+      +'<select id="pick'+i+'"><option value="">— leave it unlinked —</option>'+opts+'</select>'
+      +'</div>';
+  }).join('');
+  // preselect the confident ones
+  GROUPS.forEach((g,i)=>{
+    const el=document.getElementById('pick'+i);
+    if(el && g.best && g.best.s>=90) el.value=g.best.c.id;
+  });
+}
+
+document.getElementById('apply').onclick=async function(){
+  const plan=[];
+  GROUPS.forEach((g,i)=>{
+    const el=document.getElementById('pick'+i);
+    if(el && el.value) plan.push({cid:el.value, pays:g.pays, name:g.name,
+      to:(CUSTS.find(c=>c.id===el.value)||{}).name});
+  });
+  if(!plan.length){ alert('Nothing selected.'); return; }
+  const cnt=plan.reduce((s,x)=>s+x.pays.length,0);
+  if(!confirm('Link '+cnt+' payment(s) across '+plan.length+' name(s)?\n\nOnly the customer link changes — amounts and dates are untouched.')) return;
+  const b=this; b.disabled=true;
+  log(''); log('════ LINKING ════');
+  let ok=0, fail=0;
+  for(const x of plan){
+    for(let i=0;i<x.pays.length;i+=400){
+      const batch=DB.batch();
+      x.pays.slice(i,i+400).forEach(p=>{
+        batch.set(DB.collection('payments').doc(p.id),
+          {customerId:x.cid, linkedAt:new Date().toISOString(),
+           linkedFromName:x.name}, {merge:true});
+      });
+      try{ await batch.commit(); ok+=Math.min(400,x.pays.length-i); }
+      catch(e){ fail+=Math.min(400,x.pays.length-i); log('  ! '+x.name+' — '+e.message); }
+    }
+    log('  ✓ '+x.name+'  →  '+x.to+'   ('+x.pays.length+' payment(s))');
+  }
+  log('');
+  log('linked '+ok+', failed '+fail);
+  log('');
+  log('Re-run "Find them" — it should now report nothing left.');
+};
+</script>
+</body>
+</html>
