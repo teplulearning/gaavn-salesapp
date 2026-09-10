@@ -280,7 +280,7 @@ body.gf-panel-open #app{ visibility:hidden; }
     <div class="top-bar-left">
       <span class="logo">🐄 GF</span>
       <span class="role-badge" id="role-badge">SALES</span>
-      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v213</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v214</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <!-- v196: this used to be a single button showing the language you would
@@ -11381,19 +11381,22 @@ function showPaymentUploadPreview(rows) {
 
 function confirmPaymentUpload() {
   if(!_uploadedPayments.length) return;
-  // v187: same single-writer rule as orders. With Firebase live, an uploaded
-  // sheet would add ledger rows Firestore does not have, on this phone only.
-  if(fsOwnsPayments()){
-    showToast('Firebase is live — record payments in the app so every phone sees them');
-    return;
-  }
-  // Merge, avoid duplicates by id
+  /* ── v214 ─────────────────────────────────────────────────────────────
+     v187 blocked this whenever Firebase was live, because back then an import
+     went into this phone's ledger and nowhere else. Since v207 payments write
+     to Firebase properly, so the block is no longer right — it just stops a
+     legitimate month-end import. It now imports AND mirrors to Firebase, so
+     every device sees the same ledger. */
   const existingIds = new Set(STATE.payments.map(p=>p.id));
-  let added = 0;
+  let added = 0, noCust = [];
   _uploadedPayments.forEach(p => {
     if(!existingIds.has(p.id)) {
       STATE.payments.push(p);
       added++;
+      /* A payment with no matching customer still imports, but it can never
+         reduce anyone's balance — so name it rather than let it vanish. */
+      if(!p.custId) noCust.push(p.custName+' · ₹'+Math.round(p.amount).toLocaleString('en-IN'));
+      try{ fsWritePayment(p); }catch(e){ console.warn('fsWritePayment', e); }
     }
     // Update opening balances for customers
     if(p.isOpeningBalance && p.custId) {
@@ -11411,7 +11414,19 @@ function confirmPaymentUpload() {
   savePaymentLedger();
   closeModal('modal-payment-upload');
   renderPaymentIn();
-  showToast(`✓ ${added} payments imported`);
+  /* v214: an unmatched name is a silent failure — the row lands in the ledger
+     but attaches to nobody, so the customer's dues do not move. Say so. */
+  if(noCust.length){
+    showToast('✓ '+added+' imported — but '+noCust.length+' matched no customer', 6000);
+    setTimeout(function(){
+      alert('These '+noCust.length+' payment(s) did not match any customer, so they will NOT reduce anyone\'s balance:\n\n'
+        + noCust.slice(0,25).join('\n')
+        + (noCust.length>25 ? ('\n…and '+(noCust.length-25)+' more') : '')
+        + '\n\nFix the spelling in the file to match your client list, or add the customer, then import again.');
+    }, 400);
+  } else {
+    showToast('✓ '+added+' payments imported to every device');
+  }
   _uploadedPayments = [];
 }
 
