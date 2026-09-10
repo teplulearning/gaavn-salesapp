@@ -280,7 +280,7 @@ body.gf-panel-open #app{ visibility:hidden; }
     <div class="top-bar-left">
       <span class="logo">🐄 GF</span>
       <span class="role-badge" id="role-badge">SALES</span>
-      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v216</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v217</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <!-- v196: this used to be a single button showing the language you would
@@ -531,6 +531,7 @@ body.gf-panel-open #app{ visibility:hidden; }
           entered them.
         </div>
         <button class="btn btn-secondary" onclick="(function(){var d=document.getElementById('submit-log-out');d.innerHTML=submitLogHTML();d.style.display='block';})()">Show the log</button>
+        <button class="btn btn-primary" onclick="copyDiagnostics()" style="background:#1A527A;">📋 Copy diagnostics</button>
         <div id="submit-log-out" style="display:none;margin-top:8px;max-height:300px;overflow:auto;background:var(--surface);border:1.5px solid var(--border);border-radius:8px;padding:8px;"></div>
       </div>
 
@@ -1661,6 +1662,14 @@ function fsOrderToApp(id, d){
        Orders written before this version carry no flag, so they are left alone
        rather than lighting up the whole screen. */
     synced: (d.sheetSynced===false ? false : true),
+    /* v217: synced==false here only means "the Google SHEET has not got it".
+       It does NOT mean this phone created it and still owes it to Firebase —
+       but v204's day-cache rule read it that way, so any Firestore order that
+       had not reached the Sheet was treated as local unsent work and kept
+       alive in the cache after Firestore stopped returning it. Those are the
+       phantom orders that made History flip between 11 and 8.
+       Anything that arrives from Firestore is, by definition, not local-only. */
+    _localOnly: false,
     sheetSynced: (d.sheetSynced===undefined ? null : !!d.sheetSynced),
     fromSheet:true, fromFirestore:true
   };
@@ -1721,7 +1730,7 @@ function fsMirrorToDayCache(list){
       try{
         const prev=JSON.parse(localStorage.getItem(LS_PREFIX+d)||'[]');
         keep=(prev||[]).filter(function(o){
-          return o && o.id && !fsIds.has(String(o.id)) && o.synced!==true && !isOrderDeleted(o.id);
+          return o && o.id && !fsIds.has(String(o.id)) && o._localOnly===true && !isOrderDeleted(o.id);
         });
       }catch(e){}
       _kept+=keep.length;
@@ -1732,7 +1741,7 @@ function fsMirrorToDayCache(list){
       try{
         const prevT=JSON.parse(localStorage.getItem(LS_ORDERS)||'[]');
         keepToday=(prevT||[]).filter(function(o){
-          return o && o.id && !fsIds.has(String(o.id)) && o.synced!==true && !isOrderDeleted(o.id);
+          return o && o.id && !fsIds.has(String(o.id)) && o._localOnly===true && !isOrderDeleted(o.id);
         });
       }catch(e){}
       localStorage.setItem(LS_ORDERS, JSON.stringify((byDate[TODAY_KEY]||[]).concat(keepToday)));
@@ -1753,7 +1762,7 @@ function fsMirrorToDayCache(list){
           let hasPending=false;
           try{
             hasPending=(JSON.parse(localStorage.getItem(k)||'[]')||[]).some(function(o){
-              return o && o.id && o.synced!==true && !isOrderDeleted(o.id);
+              return o && o.id && o._localOnly===true && !isOrderDeleted(o.id);
             });
           }catch(e){}
           if(!hasPending){ try{ localStorage.removeItem(k); }catch(e){} }
@@ -1873,6 +1882,21 @@ function fsStartOrdersListener(){
       if(!_fromCache) FS.ordersServerSeen=true;
       FS.lastSnapFromCache=_fromCache;
       FS.pendingWrites=_pendingW;
+      /* v217: Firebase has confirmed these ids, so clear the local-only flag
+         on any cached copy — otherwise it would be preserved for ever. */
+      try{
+        const _have=new Set(); snap.forEach(function(d){ _have.add(String(d.id)); });
+        for(let i=0;i<localStorage.length;i++){
+          const k=localStorage.key(i);
+          if(!k || k.indexOf(LS_PREFIX)!==0) continue;
+          let arr=null, dirty=false;
+          try{ arr=JSON.parse(localStorage.getItem(k)||'[]'); }catch(e){ continue; }
+          (arr||[]).forEach(function(o){
+            if(o && o._localOnly===true && _have.has(String(o.id))){ o._localOnly=false; dirty=true; }
+          });
+          if(dirty){ try{ localStorage.setItem(k, JSON.stringify(arr)); }catch(e){} }
+        }
+      }catch(e){}
       const list=[];
       let _del=0;
       snap.forEach(function(doc){
@@ -4488,6 +4512,39 @@ function _submitLog(what, cust, total, id){
     localStorage.setItem(LS_SUBMIT_LOG, JSON.stringify(a.slice(0,60)));
   }catch(e){}
 }
+/* v217: one tap puts the whole state on the clipboard, so nobody has to read
+   a monospace line off a phone and retype it. */
+function copyDiagnostics(){
+  let pend=[]; try{ pend=getPendingOrders(); }catch(e){}
+  let log=[]; try{ log=JSON.parse(localStorage.getItem(LS_SUBMIT_LOG)||'[]'); }catch(e){}
+  const L=[];
+  L.push('GAAVN DIAGNOSTICS  '+new Date().toLocaleString('en-IN'));
+  L.push('build            : '+((document.getElementById('build-stamp')||{}).textContent||'?'));
+  L.push('role on device   : '+(STATE.role||'?'));
+  L.push('firebase user    : '+((FS.user&&FS.user.email)||'NOT SIGNED IN'));
+  L.push('firebase role    : '+(FS.role||'NONE — this blocks writes'));
+  L.push('reads switch     : '+(fsReadsOn()?'on':'OFF'));
+  L.push('server answered  : '+(FS.ordersServerSeen?'yes':'no — cache only'));
+  L.push('orders in memory : '+((STATE.orders||[]).length));
+  L.push('snapshot         : returned '+(FS.lastSnapSize===undefined?'?':FS.lastSnapSize)
+         +', deleted '+(FS.lastSnapDeleted||0)+', stale ignored '+(FS.staleIgnored||0));
+  L.push('pending writes   : '+(FS.pendingWrites?'YES — not acknowledged':'no'));
+  L.push('firebase writes  : ok '+FS_WRITES.ok+', failed '+FS_WRITES.failed
+         +(FS_WRITES.lastErr?(' · '+FS_WRITES.lastErr):''));
+  L.push('read error       : '+(FS.lastError||'none'));
+  L.push('sheet            : '+(typeof sheetHealthLine==='function'?sheetHealthLine():'?'));
+  L.push('unsent orders    : '+pend.length+(pend.length?('  ['+pend.slice(0,10).map(function(o){return o.id;}).join(', ')+']'):''));
+  L.push('');
+  L.push('LAST SUBMISSIONS ('+log.length+')');
+  log.slice(0,25).forEach(function(x){
+    L.push('  '+new Date(x.t).toLocaleTimeString('en-IN')+'  '+x.what+'  '+x.cust+'  Rs'+x.total+'  '+(x.id||''));
+  });
+  const txt=L.join('\n');
+  try{
+    navigator.clipboard.writeText(txt).then(function(){ showToast('📋 Copied — paste it into the chat'); },
+      function(){ prompt('Copy this:', txt); });
+  }catch(e){ prompt('Copy this:', txt); }
+}
 function submitLogHTML(){
   let a=[]; try{ a=JSON.parse(localStorage.getItem(LS_SUBMIT_LOG)||'[]'); }catch(e){}
   if(!a.length) return '<div style="font-size:12px;color:var(--muted);">Nothing recorded yet.</div>';
@@ -4665,6 +4722,7 @@ function _submitOrderInner(_release) {
     payment:{mode:'',amount:0,received:false},
     notes:document.getElementById('order-notes').value||'',
     createdAt:Date.now(), synced:false,
+    _localOnly: true,          // v217 — created here, Firebase has not confirmed it yet
     geo: gfGeoFresh(6*60*1000),
     backdated: isBackdated,
   };
