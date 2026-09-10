@@ -280,7 +280,7 @@ body.gf-panel-open #app{ visibility:hidden; }
     <div class="top-bar-left">
       <span class="logo">🐄 GF</span>
       <span class="role-badge" id="role-badge">SALES</span>
-      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v214</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v216</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <!-- v196: this used to be a single button showing the language you would
@@ -519,6 +519,20 @@ body.gf-panel-open #app{ visibility:hidden; }
       <!-- v203: one plain line, no jargon. This is all sales and delivery see. -->
       <div style="font-size:14px;font-weight:700;color:#1B5E20;" id="fs-plain-state">Connecting…</div>
       <div style="font-size:12px;color:#5D6B5D;margin-top:4px;" id="fs-plain-note"></div>
+
+      <!-- v215: what happened to every order submitted on this device -->
+      <div class="owner-only" style="margin-top:10px;padding-top:10px;border-top:1px solid rgba(46,125,50,.25);">
+        <div style="font-size:12px;font-weight:700;color:#5D4037;margin-bottom:6px;">
+          📝 Last 60 order submissions on this device
+        </div>
+        <div style="font-size:11.5px;color:#5D6B5D;margin-bottom:8px;line-height:1.5;">
+          If a day's count looks short, this says which order and why —
+          created, replaced, blocked, or refused. Read it on the device that
+          entered them.
+        </div>
+        <button class="btn btn-secondary" onclick="(function(){var d=document.getElementById('submit-log-out');d.innerHTML=submitLogHTML();d.style.display='block';})()">Show the log</button>
+        <div id="submit-log-out" style="display:none;margin-top:8px;max-height:300px;overflow:auto;background:var(--surface);border:1.5px solid var(--border);border-radius:8px;padding:8px;"></div>
+      </div>
 
       <!-- v205 -->
       <div class="owner-only" style="margin-top:10px;padding-top:10px;border-top:1px solid rgba(46,125,50,.25);">
@@ -1831,13 +1845,34 @@ function fsStartOrdersListener(){
          That is the "1182 -> 0 -> correct after 15 seconds" you watched.
          An empty snapshot that is only from the cache now proves nothing and is
          ignored until the server has spoken at least once. */
-      const _fromCache = !!(snap.metadata && snap.metadata.fromCache);
+      /* ── v216: my v201 fix was half a fix ─────────────────────────────
+         v201 only ignored a cached snapshot when it was EMPTY. But Firestore
+         keeps firing cached snapshots after the server has answered too, and a
+         stale cache with the WRONG COUNT is just as wrong as an empty one —
+         it simply looks plausible. That is the "11 becomes 8, then 8 becomes
+         11" you are watching: the screen flipping between the local cache and
+         the server, both being taken as truth.
+         Rule now: the cache may fill the screen only until the server has
+         spoken once. After that, only a server snapshot may change the list —
+         with one exception. A cached snapshot carrying hasPendingWrites holds
+         THIS device's own just-typed orders, not yet acknowledged. Those are
+         real and must stay on screen, or the person typing watches their work
+         vanish. */
+      const _md        = snap.metadata || {};
+      const _fromCache = !!_md.fromCache;
+      const _pendingW  = !!_md.hasPendingWrites;
+
       if(_fromCache && snap.size===0 && !FS.ordersServerSeen){
         FS.lastSnapSize=0; FS.lastSnapFromCache=true;
-        return;                       // keep what is on screen; wait for the server
+        return;                       // cold cache, nothing to say — wait
+      }
+      if(_fromCache && FS.ordersServerSeen && !_pendingW){
+        FS.staleIgnored = (FS.staleIgnored||0)+1;
+        return;                       // stale cache after the server answered
       }
       if(!_fromCache) FS.ordersServerSeen=true;
       FS.lastSnapFromCache=_fromCache;
+      FS.pendingWrites=_pendingW;
       const list=[];
       let _del=0;
       snap.forEach(function(doc){
@@ -3257,6 +3292,8 @@ function initApp() {
            +' (Firebase returned '+(FS.lastSnapSize===undefined?'?':FS.lastSnapSize)
            +(FS.lastSnapDeleted?(', '+FS.lastSnapDeleted+' deleted'):'')
            +(FS.ordersServerSeen?', from server':', cache only — server not answered yet')+')'
+           +(FS.pendingWrites?'\n\u23F3 some orders on this device are not yet acknowledged by Firebase':'')
+           +(FS.staleIgnored?('\nstale cache snapshots ignored: '+FS.staleIgnored):'')
            +(FS.pendingShown?('\n⚠ '+FS.pendingShown+' order(s) on this device have NOT reached Firebase — tap Submit All'):'')
            +'\nreads this launch: '+((FS.custFetched===undefined?'?':FS.custFetched)
              +' customer'+(FS.custDelta?' (changed only)':' (full load)')
@@ -4436,8 +4473,47 @@ function updateOrderSummary() {
 //   3. an identical order already on that date asks for explicit confirmation
 let _submitting = false;
 let _lastSubmit = null;   // {sig, id, at}
+/* ── v215: a short log of what happened to each submit ────────────────────
+   Four separate theories for "orders entered but not showing" were each ruled
+   out by reading the code. Rather than guess a fifth time, the app now records
+   the outcome of every submission — created, replaced, blocked or refused —
+   so the next time a count is short we can see exactly which order and why.
+   Owner-only, kept on the device, last 60 entries. */
+const LS_SUBMIT_LOG='gf_submit_log';
+function _submitLog(what, cust, total, id){
+  try{
+    const a=JSON.parse(localStorage.getItem(LS_SUBMIT_LOG)||'[]');
+    a.unshift({t:Date.now(), what:what, cust:String(cust||''),
+               total:Math.round(total||0), id:id||'', by:(typeof _whoAmI==='function'?_whoAmI():'')});
+    localStorage.setItem(LS_SUBMIT_LOG, JSON.stringify(a.slice(0,60)));
+  }catch(e){}
+}
+function submitLogHTML(){
+  let a=[]; try{ a=JSON.parse(localStorage.getItem(LS_SUBMIT_LOG)||'[]'); }catch(e){}
+  if(!a.length) return '<div style="font-size:12px;color:var(--muted);">Nothing recorded yet.</div>';
+  const lbl={created:'✓ created', replaced:'⇄ replaced the previous one',
+             'second-copy-kept':'✓ kept as a second order',
+             blocked:'⛔ BLOCKED — tapped while the last one was still saving',
+             'no-items':'⛔ refused — no product chosen',
+             'no-customer':'⛔ refused — no customer chosen'};
+  return '<div style="font-size:11.5px;line-height:1.7;font-family:monospace;">'
+    + a.map(function(x){
+        const t=new Date(x.t).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+        const bad=/BLOCKED|refused|replaced/.test(lbl[x.what]||'');
+        return '<div style="color:'+(bad?'#B3261E':'var(--muted)')+';">'
+          +t+'  '+(lbl[x.what]||x.what)+'  ·  '+x.cust.slice(0,22)+'  ₹'+x.total.toLocaleString('en-IN')
+          +(x.id?('  '+x.id):'')+'</div>';
+      }).join('') + '</div>';
+}
 function _orderSignature(custId, dateStr, items, total){
-  const parts = (items||[]).map(i=>[i.product,i.qty,i.rate,Math.round(i.amount||0)].join(':')).sort();
+  /* v215 BUG: this read i.product. An order created here carries
+     {product:'mfp', name:'Med Fat Paneer'}, but one delivered by the Firestore
+     listener carries only {name:'Med Fat Paneer'} — fsOrderToApp renames the
+     field and drops product. So every existing order hashed as
+     "undefined:2:270:540" and could never match a new one.
+     Consequence: the "identical order already exists" check has been dead ever
+     since reads moved to Firestore, which is how eleven duplicate pairs got in. */
+  const parts = (items||[]).map(i=>[(i.product||i.name||''),i.qty,i.rate,Math.round(i.amount||0)].join(':')).sort();
   return [custId||'', dateStr||'', Math.round(total||0), parts.join('|')].join('#');
 }
 
@@ -4500,7 +4576,10 @@ function gfGeoTag(g){ return g?('\u{1F4CD}'+g.lat+','+g.lng+'(\u00B1'+g.acc+'m) 
 
 function submitOrder() {
   // layer 1 — re-entry lock
-  if (_submitting) { showToast('⏳ Already submitting — please wait'); return; }
+  if (_submitting) {
+    try{ _submitLog('blocked', (STATE.selectedCustomer||{}).name, 0, ''); }catch(e){}
+    showToast('⏳ Already submitting — please wait'); return;
+  }
   const _btn = document.getElementById('btn-submit-order');
   _submitting = true;
   if (_btn) { _btn.disabled = true; _btn.style.opacity = '0.6'; }
@@ -4527,8 +4606,10 @@ function _submitOrderInner(_release) {
             estKg:isLaadi?estKg:undefined,
             ladiWeights:isLaadi?[]:undefined};
   }).filter(x=>x.qty>0);
-  if(!items.length) { showToast('Add at least one product'); return; }
-  if(!STATE.selectedCustomer) { showToast('Select a customer first'); return; }
+  /* v215: these two returned WITHOUT releasing the submit lock, so a mistap
+     left the button dead for four seconds. Released, and recorded. */
+  if(!items.length) { _submitLog('no-items','',0,''); if(_release)_release(); showToast('Add at least one product'); return; }
+  if(!STATE.selectedCustomer) { _submitLog('no-customer','',0,''); if(_release)_release(); showToast('Select a customer first'); return; }
   // No stop order block — sales person gets alert on customer selection instead
   const total = items.reduce((s,i)=>s+i.amount,0);
   // Use the date selected in the picker (defaults to today)
@@ -4539,7 +4620,20 @@ function _submitOrderInner(_release) {
   // Sheet replaces that row rather than creating a second order
   let orderId, _isRepeat = false;
   if (_lastSubmit && _lastSubmit.sig === _sig && (Date.now() - _lastSubmit.at) < 180000) {
-    orderId = _lastSubmit.id; _isRepeat = true;
+    /* v215: this used to reuse the id SILENTLY. If a customer genuinely orders
+       the same thing twice within three minutes — which happens — the second
+       order overwrote the first and the count quietly went down by one. That is
+       the most likely explanation for "11 entered, 8 showing". It now asks. */
+    if (confirm('This is identical to the order you just submitted for '
+        + STATE.selectedCustomer.name + ' (₹' + Math.round(total).toLocaleString('en-IN') + ').\n\n'
+        + 'OK  = it was a mistake, replace that order\n'
+        + 'Cancel = it is a genuine second order, keep both')) {
+      orderId = _lastSubmit.id; _isRepeat = true;
+      _submitLog('replaced', STATE.selectedCustomer.name, total, orderId);
+    } else {
+      orderId = 'ORD'+Date.now().toString().slice(-8);
+      _submitLog('second-copy-kept', STATE.selectedCustomer.name, total, orderId);
+    }
   } else {
     // layer 3 — an identical order already exists on that date: ask first
     const _dup = (STATE.orders||[]).find(o =>
@@ -4555,6 +4649,7 @@ function _submitOrderInner(_release) {
       }
     }
     orderId = 'ORD'+Date.now().toString().slice(-8);
+    _submitLog('created', STATE.selectedCustomer.name, total, orderId);
   }
   _lastSubmit = {sig:_sig, id:orderId, at:Date.now()};
   const isBackdated = orderDate !== TODAY_KEY;
