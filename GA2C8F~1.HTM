@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Gaavn Fresh — where are my orders?</title>
+<style>
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+       max-width:1040px;margin:0 auto;padding:18px;background:#FAF7F2;color:#2B2118;}
+  h1{font-size:20px;margin:0 0 4px;}
+  .sub{font-size:13px;color:#7A6A58;margin-bottom:14px;line-height:1.5;}
+  .ro{background:#E8F5E9;border:1.5px solid #66BB6A;border-radius:10px;
+      padding:10px 14px;font-size:13px;margin-bottom:14px;color:#1B5E20;line-height:1.5;}
+  .card{background:#fff;border:1.5px solid #E5DCCF;border-radius:12px;padding:16px;margin-bottom:14px;}
+  label{display:block;font-size:12px;font-weight:700;margin:10px 0 4px;color:#5A4A38;}
+  input{width:100%;padding:10px;border:1.5px solid #E5DCCF;border-radius:8px;font-size:15px;box-sizing:border-box;}
+  button{background:#C87A2E;color:#fff;border:0;border-radius:8px;padding:12px 18px;
+         font-size:15px;font-weight:700;cursor:pointer;margin-top:12px;}
+  button:disabled{opacity:.5;cursor:default;}
+  pre{background:#22201D;color:#E8E2D8;padding:14px;border-radius:10px;font-size:12px;
+      line-height:1.55;white-space:pre;overflow:auto;max-height:78vh;}
+</style>
+</head>
+<body>
+
+<h1>Where are my orders?</h1>
+<div class="sub">
+  Asks the Firebase <b>server</b> — not any phone's cache — exactly what exists for
+  one day. It counts what is live, what is tombstoned, and what was written with a
+  date the app can never show. Run it from your laptop. Nobody touches a phone.
+</div>
+
+<div class="ro">
+  <b>Read-only.</b> Nothing is written, changed or deleted. It reads every order once
+  (about 900 reads out of your 50,000 daily allowance).
+</div>
+
+<div class="card">
+  <label>The day in question</label>
+  <input id="day" placeholder="2026-09-09">
+  <label>The Order IDs the Google Sheet shows for that day (optional but best)</label>
+  <input id="ids" placeholder="ORD20678202 ORD20695295 ORD20712036 …">
+  <div style="font-size:11.5px;color:#7A6A58;margin-top:3px;line-height:1.4;">
+    Copy column A for that day out of the Sheet and paste it here — spaces, commas
+    or newlines, duplicates don't matter. The tool will name exactly which ones
+    Firebase is missing.
+  </div>
+  <label>Firebase username</label>
+  <input id="u" placeholder="your gmail address" autocomplete="username">
+  <label>Firebase password</label>
+  <input id="p" type="password" autocomplete="current-password">
+  <button id="go">Ask the server</button>
+</div>
+
+<pre id="out">Waiting…</pre>
+
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<script>
+const CFG={apiKey:"AIzaSyAI8NvjxdcmoG2UinhJ0LZ0EdL18b-foZ0",
+  authDomain:"gaavnfresh-sales.firebaseapp.com",projectId:"gaavnfresh-sales",
+  storageBucket:"gaavnfresh-sales.firebasestorage.app",
+  messagingSenderId:"974451495449",appId:"1:974451495449:web:3985b05c49e52b5fbad088"};
+const LOGIN_DOMAIN='@gaavnfresh.invalid';
+const out=document.getElementById('out');
+let buf=[]; function log(s){ buf.push(s===undefined?'':s); out.textContent=buf.join('\n'); }
+function rs(n){ const v=Math.round(n||0); return (v<0?'-':'')+'Rs '+Math.abs(v).toLocaleString('en-IN'); }
+function pad(s,w){ s=String(s); return s.length>=w?s.slice(0,w):s+' '.repeat(w-s.length); }
+function lpad(s,w){ s=String(s); return s.length>=w?s:' '.repeat(w-s.length)+s; }
+function tstamp(v){ try{ return new Date(v).toLocaleString('en-IN'); }catch(e){ return String(v); } }
+
+/* Today, the way the app writes it: local date, not UTC. */
+(function(){ const d=new Date();
+  document.getElementById('day').value =
+    d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+})();
+
+document.getElementById('go').onclick=async function(){
+  const btn=this; btn.disabled=true; buf=[]; log('Signing in…');
+  try{
+    const day=document.getElementById('day').value.trim().slice(0,10);
+    if(!firebase.apps.length) firebase.initializeApp(CFG);
+    const auth=firebase.auth(), db=firebase.firestore();
+    let u=document.getElementById('u').value.trim();
+    if(u.indexOf('@')<0) u=u.toLowerCase()+LOGIN_DOMAIN;
+    const cred=await auth.signInWithEmailAndPassword(u, document.getElementById('p').value);
+
+    buf=[];
+    log('════ WHO THE SERVER THINKS YOU ARE ════');
+    log('   uid ....... '+cred.user.uid);
+    let myRole='(no users/ document — this account cannot create orders)';
+    try{ const rd=await db.collection('users').doc(cred.user.uid).get();
+         if(rd.exists) myRole=String((rd.data()||{}).role||'(blank)'); }catch(e){ myRole='could not read: '+e.message; }
+    log('   role ...... '+myRole);
+    log('');
+
+    /* Every staff account and its role — a missing role is the single most
+       likely reason a device writes orders that the server silently refuses. */
+    log('════ EVERY LOGIN AND ITS ROLE ════');
+    try{
+      const us=await db.collection('users').get();
+      log('   '+pad('uid',30)+pad('role',12)+'name / note');
+      us.forEach(d=>{ const x=d.data()||{};
+        log('   '+pad(d.id,30)+pad(String(x.role||'*** BLANK ***'),12)+String(x.name||x.email||''));
+      });
+      log('');
+      log('   Anyone with a blank role CANNOT create orders. The rules refuse the');
+      log('   write, the phone shows it for a moment, then removes it.');
+    }catch(e){ log('   could not list (owner only): '+e.message); }
+    log('');
+
+    // ── pull everything once, server-side ──
+    const cust={};
+    (await db.collection('customers').get()).forEach(d=>{ cust[d.id]=String((d.data()||{}).name||''); });
+
+    const all=[];
+    (await db.collection('orders').get({source:'server'})).forEach(d=>{
+      const x=d.data()||{};
+      all.push({id:d.id, date:String(x.date||''), del:x.deleted===true,
+        total:parseFloat(x.total)||0, by:String(x.createdBy||''),
+        cust:cust[x.customerId]||x.customerNameAtImport||'(no customer)',
+        upd:x.updatedAt||'', sheet:(x.sheetSynced===undefined?'-':String(x.sheetSynced)),
+        items:(x.items||[]).length});
+    });
+    log('════ THE WHOLE ORDERS COLLECTION ════');
+    log('   documents on the server ... '+all.length);
+    log('   live ...................... '+all.filter(o=>!o.del).length);
+    log('   tombstoned (deleted:true) . '+all.filter(o=>o.del).length);
+    log('');
+
+    /* A date the app can never display: blank, the literal text "undefined",
+       or not in YYYY-MM-DD form. Such an order is stored and invisible. */
+    const badDate=all.filter(o=>!/^\d{4}-\d{2}-\d{2}$/.test(o.date));
+    log('   orders with an unusable date .. '+badDate.length);
+    badDate.slice(0,20).forEach(o=>log('     '+pad(o.id,16)+pad(o.cust,28)+' date="'+o.date+'"  '+rs(o.total)));
+    log('');
+
+    // ── the day in question ──
+    log('════ '+day+' — WHAT THE SERVER HOLDS ════');
+    const d0=all.filter(o=>o.date===day);
+    const live=d0.filter(o=>!o.del), dead=d0.filter(o=>o.del);
+    log('   documents for this date ... '+d0.length);
+    log('   live (the app shows these)  '+live.length+'   '+rs(live.reduce((s,o)=>s+o.total,0)));
+    log('   tombstoned (hidden) ....... '+dead.length+'   '+rs(dead.reduce((s,o)=>s+o.total,0)));
+    log('');
+    log('   '+pad('order id',16)+pad('customer',30)+lpad('total',11)+lpad('items',7)
+        +'  '+pad('by',10)+pad('state',12)+'sheet');
+    d0.sort((a,b)=>a.id.localeCompare(b.id)).forEach(o=>{
+      log('   '+pad(o.id,16)+pad(o.cust,30)+lpad(rs(o.total),11)+lpad(o.items,7)
+          +'  '+pad(o.by||'?',10)+pad(o.del?'DELETED':'live',12)+o.sheet);
+    });
+    if(dead.length){
+      log('');
+      log('   ── the tombstoned ones, with when they were last touched ──');
+      dead.forEach(o=>log('     '+pad(o.id,16)+pad(o.cust,28)+'  last written '+tstamp(o.upd)));
+    }
+    log('');
+
+    // ── the Sheet's list vs the server's ──
+    const pasted=(document.getElementById('ids').value||'').toUpperCase().match(/ORD\d+/g)||[];
+    if(pasted.length){
+      const want=[...new Set(pasted)];
+      const byId={}; all.forEach(o=>{ byId[o.id]=o; });
+      log('════ THE SHEET SAYS THESE EXIST — DOES FIREBASE HAVE THEM? ════');
+      log('   ids pasted from the Sheet ... '+want.length+' distinct');
+      const absent=[], tomb=[], wrongDay=[], fine=[];
+      want.forEach(id=>{
+        const o=byId[id];
+        if(!o)              absent.push(id);
+        else if(o.del)      tomb.push(o);
+        else if(o.date!==day) wrongDay.push(o);
+        else                fine.push(o);
+      });
+      log('   present and live on '+day+' .. '+fine.length);
+      log('   NOT IN FIREBASE AT ALL ...... '+absent.length);
+      log('   present but tombstoned ...... '+tomb.length);
+      log('   present but filed under a');
+      log('   different date .............. '+wrongDay.length);
+      log('');
+      if(absent.length){
+        log('   ── never reached Firebase ──');
+        absent.forEach(id=>log('     '+id+'   (the Sheet has it, the server does not)'));
+        log('');
+        log('   This is a WRITE that was refused or dropped, not a display fault.');
+        log('   The role table at the top is the first place to look.');
+        log('');
+      }
+      if(tomb.length){
+        log('   ── written, then marked deleted ──');
+        tomb.forEach(o=>log('     '+pad(o.id,16)+pad(o.cust,28)+' last written '+tstamp(o.upd)));
+        log('');
+      }
+      if(wrongDay.length){
+        log('   ── written under the wrong date, so the app cannot show them ──');
+        wrongDay.forEach(o=>log('     '+pad(o.id,16)+pad(o.cust,28)+' filed as "'+o.date+'"'));
+        log('');
+      }
+      const extra=d0.filter(o=>!o.del && want.indexOf(o.id)<0);
+      if(extra.length){
+        log('   ── in Firebase for this day but NOT in the Sheet ──');
+        extra.forEach(o=>log('     '+pad(o.id,16)+pad(o.cust,28)+lpad(rs(o.total),11)));
+        log('');
+      }
+    }
+
+    /* An order id is 'ORD' + the last 8 digits of the clock in milliseconds.
+       Eight digits covers 27.8 hours and then starts again, so two orders
+       created 27.8 hours apart get the SAME id — and the second one silently
+       overwrites the first, because the app saves by id. If that has happened,
+       the surviving document will carry a date that does not match the moment
+       its own id encodes. */
+    log('════ ID REUSE CHECK (the 27.8-hour wrap) ════');
+    const nowMs=Date.now(), suspects=[];
+    all.forEach(o=>{
+      const m=/^ORD(\d{8})$/.exec(o.id); if(!m || !/^\d{4}-\d{2}-\d{2}$/.test(o.date)) return;
+      const suffix=parseInt(m[1],10);
+      // walk back in 10^8 ms steps from now to the most recent instant with this suffix
+      let t=Math.floor(nowMs/1e8)*1e8+suffix;
+      while(t>nowMs) t-=1e8;
+      const orderDay=new Date(o.date+'T12:00:00');
+      const gapDays=Math.abs(t-orderDay.getTime())/86400000;
+      if(gapDays>1.5) suspects.push({o:o, was:new Date(t), gap:gapDays});
+    });
+    log('   orders whose id encodes a time far from the date on them: '+suspects.length);
+    if(suspects.length){
+      log('   (each of these is an id that was probably issued twice)');
+      suspects.sort((a,b)=>a.gap-b.gap).slice(0,25).forEach(s=>
+        log('     '+pad(s.o.id,16)+pad(s.o.cust,28)+' dated '+pad(s.o.date,12)
+            +' but its id points to '+tstamp(s.was)));
+    } else {
+      log('   none — id reuse is not what is losing orders.');
+    }
+    log('');
+
+    // ── anything written recently, whatever date it carries ──
+    log('════ THE LAST 25 ORDERS WRITTEN, ANY DATE ════');
+    log('   If she typed eleven and only eight are here, the other three never');
+    log('   reached the server at all — that is a permission refusal, not a');
+    log('   display problem.');
+    log('');
+    const recent=all.filter(o=>o.upd).sort((a,b)=>String(b.upd).localeCompare(String(a.upd))).slice(0,25);
+    log('   '+pad('written at',24)+pad('order id',16)+pad('customer',28)+pad('date on it',12)+lpad('total',11)+'  by');
+    recent.forEach(o=>log('   '+pad(tstamp(o.upd),24)+pad(o.id,16)+pad(o.cust,28)+pad(o.date,12)
+        +lpad(rs(o.total),11)+'  '+(o.by||'?')+(o.del?'   DELETED':'')));
+    log('');
+    log('════ HOW TO READ THIS ════');
+    log('   live = 8 and nothing tombstoned  ->  three writes were REFUSED.');
+    log('                                        Look at the role table above.');
+    log('   live = 8 and 3 tombstoned        ->  something deleted them. The');
+    log('                                        timestamps say when.');
+    log('   live = 11                        ->  the server is right and the');
+    log('                                        phones are showing it wrong.');
+    log('');
+    log('════ DONE ════');
+    log('Copy everything above and paste it back into the chat.');
+  }catch(e){ log(''); log('ERROR: '+(e&&e.message||e)); }
+  btn.disabled=false;
+};
+</script>
+</body>
+</html>
