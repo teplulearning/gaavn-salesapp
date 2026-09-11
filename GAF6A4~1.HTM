@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Gaavn Fresh — put the missing orders back into Firebase</title>
+<style>
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+       max-width:1040px;margin:0 auto;padding:18px;background:#FAF7F2;color:#2B2118;}
+  h1{font-size:20px;margin:0 0 4px;}
+  .sub{font-size:13px;color:#7A6A58;margin-bottom:14px;line-height:1.5;}
+  .warn{background:#FFF8E1;border:1.5px solid #FFB300;border-radius:10px;padding:10px 14px;
+        font-size:13px;margin-bottom:14px;color:#7A5200;line-height:1.55;}
+  .card{background:#fff;border:1.5px solid #E5DCCF;border-radius:12px;padding:16px;margin-bottom:14px;}
+  label{display:block;font-size:12px;font-weight:700;margin:10px 0 4px;color:#5A4A38;}
+  input{width:100%;padding:10px;border:1.5px solid #E5DCCF;border-radius:8px;font-size:15px;box-sizing:border-box;}
+  .hint{font-size:11.5px;color:#7A6A58;margin-top:3px;line-height:1.4;}
+  button{background:#C87A2E;color:#fff;border:0;border-radius:8px;padding:12px 18px;
+         font-size:15px;font-weight:700;cursor:pointer;margin-top:12px;margin-right:8px;}
+  button:disabled{opacity:.45;cursor:default;}
+  #apply{background:#B3261E;}
+  pre{background:#22201D;color:#E8E2D8;padding:14px;border-radius:10px;font-size:12px;
+      line-height:1.55;white-space:pre;overflow:auto;max-height:74vh;}
+</style>
+</head>
+<body>
+
+<h1>Put the missing orders back into Firebase</h1>
+<div class="sub">
+  This runs the opposite way to the Sheet repair tool. It finds orders the
+  <b>Google Sheet has and Firebase does not</b> — the ones typed before Firebase
+  had finished signing in, which were silently discarded — and writes them back
+  using the Sheet's date, customer and amounts.
+</div>
+
+<div class="warn">
+  <b>The Sheet is the correct copy and is never touched here.</b> Order ids encode the
+  millisecond they were created, and on every order tested the Sheet's date matched
+  that moment while Firebase's did not. So the Sheet wins on every field.<br><br>
+  Orders you deliberately <b>deleted</b> are left alone — this will not resurrect them.
+</div>
+
+<div class="card">
+  <label>Apps Script web app URL</label>
+  <input id="url" placeholder="https://script.google.com/macros/s/…/exec">
+  <label>Access code</label>
+  <input id="key" placeholder="the code from the app's Setup screen">
+  <label>Months to repair (comma separated)</label>
+  <input id="months" value="2026-08, 2026-09">
+  <div class="hint">Add more months if you want the whole year checked.</div>
+  <label>Firebase username</label>
+  <input id="u" placeholder="your gmail address" autocomplete="username">
+  <label>Firebase password</label>
+  <input id="p" type="password" autocomplete="current-password">
+  <button id="scan">1 · Dry run — show me what is missing</button>
+  <button id="apply" disabled>2 · Write them into Firebase</button>
+</div>
+
+<pre id="out">Waiting…</pre>
+
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<script>
+const CFG={apiKey:"AIzaSyAI8NvjxdcmoG2UinhJ0LZ0EdL18b-foZ0",
+  authDomain:"gaavnfresh-sales.firebaseapp.com",projectId:"gaavnfresh-sales",
+  storageBucket:"gaavnfresh-sales.firebasestorage.app",
+  messagingSenderId:"974451495449",appId:"1:974451495449:web:3985b05c49e52b5fbad088"};
+const LOGIN_DOMAIN='@gaavnfresh.invalid';
+const out=document.getElementById('out');
+let buf=[]; function log(s){ buf.push(s===undefined?'':s); out.textContent=buf.join('\n'); }
+function rs(n){ const v=Math.round(n||0); return (v<0?'-':'')+'Rs '+Math.abs(v).toLocaleString('en-IN'); }
+function pad(s,w){ s=String(s); return s.length>=w?s.slice(0,w):s+' '.repeat(w-s.length); }
+function lpad(s,w){ s=String(s); return s.length>=w?s:' '.repeat(w-s.length)+s; }
+function normDay(d){
+  d=String(d||'').trim();
+  const m=d.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if(m) return m[3]+'-'+String(m[2]).padStart(2,'0')+'-'+String(m[1]).padStart(2,'0');
+  /* An ISO string with a time is deliberately sliced, NOT passed through
+     new Date(). Converting to local time is exactly how a 19:00 order slides
+     onto the next day, and that class of mistake is what this tool exists to
+     undo. */
+  return d.slice(0,10);
+}
+function nk(s){ return String(s||'').replace(/\s+/g,' ').trim().toLowerCase(); }
+
+let DB=null, PLAN=[], CUSTBYNAME={};
+
+async function readSheet(url,key,month){
+  const q=url+'?action=getMonthOrders&month='+month+(key?('&key='+encodeURIComponent(key)):'')+'&_='+Date.now();
+  const r=await (await fetch(q,{cache:'no-store'})).json();
+  if(!r || r.error) throw new Error('Sheet said: '+JSON.stringify(r));
+  return r.orders||[];
+}
+
+/* The Sheet stores one ROW PER PRODUCT. The order total, customer and date sit
+   on the first row of each order only, so the rows must be folded back into
+   orders before anything is compared or written. */
+function foldRows(rows){
+  const byId={};
+  rows.forEach(function(row){
+    const id=String(row['Order ID']||'').trim();
+    if(!id || id.indexOf('TOTAL:')===0 || id.indexOf('RESUBMIT:')===0) return;
+    if(!byId[id]) byId[id]={id:id, date:'', cust:'', cat:'', area:'', status:'', total:0,
+                            mode:'', paid:0, items:[]};
+    const o=byId[id];
+    const d=normDay(row._date||row['Date']); if(d && !o.date) o.date=d;
+    if(!o.cust   && row['Customer'])       o.cust=String(row['Customer']).trim();
+    if(!o.cat    && row['Category'])       o.cat=String(row['Category']).trim();
+    if(!o.area   && row['Area'])           o.area=String(row['Area']).trim();
+    if(!o.status && row['Status'])         o.status=String(row['Status']).trim();
+    if(!o.mode   && row['Payment Mode'])   o.mode=String(row['Payment Mode']).trim();
+    const t=parseFloat(row['Order Total (Rs)'])||0; if(t>o.total) o.total=t;
+    const pa=parseFloat(row['Payment Amt'])||0;     if(pa>o.paid) o.paid=pa;
+    const prod=String(row['Product']||'').trim();
+    if(prod){
+      const qty=parseFloat(row['Qty'])||0, rate=parseFloat(row['Rate (Rs)'])||0;
+      let amt=parseFloat(row['Amount (Rs)']||row['Amount']||0)||0;
+      if(!amt) amt=qty*rate;
+      o.items.push({product:prod, qty:qty, unit:String(row['Unit']||'').trim(), rate:rate, amount:amt});
+    }
+  });
+  return byId;
+}
+
+document.getElementById('scan').onclick=async function(){
+  const b=this; b.disabled=true; buf=[]; log('Reading both sides…');
+  try{
+    const url=document.getElementById('url').value.trim();
+    const key=document.getElementById('key').value.trim();
+    const months=document.getElementById('months').value.split(',').map(s=>s.trim().slice(0,7)).filter(Boolean);
+    if(!url){ log('Paste the Apps Script URL first.'); b.disabled=false; return; }
+
+    if(!firebase.apps.length) firebase.initializeApp(CFG);
+    const auth=firebase.auth(); DB=firebase.firestore();
+    let u=document.getElementById('u').value.trim();
+    if(u.indexOf('@')<0) u=u.toLowerCase()+LOGIN_DOMAIN;
+    await auth.signInWithEmailAndPassword(u, document.getElementById('p').value);
+
+    CUSTBYNAME={};
+    (await DB.collection('customers').get()).forEach(d=>{
+      const x=d.data()||{}; const nm=nk(x.name); if(nm) CUSTBYNAME[nm]={id:d.id, name:String(x.name)};
+    });
+
+    const fb={};
+    (await DB.collection('orders').get({source:'server'})).forEach(d=>{
+      const x=d.data()||{}; fb[d.id]={del:x.deleted===true, date:String(x.date||''), total:parseFloat(x.total)||0};
+    });
+    log('Firebase: '+Object.keys(fb).length+' order documents.');
+
+    let sheetAll={};
+    for(const m of months){
+      const rows=await readSheet(url,key,m);
+      const folded=foldRows(rows);
+      log('Sheet '+m+': '+rows.length+' rows -> '+Object.keys(folded).length+' orders');
+      Object.assign(sheetAll, folded);
+    }
+    log('');
+
+    PLAN=[]; const tomb=[], noCust=[];
+    Object.values(sheetAll).forEach(function(o){
+      const f=fb[o.id];
+      if(f && !f.del) return;                       // Firebase already has it, live
+      if(f && f.del){ tomb.push(o); return; }        // deliberately deleted — leave alone
+      const c=CUSTBYNAME[nk(o.cust)];
+      if(!c){ noCust.push(o); return; }
+      o._cid=c.id; o._cname=c.name;
+      PLAN.push(o);
+    });
+    PLAN.sort((a,b)=>(a.date+a.id).localeCompare(b.date+b.id));
+
+    log('════ DRY RUN — nothing has been written ════');
+    log('');
+    log('IN THE SHEET, MISSING FROM FIREBASE: '+PLAN.length+'   '+rs(PLAN.reduce((s,o)=>s+o.total,0)));
+    log('');
+    if(PLAN.length){
+      let day='';
+      PLAN.forEach(function(o){
+        if(o.date!==day){ day=o.date;
+          const dl=PLAN.filter(x=>x.date===day);
+          log('  '+day+'   ('+dl.length+' order(s), '+rs(dl.reduce((s,x)=>s+x.total,0))+')');
+        }
+        log('     '+pad(o.id,16)+pad(o._cname,30)+lpad(rs(o.total),11)
+            +'   '+o.items.length+' item(s)'+(o.items.length?('  ·  '+o.items.map(i=>i.product+' '+i.qty+(i.unit||'')).join(', ').slice(0,60)):'  ·  NO ITEM ROWS'));
+      });
+    } else {
+      log('   nothing missing — Firebase has every order the Sheet has.');
+    }
+    log('');
+    if(tomb.length){
+      log('DELETED ON PURPOSE — left untouched: '+tomb.length);
+      tomb.slice(0,15).forEach(o=>log('     '+pad(o.id,16)+pad(o.cust,30)+lpad(rs(o.total),11)));
+      log('');
+    }
+    if(noCust.length){
+      log('CANNOT MATCH THE CUSTOMER NAME — skipped, tell me and I will map them: '+noCust.length);
+      noCust.slice(0,20).forEach(o=>log('     '+pad(o.id,16)+pad(o.cust,30)+lpad(rs(o.total),11)+'   '+o.date));
+      log('');
+    }
+    log('Each order is written under its own id, so running this twice');
+    log('changes nothing the second time.');
+    log('');
+    log('Press "Write them into Firebase" when the list above looks right.');
+    document.getElementById('apply').disabled = PLAN.length===0;
+  }catch(e){ log(''); log('ERROR: '+(e&&e.message||e)); }
+  b.disabled=false;
+};
+
+document.getElementById('apply').onclick=async function(){
+  if(!PLAN.length){ alert('Run the dry run first.'); return; }
+  if(!confirm('Write '+PLAN.length+' order(s) into Firebase?\n\n'
+    +'The Google Sheet is not touched. Nothing is deleted. Each order keeps its\n'
+    +'own id, its Sheet date and its Sheet amount.')) return;
+  const b=this; b.disabled=true;
+  log(''); log('════ WRITING ════');
+  let ok=0, fail=0;
+  for(let i=0;i<PLAN.length;i+=300){
+    const batch=DB.batch();
+    const chunk=PLAN.slice(i,i+300);
+    chunk.forEach(function(o){
+      batch.set(DB.collection('orders').doc(o.id), {
+        customerId:o._cid, customerNameAtImport:o._cname,
+        date:o.date, status:(o.status||'confirmed'),
+        total:o.total, paidAmount:o.paid, paymentMode:o.mode,
+        items:o.items.map(i=>({product:i.product, qty:i.qty, unit:i.unit, rate:i.rate, amount:i.amount})),
+        notes:'', createdBy:'sheet-recovery',
+        deliveredBy:'', deliveredAt:null, editedBy:'', editedAt:null,
+        deleted:false, sheetSynced:true, source:'sheet-recovery',
+        recoveredAt:new Date().toISOString(),
+        updatedAt:new Date().toISOString()
+      }, {merge:true});
+    });
+    try{ await batch.commit(); ok+=chunk.length; log('   wrote '+ok+' of '+PLAN.length+'…'); }
+    catch(e){ fail+=chunk.length; log('   ! batch failed: '+e.message); }
+  }
+  log('');
+  log('written '+ok+', failed '+fail);
+  log('');
+  log('Re-run the dry run — it should now say nothing is missing.');
+  log('Then reopen the sales app; the day totals should match the Sheet.');
+};
+</script>
+</body>
+</html>
