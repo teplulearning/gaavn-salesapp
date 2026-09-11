@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Gaavn Fresh — missing orders & double counting (v3)</title>
+<style>
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+       max-width:1100px;margin:0 auto;padding:18px;background:#FAF7F2;color:#2B2118;}
+  h1{font-size:20px;margin:0 0 4px;}
+  h2{font-size:16px;margin:26px 0 6px;padding-bottom:5px;border-bottom:2px solid #E5DCCF;}
+  .sub{font-size:13px;color:#7A6A58;margin-bottom:14px;line-height:1.5;}
+  .warn{background:#FFF8E1;border:1.5px solid #FFB300;border-radius:10px;padding:10px 14px;
+        font-size:13px;margin-bottom:14px;color:#7A5200;line-height:1.55;}
+  .card{background:#fff;border:1.5px solid #E5DCCF;border-radius:12px;padding:16px;margin-bottom:14px;}
+  label{display:block;font-size:12px;font-weight:700;margin:10px 0 4px;color:#5A4A38;}
+  input[type=text],input[type=password]{width:100%;padding:10px;border:1.5px solid #E5DCCF;
+        border-radius:8px;font-size:15px;box-sizing:border-box;}
+  button{background:#C87A2E;color:#fff;border:0;border-radius:8px;padding:12px 18px;
+         font-size:15px;font-weight:700;cursor:pointer;margin-top:12px;margin-right:8px;}
+  button.sm{padding:7px 12px;font-size:13px;background:#6B5B49;margin-top:6px;}
+  button:disabled{opacity:.45;cursor:default;}
+  #apply{background:#B3261E;}
+  .daybar{background:#2B2118;color:#F3EEE6;padding:7px 12px;border-radius:8px;
+          font-size:13px;font-weight:700;margin:16px 0 8px;}
+  .row{display:flex;gap:10px;align-items:flex-start;padding:8px 10px;border-radius:8px;
+       border:1.5px solid #E5DCCF;background:#fff;margin-bottom:6px;font-size:13px;}
+  .row.clear{border-color:#66BB6A;background:#F6FBF6;}
+  .row.susp{border-color:#B3261E;background:#FDF4F3;}
+  .row input{margin-top:3px;transform:scale(1.25);}
+  .nm{font-weight:700;}
+  .meta{font-size:11.5px;color:#7A6A58;line-height:1.5;}
+  .flag{display:inline-block;font-size:11px;font-weight:700;padding:1px 7px;border-radius:20px;margin-left:6px;}
+  .flag.ok{background:#E8F5E9;color:#1B5E20;}
+  .flag.no{background:#FDECEA;color:#B3261E;}
+  pre{background:#22201D;color:#E8E2D8;padding:14px;border-radius:10px;font-size:12px;
+      line-height:1.55;white-space:pre-wrap;overflow:auto;max-height:55vh;}
+  .tot{font-size:14px;font-weight:700;margin:10px 0;}
+</style>
+</head>
+<body>
+
+<h1>Missing orders, and orders counted twice</h1>
+<div class="sub">
+  v2 compared each Sheet order against Firebase using the <b>customer id</b>. Where the
+  same shop exists twice in your customer list — "Misal katta,bhiwadi" and "Misal Katta
+  Bhivadi Vaishali D" are the same shop — that check missed the duplicate and marked the
+  order green. v3 groups customer records into shops by name first, so green now means
+  something. It also reports orders already sitting twice inside Firebase, which is what
+  inflates a customer's dues.
+</div>
+
+<div class="warn">
+  <b>Read-only except for the one red button.</b> The Google Sheet is never written to.
+  Nothing is ever deleted. Orders you deliberately deleted are never resurrected.
+</div>
+
+<div class="card">
+  <label>Apps Script web app URL</label>
+  <input type="text" id="url" placeholder="https://script.google.com/macros/s/…/exec">
+  <label>Access code</label>
+  <input type="text" id="key">
+  <label>Months to check</label>
+  <input type="text" id="months" value="2026-08, 2026-09">
+  <label>Firebase username</label>
+  <input type="text" id="u" autocomplete="username">
+  <label>Firebase password</label>
+  <input type="password" id="p" autocomplete="current-password">
+  <button id="scan">Check everything</button>
+  <button id="apply" disabled>Write the ticked ones into Firebase</button>
+</div>
+
+<pre id="out">Waiting…</pre>
+
+<div id="controls" style="display:none;" class="card">
+  <button class="sm" onclick="tick('clear')">Tick only the green ones</button>
+  <button class="sm" onclick="tick('none')">Untick everything</button>
+  <div class="tot" id="running"></div>
+</div>
+<div id="list"></div>
+
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<script>
+const CFG={apiKey:"AIzaSyAI8NvjxdcmoG2UinhJ0LZ0EdL18b-foZ0",
+  authDomain:"gaavnfresh-sales.firebaseapp.com",projectId:"gaavnfresh-sales",
+  storageBucket:"gaavnfresh-sales.firebasestorage.app",
+  messagingSenderId:"974451495449",appId:"1:974451495449:web:3985b05c49e52b5fbad088"};
+const LOGIN_DOMAIN='@gaavnfresh.invalid';
+const out=document.getElementById('out');
+let buf=[]; function log(s){ buf.push(s===undefined?'':s); out.textContent=buf.join('\n'); }
+function rs(n){ const v=Math.round(n||0); return (v<0?'-':'')+'Rs '+Math.abs(v).toLocaleString('en-IN'); }
+function pad(s,w){ s=String(s); return s.length>=w?s.slice(0,w):s+' '.repeat(w-s.length); }
+function lpad(s,w){ s=String(s); return s.length>=w?s:' '.repeat(w-s.length)+s; }
+function esc(s){ return String(s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function normDay(d){
+  d=String(d||'').trim();
+  const m=d.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if(m) return m[3]+'-'+String(m[2]).padStart(2,'0')+'-'+String(m[1]).padStart(2,'0');
+  return d.slice(0,10);              // never new Date() — that is how a day slips
+}
+function dayDiff(a,b){ return Math.abs((new Date(a+'T12:00:00')-new Date(b+'T12:00:00'))/86400000); }
+
+/* ── the same name matching the payment linker uses ──────────────────── */
+function norm(s){ return String(s||'').toLowerCase().replace(/[^a-z0-9]+/g,'').replace(/(.)\1+/g,'$1'); }
+function skel(s){ return norm(s).replace(/[aeiou]/g,''); }
+function lev(a,b){
+  if(a===b) return 0;
+  const m=a.length,n=b.length; if(!m||!n) return Math.max(m,n);
+  let prev=Array.from({length:n+1},(_,i)=>i), cur=new Array(n+1);
+  for(let i=1;i<=m;i++){ cur[0]=i;
+    for(let j=1;j<=n;j++) cur[j]=Math.min(prev[j]+1,cur[j-1]+1,prev[j-1]+(a[i-1]===b[j-1]?0:1));
+    [prev,cur]=[cur,prev]; }
+  return prev[n];
+}
+/* Your customer list carries the same shop under names of different LENGTHS —
+   "Misal katta,bhiwadi" against "Misal Katta Bhivadi Vaishali D", or
+   "Krushnai Enterprises" against "Krishnai Enterprises Phadtare". Comparing the
+   two strings whole punishes the extra words and scores those 60 and 67, so the
+   duplicate slips through as safe. What actually identifies the shop is the
+   BEGINNING of the name, so the shorter name is compared against the longer
+   one's opening of the same length. "bhiwadi" against "bhivadi" then costs one
+   letter instead of a whole trailing phrase.
+   Note this deliberately keeps genuinely different branches apart: Mankar Dosa
+   JEJURI against Mankar Dosa BHIVARI BOPDEV still diverges early enough to
+   score low, and so does Shivshambho at Bhivadi against Bopdev. */
+function score(a,b){
+  const na=norm(a), nb=norm(b);
+  if(!na||!nb) return 0;
+  if(na===nb) return 100;
+  if(skel(a)===skel(b)) return 95;
+  const S = na.length<=nb.length ? na : nb;
+  const L = na.length<=nb.length ? nb : na;
+  const whole  = Math.round((1-lev(na,nb)/L.length)*100);
+  // too short a stem proves nothing — "Hotel" would match everything
+  const prefix = S.length>=8 ? Math.round((1-lev(S, L.slice(0,S.length))/S.length)*100) : 0;
+  return Math.max(whole, prefix);
+}
+const SAME_SHOP=88;
+
+let DB=null, PLAN=[], SHOP={}, SHOPNAME={};
+
+async function readSheet(url,key,month){
+  const q=url+'?action=getMonthOrders&month='+month+(key?('&key='+encodeURIComponent(key)):'')+'&_='+Date.now();
+  const r=await (await fetch(q,{cache:'no-store'})).json();
+  if(!r || r.error) throw new Error('Sheet said: '+JSON.stringify(r));
+  return r.orders||[];
+}
+function foldRows(rows){
+  const byId={};
+  rows.forEach(function(row){
+    const id=String(row['Order ID']||'').trim();
+    if(!id || id.indexOf('TOTAL:')===0 || id.indexOf('RESUBMIT:')===0) return;
+    if(!byId[id]) byId[id]={id:id,date:'',cust:'',status:'',total:0,mode:'',paid:0,items:[]};
+    const o=byId[id];
+    const d=normDay(row._date||row['Date']); if(d && !o.date) o.date=d;
+    if(!o.cust   && row['Customer'])     o.cust=String(row['Customer']).trim();
+    if(!o.status && row['Status'])       o.status=String(row['Status']).trim();
+    if(!o.mode   && row['Payment Mode']) o.mode=String(row['Payment Mode']).trim();
+    const t=parseFloat(row['Order Total (Rs)'])||0; if(t>o.total) o.total=t;
+    const pa=parseFloat(row['Payment Amt'])||0;     if(pa>o.paid) o.paid=pa;
+    const prod=String(row['Product']||'').trim();
+    if(prod){
+      const qty=parseFloat(row['Qty'])||0, rate=parseFloat(row['Rate (Rs)'])||0;
+      let amt=parseFloat(row['Amount (Rs)']||row['Amount']||0)||0;
+      if(!amt) amt=qty*rate;
+      o.items.push({product:prod,qty:qty,unit:String(row['Unit']||'').trim(),rate:rate,amount:amt});
+    }
+  });
+  return byId;
+}
+
+document.getElementById('scan').onclick=async function(){
+  const b=this; b.disabled=true; buf=[]; log('Reading both sides…');
+  document.getElementById('list').innerHTML='';
+  try{
+    const url=document.getElementById('url').value.trim();
+    const key=document.getElementById('key').value.trim();
+    const months=document.getElementById('months').value.split(',').map(s=>s.trim().slice(0,7)).filter(Boolean);
+    if(!url){ log('Paste the Apps Script URL first.'); b.disabled=false; return; }
+
+    if(!firebase.apps.length) firebase.initializeApp(CFG);
+    const auth=firebase.auth(); DB=firebase.firestore();
+    let u=document.getElementById('u').value.trim();
+    if(u.indexOf('@')<0) u=u.toLowerCase()+LOGIN_DOMAIN;
+    await auth.signInWithEmailAndPassword(u, document.getElementById('p').value);
+
+    // ── customers, then cluster them into shops ──
+    const cust=[];
+    (await DB.collection('customers').get()).forEach(d=>{
+      const x=d.data()||{}; const nm=String(x.name||'');
+      if(nm && nm.indexOf('⛔')!==0) cust.push({id:d.id,name:nm});
+    });
+    SHOP={}; SHOPNAME={};
+    const groups=[];
+    cust.forEach(function(c){
+      let g=null;
+      for(const gr of groups){ if(score(c.name, gr.rep)>=SAME_SHOP){ g=gr; break; } }
+      if(!g){ g={rep:c.name, members:[]}; groups.push(g); }
+      g.members.push(c);
+    });
+    groups.forEach(function(g,i){
+      const key='S'+i;
+      g.members.forEach(function(c){ SHOP[c.id]=key; });
+      SHOPNAME[key]=g.members.map(c=>c.name).sort((a,b)=>b.length-a.length)[0];
+      g.key=key;
+    });
+    const twins=groups.filter(g=>g.members.length>1);
+    log('customers '+cust.length+'  ->  '+groups.length+' distinct shops');
+    log('');
+
+    log('════ 1. THE SAME SHOP STORED TWICE IN YOUR CUSTOMER LIST ════');
+    log('   '+twins.length+' shop(s) have more than one record. Orders and dues split');
+    log('   across them, which is why balances look wrong and why v2 marked real');
+    log('   duplicates as safe.');
+    log('');
+    twins.forEach(function(g){
+      log('   '+SHOPNAME[g.key]);
+      g.members.forEach(c=>log('       · '+c.name+'   ('+c.id+')'));
+    });
+    log('');
+
+    // ── all Firebase orders ──
+    const custName={}; cust.forEach(c=>{ custName[c.id]=c.name; });
+    const fb={}, byShop={};
+    (await DB.collection('orders').get({source:'server'})).forEach(d=>{
+      const x=d.data()||{};
+      const cid=String(x.customerId||'');
+      const o={id:d.id, del:x.deleted===true, date:String(x.date||'').slice(0,10),
+               total:parseFloat(x.total)||0, cid:cid, shop:SHOP[cid]||('X'+cid),
+               cust:custName[cid]||x.customerNameAtImport||''};
+      fb[d.id]=o;
+      if(!o.del && o.date){ (byShop[o.shop]=byShop[o.shop]||[]).push(o); }
+    });
+    log('Firebase: '+Object.keys(fb).length+' order documents.');
+    log('');
+
+    // ── 2. duplicates ALREADY inside Firebase ──
+    log('════ 2. ORDERS ALREADY COUNTED TWICE INSIDE FIREBASE ════');
+    log('   Same shop, same date, same amount, two different order ids.');
+    log('   Each extra copy is counted again in sales AND again in that');
+    log('   customer\'s dues.');
+    log('');
+    const dupGroups=[];
+    Object.keys(byShop).forEach(function(sk){
+      const m={};
+      byShop[sk].forEach(function(o){
+        const k=o.date+'|'+Math.round(o.total);
+        (m[k]=m[k]||[]).push(o);
+      });
+      Object.keys(m).forEach(function(k){
+        if(m[k].length>1) dupGroups.push({shop:SHOPNAME[sk]||m[k][0].cust, list:m[k]});
+      });
+    });
+    dupGroups.sort((a,b)=>(b.list.length-1)*b.list[0].total-(a.list.length-1)*a.list[0].total);
+    const extraN=dupGroups.reduce((s,g)=>s+g.list.length-1,0);
+    const extraV=dupGroups.reduce((s,g)=>s+(g.list.length-1)*g.list[0].total,0);
+    log('   duplicate groups .......... '+dupGroups.length);
+    log('   extra copies .............. '+extraN);
+    log('   SALES AND DUES OVERSTATED . '+rs(extraV));
+    log('');
+    if(dupGroups.length){
+      log('   '+pad('date',12)+pad('shop',30)+lpad('each',10)+lpad('copies',8)+'   order ids');
+      dupGroups.slice(0,45).forEach(function(g){
+        log('   '+pad(g.list[0].date,12)+pad(g.shop,30)+lpad(rs(g.list[0].total),10)
+            +lpad(g.list.length,8)+'   '+g.list.map(o=>o.id).join(', '));
+      });
+      if(dupGroups.length>45) log('   … and '+(dupGroups.length-45)+' more');
+      log('');
+      log('   A shop genuinely ordering the same thing twice in one day would');
+      log('   also appear here. Check a few against your book before removing any.');
+    } else log('   none found.');
+    log('');
+
+    // ── 3. in the Sheet, missing from Firebase ──
+    let sheetAll={};
+    for(const m of months){
+      const rows=await readSheet(url,key,m);
+      const folded=foldRows(rows);
+      log('Sheet '+m+': '+rows.length+' rows -> '+Object.keys(folded).length+' orders');
+      Object.assign(sheetAll, folded);
+    }
+    const byName={};
+    cust.forEach(c=>{ byName[norm(c.name)]=c; });
+    function findCust(nm){
+      const k=norm(nm); if(byName[k]) return byName[k];
+      let best=null,bs=0;
+      cust.forEach(function(c){ const s=score(nm,c.name); if(s>bs){ bs=s; best=c; } });
+      return bs>=SAME_SHOP?best:null;
+    }
+
+    PLAN=[]; let tomb=0; const noCust=[];
+    Object.values(sheetAll).forEach(function(o){
+      const f=fb[o.id];
+      if(f && !f.del) return;
+      if(f && f.del){ tomb++; return; }
+      const c=findCust(o.cust);
+      if(!c){ noCust.push(o); return; }
+      o._cid=c.id; o._cname=c.name; o._shop=SHOP[c.id];
+      /* v3: search the whole SHOP, not one customer record */
+      const near=(byShop[o._shop]||[]).filter(function(x){
+        if(!x.date || !o.date) return false;
+        const dd=dayDiff(x.date,o.date); if(dd>3) return false;
+        return Math.abs(x.total-o.total)<1 || dd===0;
+      }).sort((a,b)=>dayDiff(a.date,o.date)-dayDiff(b.date,o.date));
+      o._near=near.slice(0,3);
+      o._suspect=near.length>0;
+      PLAN.push(o);
+    });
+    PLAN.sort((a,b)=>(a.date+a.id).localeCompare(b.date+b.id));
+    const clear=PLAN.filter(o=>!o._suspect), susp=PLAN.filter(o=>o._suspect);
+    log('');
+    log('════ 3. IN THE SHEET, MISSING FROM FIREBASE ════');
+    log('   total ........................ '+PLAN.length+'   '+rs(PLAN.reduce((s,o)=>s+o.total,0)));
+    log('   nothing like it in Firebase .. '+clear.length+'   '+rs(clear.reduce((s,o)=>s+o.total,0))+'   green');
+    log('   the shop already has one ..... '+susp.length+'   '+rs(susp.reduce((s,o)=>s+o.total,0))+'   red');
+    log('   deliberately deleted, skipped  '+tomb);
+    if(noCust.length){
+      log('');
+      log('   customer not recognised, skipped: '+noCust.length);
+      noCust.slice(0,15).forEach(o=>log('      '+o.id+'  "'+o.cust+'"  '+o.date+'  '+rs(o.total)));
+    }
+    log('');
+    log('Green rows below are ticked. Red are not. Nothing is written until you');
+    log('press the red button.');
+    render();
+    document.getElementById('controls').style.display='block';
+    document.getElementById('apply').disabled = PLAN.length===0;
+  }catch(e){ log(''); log('ERROR: '+(e&&e.message||e)); }
+  b.disabled=false;
+};
+
+function render(){
+  let html='', day='';
+  PLAN.forEach(function(o,i){
+    if(o.date!==day){
+      day=o.date;
+      const dl=PLAN.filter(x=>x.date===day);
+      html+='<div class="daybar">'+day+' &nbsp;·&nbsp; '+dl.length+' order(s) &nbsp;·&nbsp; '
+           +rs(dl.reduce((s,x)=>s+x.total,0))+'</div>';
+    }
+    const near=(o._near||[]).map(x=>x.date+' &nbsp;'+esc(x.id)+' &nbsp;'+rs(x.total)
+                 +(x.cust&&x.cust!==o._cname?(' &nbsp;<i>'+esc(x.cust)+'</i>'):'')).join(' &nbsp;|&nbsp; ');
+    html+='<div class="row '+(o._suspect?'susp':'clear')+'">'
+      +'<input type="checkbox" id="c'+i+'" '+(o._suspect?'':'checked')+' onchange="running()">'
+      +'<div style="flex:1;"><div class="nm">'+esc(o._cname)+' &nbsp;'+rs(o.total)
+      +'<span class="flag '+(o._suspect?'no':'ok')+'">'+(o._suspect?'the shop already has one':'nothing like it')+'</span></div>'
+      +'<div class="meta">'+esc(o.id)+' &nbsp;·&nbsp; '
+      +(o.items.length?o.items.map(it=>esc(it.product)+' '+it.qty+(it.unit||'')).join(', '):'<b>no item rows in the Sheet</b>')
+      +(near?('<br>Firebase already has for this shop: '+near):'')
+      +'</div></div></div>';
+  });
+  document.getElementById('list').innerHTML=html;
+  running();
+}
+function tick(which){
+  PLAN.forEach(function(o,i){
+    const el=document.getElementById('c'+i); if(!el) return;
+    el.checked = (which==='clear') ? !o._suspect : false;
+  });
+  running();
+}
+function running(){
+  let n=0,v=0;
+  PLAN.forEach(function(o,i){ const el=document.getElementById('c'+i); if(el&&el.checked){ n++; v+=o.total; } });
+  document.getElementById('running').textContent='Ticked: '+n+' order(s), '+rs(v);
+}
+
+document.getElementById('apply').onclick=async function(){
+  const sel=PLAN.filter(function(o,i){ const el=document.getElementById('c'+i); return el&&el.checked; });
+  if(!sel.length){ alert('Nothing ticked.'); return; }
+  const redz=sel.filter(o=>o._suspect).length;
+  if(!confirm('Write '+sel.length+' order(s) into Firebase?  '+rs(sel.reduce((s,o)=>s+o.total,0))
+    +(redz?('\n\n'+redz+' of them are flagged as already present for that shop.'):'')
+    +'\n\nThe Google Sheet is not touched. Nothing is deleted.')) return;
+  const b=this; b.disabled=true;
+  log(''); log('════ WRITING ════');
+  let ok=0, fail=0;
+  for(let i=0;i<sel.length;i+=300){
+    const batch=DB.batch(), chunk=sel.slice(i,i+300);
+    chunk.forEach(function(o){
+      batch.set(DB.collection('orders').doc(o.id), {
+        customerId:o._cid, customerNameAtImport:o._cname,
+        date:o.date, status:(o.status||'confirmed'),
+        total:o.total, paidAmount:o.paid, paymentMode:o.mode,
+        items:o.items.map(i=>({product:i.product,qty:i.qty,unit:i.unit,rate:i.rate,amount:i.amount})),
+        notes:'', createdBy:'sheet-recovery',
+        deliveredBy:'', deliveredAt:null, editedBy:'', editedAt:null,
+        deleted:false, sheetSynced:true, source:'sheet-recovery',
+        recoveredAt:new Date().toISOString(), updatedAt:new Date().toISOString()
+      }, {merge:true});
+    });
+    try{ await batch.commit(); ok+=chunk.length; log('   wrote '+ok+' of '+sel.length+'…'); }
+    catch(e){ fail+=chunk.length; log('   ! batch failed: '+e.message); }
+  }
+  log(''); log('written '+ok+', failed '+fail);
+  b.disabled=false;
+};
+</script>
+</body>
+</html>
