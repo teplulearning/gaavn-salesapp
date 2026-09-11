@@ -280,7 +280,7 @@ body.gf-panel-open #app{ visibility:hidden; }
     <div class="top-bar-left">
       <span class="logo">🐄 GF</span>
       <span class="role-badge" id="role-badge">SALES</span>
-      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v217</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v219</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <!-- v196: this used to be a single button showing the language you would
@@ -532,6 +532,8 @@ body.gf-panel-open #app{ visibility:hidden; }
         </div>
         <button class="btn btn-secondary" onclick="(function(){var d=document.getElementById('submit-log-out');d.innerHTML=submitLogHTML();d.style.display='block';})()">Show the log</button>
         <button class="btn btn-primary" onclick="copyDiagnostics()" style="background:#1A527A;">📋 Copy diagnostics</button>
+        <div id="outbox-badge" style="display:none;margin-top:10px;padding:9px 12px;border-radius:8px;
+             background:#FFF8E1;border:1.5px solid #FFB300;color:#7A5200;font-size:13px;line-height:1.45;"></div>
         <div id="submit-log-out" style="display:none;margin-top:8px;max-height:300px;overflow:auto;background:var(--surface);border:1.5px solid var(--border);border-radius:8px;padding:8px;"></div>
       </div>
 
@@ -1880,6 +1882,8 @@ function fsStartOrdersListener(){
         return;                       // stale cache after the server answered
       }
       if(!_fromCache) FS.ordersServerSeen=true;
+      if(outboxCount()) fsFlushOutbox();          // v218
+      setTimeout(renderSelfCheck, 1200);          // v219 — after the repaint settles
       FS.lastSnapFromCache=_fromCache;
       FS.pendingWrites=_pendingW;
       /* v217: Firebase has confirmed these ids, so clear the local-only flag
@@ -2104,6 +2108,9 @@ function fsBoot(){
          FS.role=d.exists?(d.data().role||''):''; }catch(e){ FS.role=''; }
     fsHideLogin();
     fsStartListening();
+    /* v218 — anything typed before sign-in finished is waiting here. Send it
+       now, before the listener's first snapshot, so it is never invisible. */
+    try{ await fsFlushOutbox(); }catch(e){}
   });
 }
 
@@ -2144,8 +2151,188 @@ function fsWriteErr(what, e){
 }
 function fsWriteOk(){ FS_WRITES.ok++; }
 
-async function fsWriteOrder(o){
-  if(!fsCanWrite() || !o || !o.id) return;
+/* ══════════════════════════════════════════════════════════════════════
+   v218 — NOTHING IS EVER DROPPED BECAUSE FIREBASE WAS NOT READY YET
+
+   Every fsWrite* function began with:
+
+       if(!fsCanWrite() || !o || !o.id) return;
+
+   fsCanWrite() needs FS.user, and FS.user is only set inside the
+   onAuthStateChanged callback — which is asynchronous. So for the first
+   seconds after the app opens, Firebase is not ready and that bare `return`
+   threw the write away. No error, no retry, no record anywhere.
+
+   On 10 September the sales person opened the app and began entering at
+   11:41:25. Firebase became ready at about 11:42:15. Three orders were typed
+   in that gap:
+       ORD20678202  Misal Katta Bhivadi      Rs 300
+       ORD20695295  DATTA CORNER NARYANPUR   Rs 570
+       ORD20712036  Surya Hotel Chetan       Rs 300
+   Every order from 11:42:15 onward reached Firebase within one second. Those
+   three never reached it at all. The Google Sheet needs no sign-in, so it
+   accepted all eleven — which is why the Sheet was right and the app was
+   short. That is the whole of "11 entered, 8 showing", and the same bare
+   return also silently discarded payments, rate changes and deletions.
+
+   The fix is an outbox that survives the app being closed. When Firebase is
+   not ready the write is written to localStorage instead of discarded, and
+   flushed the moment sign-in completes, on resume, and every 20 seconds while
+   anything remains. Nothing depends on the person noticing a status line. */
+const LS_OUTBOX='gf_outbox';
+function _outboxRead(){ try{ return JSON.parse(localStorage.getItem(LS_OUTBOX)||'[]')||[]; }catch(e){ return []; } }
+/* v219: if this throws, the entry is gone the moment the tab closes. That is
+   real data loss and it must never be swallowed — storage full, or private
+   browsing, are the usual causes. */
+function _outboxWrite(a){
+  try{ localStorage.setItem(LS_OUTBOX, JSON.stringify(a.slice(-500))); return true; }
+  catch(e){
+    FS.outboxBroken=true;
+    try{ alert('This device cannot save unsent work.\n\n'
+      +'Storage is full or blocked, so anything typed while Firebase is '
+      +'unavailable will be lost when the app is closed.\n\n'
+      +'Please tell the owner before entering more orders.'); }catch(_){}
+    return false;
+  }
+}
+function outboxCount(){ return _outboxRead().length; }
+/* Queue only when Firebase is MEANT to be on but is not ready yet. If the
+   owner has deliberately switched Firebase off, behaviour is unchanged. */
+/* v219: queue even when the Firebase switch is off. If it is ever turned back
+   on, the work is still there. Before this, switching Firebase off turned every
+   save into a silent discard. */
+function fsQueue(kind, obj){
+  try{
+    const a=_outboxRead();
+    const key=kind+':'+String((obj&&obj.id)||'');
+    for(let i=a.length-1;i>=0;i--){ if(a[i].key===key){ a.splice(i,1); } }  // newest wins
+    a.push({key:key, kind:kind, obj:obj, at:Date.now(), tries:0});
+    _outboxWrite(a);
+    FS.queued=(FS.queued||0)+1;
+    try{ updateOutboxBadge(); }catch(e){}
+  }catch(e){}
+  return true;
+}
+/* A write that was attempted and threw — quota exhausted, a rules change, the
+   network dropping mid-write — used to be counted in FS_WRITES.failed and then
+   forgotten. It is now put back in the outbox and retried like anything else.
+   Only re-queued if it did not already come from the outbox, or the flush loop
+   would count the same failure twice. */
+function fsRequeue(kind, obj, fromOutbox){
+  if(fromOutbox) return;          // the flush loop handles its own retries
+  try{ fsQueue(kind, obj); }catch(e){}
+}
+let _flushing=false;
+async function fsFlushOutbox(){
+  if(_flushing || !fsCanWrite()) return;
+  let a=_outboxRead(); if(!a.length) return;
+  _flushing=true;
+  const keep=[];
+  for(const it of a){
+    try{
+      if(it.kind==='order')         await fsWriteOrder(it.obj, true);
+      else if(it.kind==='customer') await fsWriteCustomer(it.obj, true);
+      else if(it.kind==='pricing')  await fsWriteCustomerPricing(it.obj, true);
+      else if(it.kind==='payment')  await fsWritePayment(it.obj, true);
+      else if(it.kind==='delete')   await fsDeleteOrder(it.obj && it.obj.id, true);
+      FS.flushed=(FS.flushed||0)+1;
+    }catch(e){
+      it.tries=(it.tries||0)+1;
+      if(it.tries<25) keep.push(it);           // keep trying; never silently drop
+      else FS.flushDropped=(FS.flushDropped||0)+1;
+    }
+  }
+  _outboxWrite(keep);
+  _flushing=false;
+  try{ updateOutboxBadge(); }catch(e){}
+  if(!keep.length && a.length) try{ showToast('✓ '+a.length+' saved item(s) sent to Firebase'); }catch(e){}
+}
+/* Flush whenever there is any chance Firebase has just become available. */
+setInterval(function(){ if(outboxCount()) fsFlushOutbox(); }, 20000);
+window.addEventListener('online', function(){ fsFlushOutbox(); });
+/* ══════════════════════════════════════════════════════════════════════
+   v219 — THE CROSS-CHECK THAT DOES NOT CARE WHAT THE CAUSE WAS
+
+   Every fix so far has been aimed at one known cause. This one is aimed at
+   the symptom, so it catches causes nobody has thought of yet.
+
+   The device already records every submission in gf_submit_log. Compare that
+   list against what Firebase actually returned for today. If she typed eleven
+   and Firebase has eight, say so ON HER SCREEN, within seconds, with a button
+   that resends them — instead of the shortfall being discovered in the Sheet
+   a month later.
+
+   It only runs after the server has answered at least once, so a cold start
+   can never raise a false alarm. */
+function _todayStartMs(){ const d=new Date(); d.setHours(0,0,0,0); return d.getTime(); }
+function selfCheckToday(){
+  try{
+    if(!FS.ordersServerSeen) return {missing:[], typed:0, have:0};
+    let log=[]; try{ log=JSON.parse(localStorage.getItem(LS_SUBMIT_LOG)||'[]'); }catch(e){}
+    const t0=_todayStartMs();
+    const typed=new Set();
+    log.forEach(function(x){
+      if(!x || !x.id || x.t<t0) return;
+      if(x.what==='created'||x.what==='replaced'||x.what==='second-copy-kept') typed.add(String(x.id));
+    });
+    const expected=[...typed].filter(function(id){ return !isOrderDeleted(id); });
+    const have=new Set((STATE.orders||[]).filter(function(o){ return o && String(o.date)===TODAY_KEY; })
+                                          .map(function(o){ return String(o.id); }));
+    const missing=expected.filter(function(id){ return !have.has(id); });
+    return {missing:missing, typed:expected.length, have:expected.length-missing.length};
+  }catch(e){ return {missing:[], typed:0, have:0}; }
+}
+function renderSelfCheck(){
+  const r=selfCheckToday();
+  let el=document.getElementById('selfcheck-bar');
+  if(!r.missing.length){ if(el) el.style.display='none'; return; }
+  if(!el){
+    el=document.createElement('div');
+    el.id='selfcheck-bar';
+    el.style.cssText='position:fixed;left:0;right:0;top:0;z-index:99999;background:#B3261E;'
+      +'color:#fff;padding:10px 14px;font-size:13.5px;line-height:1.45;'
+      +'box-shadow:0 2px 10px rgba(0,0,0,.25);font-weight:600;';
+    document.body.appendChild(el);
+  }
+  el.style.display='block';
+  el.innerHTML='⚠ '+r.missing.length+' of the '+r.typed+' order(s) you entered today have NOT '
+    +'reached Firebase. They are not lost.'
+    +'<button onclick="fixMissingToday()" style="margin-left:10px;background:#fff;color:#B3261E;'
+    +'border:0;border-radius:6px;padding:6px 12px;font-weight:700;font-size:13px;cursor:pointer;">Send them now</button>';
+}
+async function fixMissingToday(){
+  const r=selfCheckToday();
+  if(!r.missing.length){ showToast('Nothing pending'); return; }
+  let cache=[]; try{ cache=JSON.parse(localStorage.getItem(LS_PREFIX+TODAY_KEY)||'[]')||[]; }catch(e){}
+  const byId={}; cache.forEach(function(o){ if(o&&o.id) byId[String(o.id)]=o; });
+  const lost=[];
+  for(const id of r.missing){
+    const o=byId[id];
+    if(o){ try{ await fsWriteOrder(o); }catch(e){} }
+    else lost.push(id);
+  }
+  await fsFlushOutbox();
+  renderSelfCheck();
+  if(lost.length){
+    alert('Sent what this device still had.\n\n'
+      +lost.length+' order(s) are no longer stored on this device and must be '
+      +'recovered from the Google Sheet by the owner:\n\n'+lost.join('\n'));
+  } else {
+    showToast('✓ Sent. They will appear in a moment.');
+  }
+}
+setInterval(renderSelfCheck, 45000);
+
+function updateOutboxBadge(){
+  const el=document.getElementById('outbox-badge'); if(!el) return;
+  const n=outboxCount();
+  el.style.display = n ? 'block' : 'none';
+  el.textContent = n ? ('⏳ '+n+' entry(ies) waiting to reach Firebase — they are safe, they will go automatically') : '';
+}
+
+async function fsWriteOrder(o, _fromOutbox){
+  if(!o || !o.id) return;
+  if(!fsCanWrite()){ if(!_fromOutbox) fsQueue('order', o); return; }
   try{
     await FS.db.collection('orders').doc(String(o.id)).set({
       customerId: o.customerId || fsResolveCustId(o.customerName) || null,
@@ -2170,11 +2357,12 @@ async function fsWriteOrder(o){
       deleted:false, source:'app', updatedAt:new Date().toISOString()
     }, {merge:true});
     fsWriteOk();
-  }catch(e){ fsWriteErr('order '+o.id, e); }
+  }catch(e){ fsWriteErr('order '+o.id, e); fsRequeue('order', o, _fromOutbox); }
 }
 
-async function fsWriteCustomer(c){
-  if(!fsCanWrite() || !c || !c.id) return;
+async function fsWriteCustomer(c, _fromOutbox){
+  if(!c || !c.id) return;
+  if(!fsCanWrite()){ if(!_fromOutbox) fsQueue('customer', c); return; }
   try{
     await FS.db.collection('customers').doc(String(c.id)).set({
       name:String(c.name||''), category:String(c.category||''),
@@ -2184,7 +2372,7 @@ async function fsWriteCustomer(c){
       source:'app', updatedAt:new Date().toISOString()
     }, {merge:true});
     fsWriteOk();
-  }catch(e){ fsWriteErr('customer '+c.id, e); }
+  }catch(e){ fsWriteErr('customer '+c.id, e); fsRequeue('customer', c, _fromOutbox); }
 }
 
 /* v195: pricing-only write, used by every rate change.
@@ -2193,19 +2381,21 @@ async function fsWriteCustomer(c){
    and come straight back. update() replaces the map wholesale, which is the
    behaviour this screen promises. The update is attempted second and swallowed
    so a not-yet-existing doc still gets its pricing from the set above. */
-async function fsWriteCustomerPricing(c){
-  if(!fsCanWrite() || !c || !c.id) return;
+async function fsWriteCustomerPricing(c, _fromOutbox){
+  if(!c || !c.id) return;
+  if(!fsCanWrite()){ if(!_fromOutbox) fsQueue('pricing', c); return; }
   try{
     const ref=FS.db.collection('customers').doc(String(c.id));
     await ref.set({pricing:c.pricing||{}, source:'app',
                    updatedAt:new Date().toISOString()}, {merge:true});
     try{ await ref.update({pricing:c.pricing||{}}); }catch(e){}
     fsWriteOk();
-  }catch(e){ fsWriteErr('rates for '+(c.name||c.id), e); }
+  }catch(e){ fsWriteErr('rates for '+(c.name||c.id), e); fsRequeue('pricing', c, _fromOutbox); }
 }
 
-async function fsWritePayment(p){
-  if(!fsCanWrite() || !p || !p.id) return;
+async function fsWritePayment(p, _fromOutbox){
+  if(!p || !p.id) return;
+  if(!fsCanWrite()){ if(!_fromOutbox) fsQueue('payment', p); return; }
   try{
     await FS.db.collection('payments').doc(String(p.id)).set({
       customerId: p.custId || fsResolveCustId(p.custName) || null,
@@ -2217,20 +2407,21 @@ async function fsWritePayment(p){
       deleted:false, source:'app', updatedAt:new Date().toISOString()
     }, {merge:true});
     fsWriteOk();
-  }catch(e){ fsWriteErr('payment '+p.id, e); }
+  }catch(e){ fsWriteErr('payment '+p.id, e); fsRequeue('payment', p, _fromOutbox); }
 }
 
 // A deletion is an UPDATE, never a removal — the rules forbid hard deletes.
 // That is what makes a deletion reach every phone instead of vanishing on one.
-async function fsDeleteOrder(orderId){
-  if(!fsCanWrite() || !orderId) return;
+async function fsDeleteOrder(orderId, _fromOutbox){
+  if(!orderId) return;
+  if(!fsCanWrite()){ if(!_fromOutbox) fsQueue('delete', {id:String(orderId)}); return; }
   try{
     await FS.db.collection('orders').doc(String(orderId)).set({
       deleted:true, deletedAt:new Date().toISOString(),
       deletedBy:String(STATE.role||''), updatedAt:new Date().toISOString()
     }, {merge:true});
     fsWriteOk();
-  }catch(e){ fsWriteErr('delete '+orderId, e); }
+  }catch(e){ fsWriteErr('delete '+orderId, e); fsRequeue('delete', {id:String(orderId)}, _fromOutbox); }
 }
 
 /* ══════════════════════════════════════════════════════════════════
@@ -2401,6 +2592,32 @@ function fsToggleReads(on){
 const TODAY = new Date();
 const TODAY_STR = TODAY.toLocaleDateString('en-IN',{weekday:'short',day:'numeric',month:'short',year:'numeric'});
 const TODAY_KEY = `${TODAY.getFullYear()}-${String(TODAY.getMonth()+1).padStart(2,'0')}-${String(TODAY.getDate()).padStart(2,'0')}`;
+/* v219: TODAY_KEY is fixed at the moment the page loads. A tablet left open
+   overnight — which is how the delivery and sales devices are actually used —
+   keeps writing YESTERDAY'S date on today's orders, in the app, in Firebase and
+   in the Sheet, and nothing says so. The date is not changed silently here;
+   the person is told, because only they know which day they meant. */
+function todayKeyNow(){ const d=new Date();
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+function checkDayRollover(){
+  try{
+    if(todayKeyNow()===TODAY_KEY) return;
+    let el=document.getElementById('rollover-bar');
+    if(!el){
+      el=document.createElement('div'); el.id='rollover-bar';
+      el.style.cssText='position:fixed;left:0;right:0;bottom:0;z-index:99999;background:#7A5200;'
+        +'color:#fff;padding:10px 14px;font-size:13.5px;line-height:1.45;font-weight:600;'
+        +'box-shadow:0 -2px 10px rgba(0,0,0,.25);';
+      document.body.appendChild(el);
+    }
+    el.innerHTML='⚠ This app has been open since '+TODAY_KEY+'. It is now '+todayKeyNow()
+      +' — new orders would be saved under the old date.'
+      +'<button onclick="location.reload()" style="margin-left:10px;background:#fff;color:#7A5200;'
+      +'border:0;border-radius:6px;padding:6px 12px;font-weight:700;font-size:13px;cursor:pointer;">Reload</button>';
+  }catch(e){}
+}
+setInterval(checkDayRollover, 60000);
+document.addEventListener('visibilitychange', function(){ if(!document.hidden){ checkDayRollover(); try{ fsFlushOutbox(); }catch(e){} } });
 
 // ── CREDIT PERIOD CONFIG ──────────────────────────────────────────────
 const CREDIT_CONFIG = {
@@ -4529,6 +4746,13 @@ function copyDiagnostics(){
   L.push('snapshot         : returned '+(FS.lastSnapSize===undefined?'?':FS.lastSnapSize)
          +', deleted '+(FS.lastSnapDeleted||0)+', stale ignored '+(FS.staleIgnored||0));
   L.push('pending writes   : '+(FS.pendingWrites?'YES — not acknowledged':'no'));
+  const _sc=selfCheckToday();
+  L.push('typed today / here: '+_sc.typed+' / '+_sc.have
+         +(_sc.missing.length?('   MISSING: '+_sc.missing.join(', ')):''));
+  L.push('outbox storage    : '+(FS.outboxBroken?'BROKEN — cannot save unsent work':'ok'));
+  L.push('day rolled over   : '+(todayKeyNow()!==TODAY_KEY?('YES — loaded '+TODAY_KEY+', now '+todayKeyNow()):'no'));
+  L.push('waiting in outbox : '+outboxCount()+(FS.flushDropped?('  (dropped after 25 tries: '+FS.flushDropped+')'):''));
+  L.push('queued / flushed  : '+(FS.queued||0)+' / '+(FS.flushed||0));
   L.push('firebase writes  : ok '+FS_WRITES.ok+', failed '+FS_WRITES.failed
          +(FS_WRITES.lastErr?(' · '+FS_WRITES.lastErr):''));
   L.push('read error       : '+(FS.lastError||'none'));
