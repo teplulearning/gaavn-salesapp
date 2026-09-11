@@ -210,28 +210,50 @@ document.getElementById('go').onclick=async function(){
        overwrites the first, because the app saves by id. If that has happened,
        the surviving document will carry a date that does not match the moment
        its own id encodes. */
-    log('════ ID REUSE CHECK (the 27.8-hour wrap) ════');
-    const nowMs=Date.now(), suspects=[];
+    log('════ IS THE DATE ON EACH ORDER THE DAY IT WAS TYPED? ════');
+    log('   The id is the clock. For each order the tool finds the instant');
+    log('   nearest the stored date that could have produced that id, and');
+    log('   reports how far off the stored date is.');
+    log('');
+    const P=1e8, shift={};
+    let checked=0;
     all.forEach(o=>{
       const m=/^ORD(\d{8})$/.exec(o.id); if(!m || !/^\d{4}-\d{2}-\d{2}$/.test(o.date)) return;
       const suffix=parseInt(m[1],10);
-      // walk back in 10^8 ms steps from now to the most recent instant with this suffix
-      let t=Math.floor(nowMs/1e8)*1e8+suffix;
-      while(t>nowMs) t-=1e8;
-      const orderDay=new Date(o.date+'T12:00:00');
-      const gapDays=Math.abs(t-orderDay.getTime())/86400000;
-      if(gapDays>1.5) suspects.push({o:o, was:new Date(t), gap:gapDays});
+      // midday on the stored date, then the nearest instant sharing this id
+      const noon=new Date(o.date+'T12:00:00').getTime();
+      let best=null;
+      for(let k=-2;k<=2;k++){
+        const t=(Math.round((noon-suffix)/P)+k)*P+suffix;
+        if(best===null || Math.abs(t-noon)<Math.abs(best-noon)) best=t;
+      }
+      const d=new Date(best);
+      const idDay=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+      const days=Math.round((new Date(idDay+'T12:00:00').getTime()-noon)/86400000);
+      o._idTime=d; o._idDay=idDay; o._shift=days;
+      shift[days]=(shift[days]||0)+1; checked++;
     });
-    log('   orders whose id encodes a time far from the date on them: '+suspects.length);
-    if(suspects.length){
-      log('   (each of these is an id that was probably issued twice)');
-      suspects.sort((a,b)=>a.gap-b.gap).slice(0,25).forEach(s=>
-        log('     '+pad(s.o.id,16)+pad(s.o.cust,28)+' dated '+pad(s.o.date,12)
-            +' but its id points to '+tstamp(s.was)));
-    } else {
-      log('   none — id reuse is not what is losing orders.');
-    }
+    log('   orders checked ... '+checked);
+    Object.keys(shift).map(Number).sort((a,b)=>a-b).forEach(k=>{
+      const lbl = k===0 ? 'stored date matches the id'
+                : (k<0 ? ('id is '+(-k)+' day(s) BEFORE the stored date')
+                       : ('id is '+k+' day(s) AFTER the stored date'));
+      log('     '+lpad(shift[k],5)+'  '+lbl);
+    });
     log('');
+    log('   If almost everything sits on 0, the dates in Firebase are sound.');
+    log('   A large group at -1 means Firebase is holding orders one day LATER');
+    log('   than they were actually typed — the Sheet would then be the correct');
+    log('   copy, and nothing should be pushed from Firebase into it.');
+    log('');
+    const off=all.filter(o=>o._shift!==undefined && o._shift!==0)
+                .sort((a,b)=>String(a.date).localeCompare(String(b.date)));
+    if(off.length){
+      log('   ── the first 30 that disagree ──');
+      log('   '+pad('order id',16)+pad('customer',28)+pad('stored as',12)+'actually typed at');
+      off.slice(0,30).forEach(o=>log('   '+pad(o.id,16)+pad(o.cust,28)+pad(o.date,12)+tstamp(o._idTime)));
+      log('');
+    }
 
     // ── anything written recently, whatever date it carries ──
     log('════ THE LAST 25 ORDERS WRITTEN, ANY DATE ════');
