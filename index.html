@@ -280,7 +280,7 @@ body.gf-panel-open #app{ visibility:hidden; }
     <div class="top-bar-left">
       <span class="logo">🐄 GF</span>
       <span class="role-badge" id="role-badge">SALES</span>
-      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v219</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v220</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <!-- v196: this used to be a single button showing the language you would
@@ -948,6 +948,8 @@ body.gf-panel-open #app{ visibility:hidden; }
           style="background:var(--green);color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:12px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif;">+ Record</button>
         <button onclick="openPaymentUpload()"
           style="background:var(--blue);color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:12px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif;">📤 Upload</button>
+        <button onclick="openPaymentCheck()"
+          style="background:#37474F;color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:12px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif;">🔎 Check vs Sheet</button>
         <button onclick="openPhonePeReconcile()"
           style="background:#5F259F;color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:12px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif;">🟣 PhonePe</button>
         <button onclick="openReport()"
@@ -1399,7 +1401,8 @@ body.gf-panel-open #app{ visibility:hidden; }
     <div style="background:#E3F2FD;border:1.5px solid #1565C0;border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:#0D47A1;">
       <b>📋 Excel / CSV Format Required:</b><br>
       Columns: <b>Date, Customer Name, Amount, Mode, Reference, Notes</b><br>
-      Date format: DD/MM/YYYY or YYYY-MM-DD · Mode: cash / phonepay / gpay / neft / cheque / other
+      Date format: DD/MM/YYYY or YYYY-MM-DD · Mode: cash / phonepay / gpay / neft / cheque / other<br>
+      Customer Name must be the name used in this app. Every payment goes to Firebase <b>and</b> the Sheet; importing the same file again adds nothing twice.
     </div>
 
     <div style="margin-bottom:12px;">
@@ -1428,6 +1431,23 @@ body.gf-panel-open #app{ visibility:hidden; }
       <button class="btn btn-secondary" onclick="closeModal('modal-payment-upload')">Cancel</button>
       <button class="btn btn-success" id="payment-upload-confirm" style="display:none;" onclick="confirmPaymentUpload()">✓ Import All Payments</button>
     </div>
+  </div>
+</div>
+
+<!-- v220: PAYMENTS — APP (FIREBASE) vs SHEET -->
+<div class="modal-overlay" id="modal-payment-check">
+  <div class="modal-sheet" style="max-height:90vh;overflow-y:auto;">
+    <div class="modal-handle"></div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+      <div class="modal-title" style="margin:0;">🔎 Payments — app vs Sheet</div>
+      <button onclick="closeModal('modal-payment-check')" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--muted);">✕</button>
+    </div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:10px;line-height:1.5;">The app keeps payments in Firebase; the MIS and Dashboard read the Google Sheet. This compares the two for one month and fixes what differs. Owner only.</div>
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
+      <input type="month" id="pc-month" style="padding:7px;border:1.5px solid var(--border);border-radius:8px;font-family:inherit;">
+      <button class="btn btn-success btn-sm" onclick="runPaymentCheck()">Check</button>
+    </div>
+    <div id="pc-body"></div>
   </div>
 </div>
 
@@ -1682,7 +1702,12 @@ function fsPayToApp(id, d){
           custId:d.customerId||'',
           custName: c ? c.name : (d.customerNameAtImport||''),
           amount:parseFloat(d.amount)||0, mode:String(d.mode||''),
-          notes:String(d.notes||''), fromFirestore:true};
+          notes:String(d.notes||''), fromFirestore:true,
+          // v220: kept so edits, the Sheet copy and the Check screen see the whole record
+          ref:String(d.ref||''), createdBy:String(d.createdBy||''), createdAt:d.createdAt||null,
+          updatedAt:String(d.updatedAt||''), importBatch:String(d.importBatch||''),
+          customerNameAtImport:String(d.customerNameAtImport||''),
+          sheetSynced:(d.sheetSynced===undefined?null:!!d.sheetSynced)};
 }
 
 function fsRepaint(){
@@ -2064,7 +2089,7 @@ function fsStartListening(){
   FS.unsub.push(FS.db.collection('payments').where('deleted','==',false)
     .onSnapshot(function(snap){
       const list=[];
-      snap.forEach(function(doc){ list.push(fsPayToApp(doc.id, doc.data())); });
+      snap.forEach(function(doc){ if(typeof isPaymentDeleted==='function' && isPaymentDeleted(doc.id)) return; list.push(fsPayToApp(doc.id, doc.data())); });
       STATE.payments=list;
       try{ savePaymentLedger(); }catch(e){}
       fsRepaint();
@@ -2235,6 +2260,7 @@ async function fsFlushOutbox(){
       else if(it.kind==='pricing')  await fsWriteCustomerPricing(it.obj, true);
       else if(it.kind==='payment')  await fsWritePayment(it.obj, true);
       else if(it.kind==='delete')   await fsDeleteOrder(it.obj && it.obj.id, true);
+      else if(it.kind==='paydelete') await fsDeletePayment(it.obj && it.obj.id, true);   // v220
       FS.flushed=(FS.flushed||0)+1;
     }catch(e){
       it.tries=(it.tries||0)+1;
@@ -2395,9 +2421,10 @@ async function fsWriteCustomerPricing(c, _fromOutbox){
 
 async function fsWritePayment(p, _fromOutbox){
   if(!p || !p.id) return;
+  if(typeof isPaymentDeleted==='function' && isPaymentDeleted(p.id)) return;   // v220: never write a deleted payment back
   if(!fsCanWrite()){ if(!_fromOutbox) fsQueue('payment', p); return; }
   try{
-    await FS.db.collection('payments').doc(String(p.id)).set({
+    const doc={
       customerId: p.custId || fsResolveCustId(p.custName) || null,
       customerNameAtImport:String(p.custName||''),
       date:String(p.date||TODAY_KEY).slice(0,10),
@@ -2405,7 +2432,18 @@ async function fsWritePayment(p, _fromOutbox){
       ref:String(p.ref||''), notes:String(p.notes||''),
       createdBy:String(p.createdBy||STATE.role||''),
       deleted:false, source:'app', updatedAt:new Date().toISOString()
-    }, {merge:true});
+    };
+    if(p.createdAt) doc.createdAt=p.createdAt;                 // v220
+    if(p.importBatch) doc.importBatch=String(p.importBatch);   // v220: which import it came from
+    if(p.sheetSynced!==undefined && p.sheetSynced!==null) doc.sheetSynced=!!p.sheetSynced;
+    try{ await FS.db.collection('payments').doc(String(p.id)).set(doc, {merge:true}); }
+    catch(e1){
+      /* v220: if the security rules do not yet allow the new fields, save the
+         payment exactly as v219 did rather than lose it. */
+      if(!/permission/i.test(String(e1&&e1.message||e1))) throw e1;
+      delete doc.createdAt; delete doc.importBatch; delete doc.sheetSynced;
+      await FS.db.collection('payments').doc(String(p.id)).set(doc, {merge:true});
+    }
     fsWriteOk();
   }catch(e){ fsWriteErr('payment '+p.id, e); fsRequeue('payment', p, _fromOutbox); }
 }
@@ -11246,7 +11284,15 @@ function editPaymentIn(id) {
 function deletePaymentIn(id) {
   if(!confirm('Delete this payment entry?')) return;
   const p = STATE.payments.find(x=>x.id===id);
-  if(p && p.custId) {
+  /* v220: this used to remove the payment from this phone's screen only.
+     Firebase still held it, so it came straight back. Now: tombstone here,
+     deleted:true in Firebase, and the Sheet row zeroed if it is there. */
+  _markPaymentDeletedLocal(id);
+  try{ fsDeletePayment(id); }catch(e){}
+  if(p){ (async function(){ try{ const rows=await sheetMonthPayments(String(p.date||TODAY_KEY).slice(0,7));
+      if(rows.some(r=>r.id===String(p.id))) await sheetMarkPaymentDeleted(p); }catch(e){} })(); }
+  // An import never reduced a balance, so deleting one must not raise it.
+  if(p && p.custId && !_isImportedPayment(p)) {
     // Reverse the payment — add amount back to customer balance
     const cust = STATE.customers.find(c=>c.id===p.custId);
     if(cust) {
@@ -11563,11 +11609,12 @@ async function flushDirtyBalances(){
 }
 
 // Sync a payment entry to Google Sheet (Payments tab)
-async function syncPaymentToSheet(p) {
+async function syncPaymentToSheet(p, _skipFirebase) {
   /* v207: same fault as orders — the Firestore mirror sat after this guard,
      so a device without a Sheet URL never recorded a payment in Firebase. */
-  try{ fsWritePayment(p); }catch(e){ console.warn('fsWritePayment', e); }
-  const url = getSheetUrl(); if(!url) return;
+  if(!_skipFirebase){ try{ fsWritePayment(p); }catch(e){ console.warn('fsWritePayment', e); } }
+  if(isPaymentDeleted(p.id)) return false;
+  const url = getSheetUrl(); if(!url) return false;
   const params = new URLSearchParams({
     action:'logPayment',
     payId:   p.id,
@@ -11581,7 +11628,14 @@ async function syncPaymentToSheet(p) {
     createdBy: p.createdBy||STATE.role||'',
   });
   try{ var _g=p.geo; if(_g){ params.set('notes',(p.notes||'')+(p.notes?'  ':'')+gfGeoTag(_g)); params.set('lat',String(_g.lat)); params.set('lng',String(_g.lng)); params.set('acc',String(_g.acc)); } }catch(e){}
-  await fireAndForget(url+'?'+params.toString());
+  /* v220: was fireAndForget — nobody ever knew whether the Sheet got it. Now
+     the Sheet must answer, and the answer is recorded on the Firebase copy. */
+  const ok = await fireAndWait(url+'?'+params.toString());
+  const was = (p.sheetSynced===undefined||p.sheetSynced===null) ? null : !!p.sheetSynced;
+  p.sheetSynced = !!ok;
+  if(was !== !!ok){ try{ fsSetPaymentSheetFlag(p.id, ok); }catch(e){} }
+  try{ _sheetHealth(ok, ok?'':'logPayment failed'); }catch(e){}
+  return !!ok;
   /* v207: mirror moved above the URL guard. */
 }
 
@@ -11673,44 +11727,151 @@ function handlePaymentUpload(input) {
   reader.readAsText(file);
 }
 
+
+/* ══════════════════════════════════════════════════════════════════════
+   v220 — PAYMENTS: ONE LEDGER, IN FIREBASE AND IN THE SHEET
+
+   What was wrong in v219 (found by reading every payment path):
+   1. "Import All Payments" wrote each payment to Firebase ONLY. The Sheet —
+      which the MIS and Dashboard read for Cash In — never received them.
+      A hand-typed payment went to both; an imported one to one.
+   2. Every import gave every row a brand-new random ID, so importing the same
+      file twice (or a corrected file) doubled every payment.
+   3. Deleting a payment removed it from this phone's screen only. Firebase
+      still had it, so the next refresh brought it straight back — there was
+      no way to remove a wrong or duplicate payment at all.
+   4. A customer was matched by "first name that contains / is contained in",
+      so a short name earlier in the list could capture someone else's payment.
+   5. A name with a comma ("Hotel Ramkrishna, Khedshivapur") broke the file.
+
+   v220:
+   • import → Firebase AND Sheet, each Sheet write confirmed, progress shown
+   • import IDs are made from the row itself (date, customer, amount, mode,
+     notes) — the same file imported twice lands on the same records
+   • rows that match a payment already in the app (same date, customer and
+     amount) are shown and skipped unless you tick "import these too"
+   • delete → Firebase (deleted:true, never a hard delete) + Sheet (row set to
+     ₹0 and marked DELETED, so Cash In drops) + a local tombstone so no phone
+     can write it back
+   • customer match: exact name first; otherwise only when exactly ONE
+     customer fits; ambiguous names are listed, not guessed
+   • 🔎 Check vs Sheet (owner): per month, lists import batches, duplicates,
+     payments missing from the Sheet and payments missing from the app, with
+     a button for each fix.
+   ══════════════════════════════════════════════════════════════════════ */
+const LS_PAY_DELETED='gf_deleted_payments';
+function _payDelMap(){ try{ return JSON.parse(localStorage.getItem(LS_PAY_DELETED)||'{}')||{}; }catch(e){ return {}; } }
+function isPaymentDeleted(id){ return !!_payDelMap()[String(id||'')]; }
+function _markPaymentDeletedLocal(id){ try{ const m=_payDelMap(); m[String(id)]=Date.now(); localStorage.setItem(LS_PAY_DELETED, JSON.stringify(m)); }catch(e){} }
+
+// A deletion is an UPDATE (the rules forbid hard deletes). Queued when Firebase is not ready.
+async function fsDeletePayment(id, _fromOutbox){
+  if(!id) return false;
+  if(!fsCanWrite()){ if(!_fromOutbox) fsQueue('paydelete', {id:String(id)}); return false; }
+  try{
+    await FS.db.collection('payments').doc(String(id)).set({
+      deleted:true, deletedAt:new Date().toISOString(),
+      deletedBy:String(STATE.role||''), updatedAt:new Date().toISOString()
+    }, {merge:true});
+    fsWriteOk(); return true;
+  }catch(e){ fsWriteErr('payment delete '+id, e); fsRequeue('paydelete', {id:String(id)}, _fromOutbox); return false; }
+}
+// Record the Sheet outcome on the Firebase copy without touching updatedAt.
+async function fsSetPaymentSheetFlag(id, ok){
+  if(!id || !fsCanWrite()) return;
+  try{ await FS.db.collection('payments').doc(String(id)).set({sheetSynced:!!ok}, {merge:true}); }catch(e){}
+}
+// The Sheet has no "delete payment" action: the row is kept for the audit
+// trail, its amount set to 0 and its mode/notes marked DELETED — Cash In drops.
+async function sheetMarkPaymentDeleted(p){
+  const url=getSheetUrl(); if(!url || !p || !p.id) return false;
+  const d=new Date(), stamp=String(d.getDate()).padStart(2,'0')+'/'+String(d.getMonth()+1).padStart(2,'0')+'/'+d.getFullYear();
+  const params=new URLSearchParams({ action:'logPayment', payId:p.id, date:p.date||TODAY_KEY,
+    custName:p.custName||'', custId:p.custId||'', amount:0, mode:'deleted', ref:p.ref||'',
+    notes:'DELETED '+stamp+' (was Rs '+(parseFloat(p.amount)||0)+')'+(p.notes?' · '+p.notes:''),
+    createdBy:p.createdBy||STATE.role||'' });
+  return await fireAndWait(url+'?'+params.toString());
+}
+async function sheetMonthPayments(month){
+  const url=getSheetUrl(); if(!url) throw new Error('No Sheet URL on this device');
+  const r=await fetch(url+'?action=getMonthPayments&month='+month+'&_t='+Date.now(),{cache:'no-store'});
+  const d=await r.json(); if(d&&d.error) throw new Error(d.error);
+  return (d&&Array.isArray(d.payments)?d.payments:[]).map(function(row){
+    return { id:String(row['Pay ID']||'').trim(), date:_normDayStr(row['Date']), custName:String(row['Customer']||''),
+             custId:String(row['Cust ID']||''), amount:parseFloat(row['Amount (Rs)'])||0, mode:String(row['Mode']||''),
+             ref:String(row['Reference']||''), notes:String(row['Notes']||''), createdBy:String(row['Created By']||'') };
+  }).filter(function(x){ return x.id; });
+}
+function _isImportedPayment(p){
+  return !!(p && (p.importBatch || /^PAYI/.test(String(p.id||'')) || /import/i.test(String(p.createdBy||'')) || /khatabook import/i.test(String(p.ref||''))));
+}
+
+// ── customer resolution: exact first, then a single unambiguous fit ─────────
+function resolvePaymentCustomer(name){
+  const k=_nameKey(name); if(!k) return {id:'', why:'no name'};
+  const custs=(STATE.customers||[]).filter(function(c){ return c && c.name && !/^⛔/.test(c.name); });
+  const exact=custs.filter(function(c){ return _nameKey(c.name)===k; });
+  if(exact.length) return {id:exact[0].id, name:exact[0].name, how:'exact'};
+  const fits=custs.filter(function(c){ const n=_nameKey(c.name); return n.indexOf(k)>=0 || k.indexOf(n)>=0; });
+  const ids=[...new Set(fits.map(function(c){ return c.id; }))];
+  if(ids.length===1) return {id:ids[0], name:fits[0].name, how:'partial'};
+  return {id:'', why: ids.length? ('matches '+ids.length+' customers: '+fits.slice(0,3).map(function(c){ return c.name; }).join(' / ')) : 'no customer with this name'};
+}
+// ── CSV: quotes, "" inside quotes, and \, are honoured ────────────────────────
+function _csvSplit(line){
+  const out=[]; let cur='', q=false;
+  for(let i=0;i<line.length;i++){
+    const ch=line[i];
+    if(q){ if(ch==='"'){ if(line[i+1]==='"'){ cur+='"'; i++; } else q=false; } else cur+=ch; }
+    else if(ch==='"') q=true;
+    else if(ch==='\\' && line[i+1]===','){ cur+=','; i++; }
+    else if(ch===','){ out.push(cur); cur=''; }
+    else cur+=ch;
+  }
+  out.push(cur);
+  return out.map(function(v){ return v.trim(); });
+}
+function _payHash(s){ let h=2166136261>>>0; for(let i=0;i<s.length;i++){ h^=s.charCodeAt(i); h=Math.imul(h,16777619)>>>0; } return h.toString(36).toUpperCase(); }
+function _payContentKey(p){ return String(p.date||'').slice(0,10)+'|'+(Math.round((parseFloat(p.amount)||0)*100)/100)+'|'+(p.custId? 'id:'+p.custId : 'nm:'+_nameKey(p.custName)); }
+
+// ── import ─────────────────────────────────────────────────────────────────
 function parseCSVPayments(text) {
-  const lines = text.trim().split('\n').filter(l=>l.trim());
+  const lines = String(text||'').replace(/^﻿/,'').split(/\r?\n/).filter(l=>l.trim());
   if(lines.length < 2) throw new Error('File must have header row + data rows');
-  const headers = lines[0].split(',').map(h=>h.trim().toLowerCase().replace(/\s+/g,'_'));
-  const rows = [];
+  const headers = _csvSplit(lines[0]).map(h=>h.toLowerCase().replace(/\s+/g,'_'));
+  if(headers.indexOf('amount')<0 && headers.indexOf('opening_balance')<0)
+    throw new Error('No "Amount" column. Columns needed: Date, Customer Name, Amount, Mode, Reference, Notes');
+  const rows = [], seen = {};
   for(let i=1;i<lines.length;i++) {
-    const vals = lines[i].split(',').map(v=>v.trim().replace(/^"|"$/g,''));
-    if(vals.every(v=>!v)) continue; // skip blank rows
+    const vals = _csvSplit(lines[i]);
+    if(vals.every(v=>!v)) continue;
     const obj = {};
     headers.forEach((h,j) => obj[h] = vals[j]||'');
-    // Parse date
     let dateStr = (obj['date']||'').trim();
-    if(dateStr) {
-      // Handle DD/MM/YYYY
-      const m = dateStr.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-      if(m) dateStr = `${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
-    }
-    const amount = parseFloat(obj['amount'])||0;
-    const openingBal = parseFloat(obj['opening_balance'])||0;
+    const m = dateStr.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/);
+    if(m) dateStr = `${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
+    const amount = parseFloat(String(obj['amount']||'').replace(/[,₹\s]/g,''))||0;
+    const openingBal = parseFloat(String(obj['opening_balance']||'').replace(/[,₹\s]/g,''))||0;
     const custName = (obj['customer_name']||'').trim();
     if(!custName) continue;
-    // Payment row
+    const rc = resolvePaymentCustomer(custName);
     if(amount > 0) {
+      const mode=(obj['mode']||'cash').toLowerCase().trim(), notes=obj['notes']||'', ref=obj['reference']||'';
+      const date=dateStr || TODAY_KEY;
+      const base=[date,_nameKey(custName),amount,mode,_nameKey(notes),_nameKey(ref)].join('|');
+      seen[base]=(seen[base]||0)+1;                 // two identical lines in one file stay two payments
       rows.push({
-        id: 'PAY'+Date.now().toString().slice(-8)+''+i,
-        custName, custId: findCustId(custName),
-        date: dateStr || TODAY_KEY,
-        amount, mode: (obj['mode']||'cash').toLowerCase().trim(),
-        ref: obj['reference']||'', notes: obj['notes']||'',
+        id: 'PAYI'+_payHash(base)+'_'+seen[base],
+        custName: rc.name||custName, custId: rc.id, custWhy: rc.id?'':rc.why,
+        date, amount, mode, ref, notes,
         createdAt: Date.now(), createdBy: STATE.role||'import',
         isOpeningBalance: false
       });
     }
-    // Opening balance row
     if(openingBal > 0) {
       rows.push({
-        id: 'BAL'+Date.now().toString().slice(-8)+''+i,
-        custName, custId: findCustId(custName),
+        id: 'BAL'+_payHash(custName+'|'+dateStr+'|'+openingBal),
+        custName: rc.name||custName, custId: rc.id, custWhy: rc.id?'':rc.why,
         date: dateStr || TODAY_KEY,
         amount: openingBal, mode: 'opening_balance',
         ref: '', notes: 'Opening balance import',
@@ -11722,10 +11883,23 @@ function parseCSVPayments(text) {
   return rows;
 }
 
-function findCustId(name) {
-  const c = STATE.customers.find(x=>x.name.toLowerCase()===name.toLowerCase() ||
-    x.name.toLowerCase().includes(name.toLowerCase()) || name.toLowerCase().includes(x.name.toLowerCase()));
-  return c?.id||'';
+function findCustId(name) { return resolvePaymentCustomer(name).id || ''; }
+
+// classify rows against what the app already holds
+function _classifyUpload(rows){
+  const byId=new Set((STATE.payments||[]).map(p=>String(p.id)));
+  const byContent={};
+  (STATE.payments||[]).forEach(function(p){ const k=_payContentKey(p); byContent[k]=(byContent[k]||0)+1; });
+  const out={fresh:[], sameId:[], lookAlike:[], noCust:[]};
+  rows.forEach(function(r){
+    if(r.isOpeningBalance){ out.fresh.push(r); return; }
+    if(byId.has(String(r.id))){ out.sameId.push(r); return; }
+    const k=_payContentKey(r);
+    if(byContent[k]>0){ byContent[k]--; out.lookAlike.push(r); return; }
+    out.fresh.push(r);
+    if(!r.custId) out.noCust.push(r);
+  });
+  return out;
 }
 
 function showPaymentUploadPreview(rows) {
@@ -11733,8 +11907,10 @@ function showPaymentUploadPreview(rows) {
   const tableEl = document.getElementById('payment-upload-table');
   const sumEl   = document.getElementById('payment-upload-summary');
   const confirmBtn = document.getElementById('payment-upload-confirm');
-
+  const C=_classifyUpload(rows); _uploadClass=C;
   const preview5 = rows.slice(0,5);
+  const fmtR=n=>'₹'+Math.round(n).toLocaleString('en-IN');
+  const tot=a=>a.reduce((s,r)=>s+(r.amount||0),0);
   tableEl.innerHTML = `<table style="width:100%;font-size:11px;border-collapse:collapse;">
     <thead><tr style="background:var(--cream);">
       <th style="padding:6px;text-align:left;border-bottom:1.5px solid var(--border);">Customer</th>
@@ -11743,39 +11919,43 @@ function showPaymentUploadPreview(rows) {
       <th style="padding:6px;text-align:left;border-bottom:1.5px solid var(--border);">Mode</th>
     </tr></thead>
     <tbody>${preview5.map(r=>`<tr>
-      <td style="padding:5px 6px;border-bottom:1px solid var(--border);">${r.custName}</td>
+      <td style="padding:5px 6px;border-bottom:1px solid var(--border);">${r.custName}${r.custId?'':' <span style="color:#C62828;">⚠</span>'}</td>
       <td style="padding:5px 6px;border-bottom:1px solid var(--border);">${r.date}</td>
       <td style="padding:5px 6px;border-bottom:1px solid var(--border);text-align:right;font-weight:700;">₹${r.amount.toLocaleString('en-IN')}</td>
       <td style="padding:5px 6px;border-bottom:1px solid var(--border);">${PI_MODES[r.mode]||r.mode}</td>
     </tr>`).join('')}</tbody>
   </table>`;
-
-  const total = rows.reduce((s,r)=>s+(r.amount||0),0);
-  sumEl.textContent = `${rows.length} payments found · Total ₹${total.toLocaleString('en-IN')}`;
+  let h = `<div>${rows.length} rows in the file · ${fmtR(tot(rows))}</div>`
+    + `<div style="color:var(--green);">✓ <b>${C.fresh.length}</b> new — ${fmtR(tot(C.fresh))} will be saved to Firebase <b>and</b> the Sheet</div>`;
+  if(C.sameId.length) h+=`<div style="color:var(--muted);">↺ ${C.sameId.length} already imported from this same file (${fmtR(tot(C.sameId))}) — skipped</div>`;
+  if(C.lookAlike.length) h+=`<div style="color:#E65100;">⚠ ${C.lookAlike.length} look already recorded — same customer, date and amount (${fmtR(tot(C.lookAlike))}) — skipped
+      <label style="display:block;font-weight:400;margin-top:3px;"><input type="checkbox" id="pu-include-lookalike"> import these too (only if they are genuinely separate payments)</label></div>`;
+  if(C.noCust.length) h+=`<div style="color:#C62828;">⚠ ${C.noCust.length} name(s) match no customer, or more than one — they will import but reduce nobody's dues:<br>`
+      + C.noCust.slice(0,8).map(r=>'&nbsp;&nbsp;• '+r.custName+' — '+r.custWhy).join('<br>')+(C.noCust.length>8?'<br>&nbsp;&nbsp;…':'')+`</div>`;
+  sumEl.innerHTML = h;
+  sumEl.style.fontWeight='600';
   preview.style.display = 'block';
-  confirmBtn.style.display = 'block';
+  confirmBtn.style.display = (C.fresh.length||C.lookAlike.length) ? 'block' : 'none';
 }
+let _uploadClass=null, _uploadBusy=false;
 
-function confirmPaymentUpload() {
-  if(!_uploadedPayments.length) return;
-  /* ── v214 ─────────────────────────────────────────────────────────────
-     v187 blocked this whenever Firebase was live, because back then an import
-     went into this phone's ledger and nowhere else. Since v207 payments write
-     to Firebase properly, so the block is no longer right — it just stops a
-     legitimate month-end import. It now imports AND mirrors to Firebase, so
-     every device sees the same ledger. */
+async function confirmPaymentUpload() {
+  if(!_uploadedPayments.length || _uploadBusy) return;
+  const C=_uploadClass || _classifyUpload(_uploadedPayments);
+  const inc=document.getElementById('pu-include-lookalike');
+  const todo=C.fresh.concat(inc && inc.checked ? C.lookAlike : []);
+  if(!todo.length){ showToast('Nothing new to import'); return; }
+  _uploadBusy=true;
+  const batch=new Date().toISOString().slice(0,16).replace('T',' ')+' · '+(( document.getElementById('payment-csv-upload').files[0]||{}).name||'upload');
+  const sumEl=document.getElementById('payment-upload-summary');
+  const btn=document.getElementById('payment-upload-confirm'); if(btn) btn.disabled=true;
   const existingIds = new Set(STATE.payments.map(p=>p.id));
-  let added = 0, noCust = [];
-  _uploadedPayments.forEach(p => {
-    if(!existingIds.has(p.id)) {
-      STATE.payments.push(p);
-      added++;
-      /* A payment with no matching customer still imports, but it can never
-         reduce anyone's balance — so name it rather than let it vanish. */
-      if(!p.custId) noCust.push(p.custName+' · ₹'+Math.round(p.amount).toLocaleString('en-IN'));
-      try{ fsWritePayment(p); }catch(e){ console.warn('fsWritePayment', e); }
-    }
-    // Update opening balances for customers
+  let added=0, sheetOk=0, sheetFail=0;
+  // 1. the record: Firebase (queued in the outbox if Firebase is not ready)
+  todo.forEach(p => {
+    p.importBatch=batch; p.sheetSynced=false;
+    if(!existingIds.has(p.id)) { STATE.payments.push(p); added++; }
+    try{ fsWritePayment(p); }catch(e){ console.warn('fsWritePayment', e); }
     if(p.isOpeningBalance && p.custId) {
       const cust = STATE.customers.find(c=>c.id===p.custId);
       if(cust) {
@@ -11788,23 +11968,162 @@ function confirmPaymentUpload() {
       }
     }
   });
-  savePaymentLedger();
+  savePaymentLedger(); renderPaymentIn();
+  // 2. the copy: the Sheet, one confirmed write per payment (opening balances are not ledger rows)
+  const toSheet=todo.filter(p=>!p.isOpeningBalance);
+  for(let i=0;i<toSheet.length;i++){
+    if(sumEl) sumEl.innerHTML='⏳ Saving to the Sheet: '+(i+1)+' of '+toSheet.length+' — keep this screen open';
+    const ok=await syncPaymentToSheet(toSheet[i], true);
+    if(ok) sheetOk++; else sheetFail++;
+  }
+  _uploadBusy=false; if(btn) btn.disabled=false;
   closeModal('modal-payment-upload');
   renderPaymentIn();
-  /* v214: an unmatched name is a silent failure — the row lands in the ledger
-     but attaches to nobody, so the customer's dues do not move. Say so. */
+  const noCust=todo.filter(p=>!p.custId && !p.isOpeningBalance);
+  const msg='✓ '+added+' payment(s) imported · Sheet: '+sheetOk+' confirmed'+(sheetFail?(', '+sheetFail+' NOT confirmed — open 🔎 Check vs Sheet to resend'):'');
+  showToast(msg, 7000);
   if(noCust.length){
-    showToast('✓ '+added+' imported — but '+noCust.length+' matched no customer', 6000);
     setTimeout(function(){
-      alert('These '+noCust.length+' payment(s) did not match any customer, so they will NOT reduce anyone\'s balance:\n\n'
-        + noCust.slice(0,25).join('\n')
-        + (noCust.length>25 ? ('\n…and '+(noCust.length-25)+' more') : '')
-        + '\n\nFix the spelling in the file to match your client list, or add the customer, then import again.');
+      alert('These '+noCust.length+' payment(s) did not match exactly one customer, so they will NOT reduce anyone\'s balance:\n\n'
+        + noCust.slice(0,25).map(p=>p.custName+' · ₹'+Math.round(p.amount).toLocaleString('en-IN')).join('\n')
+        + (noCust.length>25 ? ('\n…and '+(noCust.length-25)+' more') : ''));
     }, 400);
-  } else {
-    showToast('✓ '+added+' payments imported to every device');
   }
-  _uploadedPayments = [];
+  _uploadedPayments = []; _uploadClass=null;
+}
+
+// ══ 🔎 CHECK PAYMENTS: APP (FIREBASE) vs SHEET — owner ════════════════════════
+let _pcState=null;
+function openPaymentCheck(){
+  if(STATE.role!=='owner'){ showToast('Owner only'); return; }
+  const m=document.getElementById('pc-month');
+  if(m && !m.value){ const d=new Date(); d.setMonth(d.getMonth()-1); m.value=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'); }
+  document.getElementById('pc-body').innerHTML='<div class="muted" style="font-size:12px;">Pick a month and press Check.</div>';
+  document.getElementById('modal-payment-check').classList.add('open');
+}
+function _pcAnalyse(app, sheet){
+  const sheetById={}; sheet.forEach(s=>{ sheetById[s.id]=s; });
+  const appIds=new Set(app.map(p=>String(p.id)));
+  const pairedApp=new Set(), pairedSheet=new Set();
+  app.forEach(p=>{ if(sheetById[p.id]){ pairedApp.add(p.id); pairedSheet.add(p.id); } });
+  // same payment under a different ID (e.g. imported twice by two routes)
+  const sheetByContent={};
+  sheet.forEach(s=>{ if(pairedSheet.has(s.id)) return; const k=_payContentKey(s); (sheetByContent[k]=sheetByContent[k]||[]).push(s); });
+  const contentPairs=[];
+  app.forEach(p=>{ if(pairedApp.has(p.id)) return; const k=_payContentKey(p); const l=sheetByContent[k]; if(l&&l.length){ const s=l.shift(); pairedApp.add(p.id); pairedSheet.add(s.id); contentPairs.push([p,s]); } });
+  const appOnly=app.filter(p=>!pairedApp.has(p.id));
+  const sheetOnly=sheet.filter(s=>!pairedSheet.has(s.id) && !(s.mode==='deleted' && !s.amount) && !isPaymentDeleted(s.id));
+  // duplicates inside the app
+  const groups={};
+  app.forEach(p=>{ const k=_payContentKey(p); (groups[k]=groups[k]||[]).push(p); });
+  const dups=Object.keys(groups).filter(k=>groups[k].length>1).map(k=>{
+    const g=groups[k].slice().sort((a,b)=>{ const sa=sheetById[a.id]?0:1, sb=sheetById[b.id]?0:1; if(sa!==sb) return sa-sb; const ca=a.custId?0:1, cb=b.custId?0:1; if(ca!==cb) return ca-cb; return String(b.updatedAt||b.id).localeCompare(String(a.updatedAt||a.id)); });
+    return {key:k, keep:g[0], extra:g.slice(1)};
+  });
+  // import batches: an import stamp, else the minute Firebase stored them
+  const bm={};
+  app.forEach(p=>{ const b=p.importBatch || (p.updatedAt? ('saved '+String(p.updatedAt).slice(0,16).replace('T',' ')+' UTC') : ''); if(!b) return; (bm[b]=bm[b]||[]).push(p); });
+  const batches=Object.keys(bm).filter(b=>bm[b].length>=5).map(b=>{ const l=bm[b]; const ds=l.map(p=>p.date).sort();
+    return {name:b, list:l, total:l.reduce((s,p)=>s+(p.amount||0),0), from:ds[0], to:ds[ds.length-1], inSheet:l.filter(p=>sheetById[p.id]).length}; })
+    .sort((a,b)=>a.name.localeCompare(b.name));
+  return {app, sheet, sheetById, appOnly, sheetOnly, dups, batches, contentPairs};
+}
+async function runPaymentCheck(){
+  const month=(document.getElementById('pc-month')||{}).value;
+  const body=document.getElementById('pc-body');
+  if(!/^\d{4}-\d{2}$/.test(month||'')){ showToast('Pick a month'); return; }
+  if(!fsIsLive()){ body.innerHTML='<div style="color:#C62828;">Firebase is not connected on this device — sign in first, then check.</div>'; return; }
+  body.innerHTML='⏳ Reading '+month+' from the Sheet…';
+  let sheet=[];
+  try{ sheet=await sheetMonthPayments(month); }catch(e){ body.innerHTML='<div style="color:#C62828;">Could not read the Sheet: '+e.message+'</div>'; return; }
+  const app=(STATE.payments||[]).filter(p=>String(p.date||'').slice(0,7)===month && !isPaymentDeleted(p.id));
+  _pcState=Object.assign({month:month}, _pcAnalyse(app, sheet));
+  renderPaymentCheck();
+}
+function renderPaymentCheck(){
+  const S_=_pcState; if(!S_) return;
+  const R=n=>'₹'+Math.round(n).toLocaleString('en-IN');
+  const T=a=>a.reduce((s,p)=>s+(p.amount||0),0);
+  const sheetLive=S_.sheet.filter(s=>!(s.mode==='deleted'&&!s.amount));
+  const li=p=>'<div style="font-size:11px;border-bottom:1px solid var(--border);padding:3px 0;">'+p.date+' · '+(p.custName||'?')+' · <b>'+R(p.amount)+'</b> · '+(p.mode||'')+(p.notes?' · <span class="muted">'+String(p.notes).slice(0,40)+'</span>':'')+'</div>';
+  const box=(t,inner,col)=>'<div style="border:1.5px solid '+(col||'var(--border)')+';border-radius:10px;padding:10px 12px;margin:10px 0;font-size:12.5px;line-height:1.5;">'+t+inner+'</div>';
+  let h='<div style="font-size:13px;line-height:1.6;"><b>'+S_.month+'</b> — app (Firebase): <b>'+S_.app.length+'</b> payments, '+R(T(S_.app))+' · Sheet: <b>'+sheetLive.length+'</b>, '+R(T(sheetLive))+'</div>';
+  if(S_.batches.length){
+    h+=box('<b>Imports in the app this month</b><br>', S_.batches.map((b,i)=>
+      '<div style="border-top:1px solid var(--border);padding:6px 0;"><b>'+b.list.length+'</b> payments, '+R(b.total)+' · dated '+b.from+' to '+b.to+'<br><span class="muted">'+b.name+' · '+b.inSheet+' of them in the Sheet</span><br>'
+      +'<button class="btn btn-secondary btn-sm" style="margin-top:4px;" onclick="pcRemoveBatch('+i+')">🗑 Remove this whole import</button></div>').join(''));
+  }
+  if(S_.dups.length){
+    const n=S_.dups.reduce((s,d)=>s+d.extra.length,0), amt=S_.dups.reduce((s,d)=>s+T(d.extra),0);
+    h+=box('<b style="color:#E65100;">'+n+' possible duplicate(s) in the app — '+R(amt)+'</b> <span class="muted">(same customer, date and amount; kept: the copy already in the Sheet, else the one linked to a customer, else the most recent)</span>',
+      S_.dups.slice(0,60).map(d=>li(d.extra[0])).join('')+(S_.dups.length>60?'<div class="muted">…</div>':'')
+      +'<button class="btn btn-secondary btn-sm" style="margin-top:6px;" onclick="pcRemoveDuplicates()">🗑 Remove the '+n+' extra copies</button>', '#FFB300');
+  }
+  if(S_.appOnly.length){
+    h+=box('<b style="color:#C62828;">'+S_.appOnly.length+' in the app but NOT in the Sheet — '+R(T(S_.appOnly))+'</b> <span class="muted">(the MIS and Dashboard cannot see these)</span>',
+      '<details><summary style="cursor:pointer;font-size:11px;">show</summary>'+S_.appOnly.map(li).join('')+'</details>'
+      +'<button class="btn btn-success btn-sm" style="margin-top:6px;" onclick="pcSendToSheet()">⬆ Send these '+S_.appOnly.length+' to the Sheet</button>', '#C62828');
+  }
+  if(S_.sheetOnly.length){
+    h+=box('<b style="color:#1565C0;">'+S_.sheetOnly.length+' in the Sheet but NOT in the app — '+R(T(S_.sheetOnly))+'</b>',
+      '<details><summary style="cursor:pointer;font-size:11px;">show</summary>'+S_.sheetOnly.map(li).join('')+'</details>'
+      +'<button class="btn btn-secondary btn-sm" style="margin-top:6px;" onclick="pcAddToApp()">⬇ Add these '+S_.sheetOnly.length+' to the app</button>', '#1565C0');
+  }
+  if(!S_.batches.length && !S_.dups.length && !S_.appOnly.length && !S_.sheetOnly.length)
+    h+=box('<b style="color:var(--green);">✓ The app and the Sheet agree for '+S_.month+'.</b>','', 'var(--green)');
+  else if(!S_.dups.length && !S_.appOnly.length && !S_.sheetOnly.length)
+    h+=box('<b style="color:var(--green);">✓ No duplicates, and every payment is in both places.</b>','', 'var(--green)');
+  document.getElementById('pc-body').innerHTML=h;
+}
+async function _pcDelete(list, label){
+  const inSheet=list.filter(p=>_pcState.sheetById[p.id]);
+  let fb=0, sh=0;
+  const body=document.getElementById('pc-body');
+  for(let i=0;i<list.length;i++){
+    const p=list[i];
+    body.innerHTML='⏳ '+label+': '+(i+1)+' of '+list.length+'…';
+    _markPaymentDeletedLocal(p.id);
+    if(await fsDeletePayment(p.id)) fb++;
+    if(_pcState.sheetById[p.id]){ if(await sheetMarkPaymentDeleted(p)) sh++; }
+  }
+  const gone=new Set(list.map(p=>String(p.id)));
+  STATE.payments=(STATE.payments||[]).filter(p=>!gone.has(String(p.id)));
+  savePaymentLedger(); renderPaymentIn();
+  showToast('✓ '+list.length+' removed · Firebase '+fb+' · Sheet rows zeroed '+sh+'/'+inSheet.length, 6000);
+  await runPaymentCheck();
+}
+async function pcRemoveBatch(i){
+  const b=_pcState&&_pcState.batches[i]; if(!b) return;
+  if(!confirm('Remove this whole import?\n\n'+b.list.length+' payments, ₹'+Math.round(b.total).toLocaleString('en-IN')+'\n'+b.name+'\n\nThey are marked deleted in Firebase (kept for the record, hidden everywhere) and, where they are in the Sheet, set to ₹0 and marked DELETED. Customer balances are not changed — an import never changed them.')) return;
+  await _pcDelete(b.list, 'Removing import');
+}
+async function pcRemoveDuplicates(){
+  const extra=[]; (_pcState.dups||[]).forEach(d=>extra.push.apply(extra,d.extra));
+  if(!extra.length) return;
+  if(!confirm('Remove '+extra.length+' extra copies? One payment of each group is kept.')) return;
+  await _pcDelete(extra, 'Removing duplicates');
+}
+async function pcSendToSheet(){
+  const list=(_pcState.appOnly||[]).slice(); if(!list.length) return;
+  if(!confirm('Send '+list.length+' payments to the Sheet? Each write is confirmed; nothing is sent twice (the Sheet updates a row that already has the same Pay ID).')) return;
+  const body=document.getElementById('pc-body'); let ok=0, bad=0;
+  for(let i=0;i<list.length;i++){ body.innerHTML='⏳ Sending to the Sheet: '+(i+1)+' of '+list.length+' — keep this screen open';
+    if(await syncPaymentToSheet(list[i], true)) ok++; else bad++; }
+  showToast('✓ '+ok+' confirmed in the Sheet'+(bad?(' · '+bad+' not confirmed — press Check again and resend'):''), 6000);
+  await runPaymentCheck();
+}
+async function pcAddToApp(){
+  const list=(_pcState.sheetOnly||[]).slice(); if(!list.length) return;
+  if(!confirm('Add '+list.length+' payments from the Sheet to the app (Firebase)? They keep the Sheet\'s Pay ID, so this can never create a second copy.')) return;
+  const body=document.getElementById('pc-body'); let n=0;
+  for(let i=0;i<list.length;i++){ body.innerHTML='⏳ Adding to the app: '+(i+1)+' of '+list.length+'…';
+    const s=list[i]; const rc=s.custId?{id:s.custId}:resolvePaymentCustomer(s.custName);
+    const p={id:s.id, date:s.date, custName:s.custName, custId:rc.id||'', amount:s.amount, mode:s.mode, ref:s.ref, notes:s.notes,
+             createdBy:s.createdBy||'sheet', importBatch:'from Sheet '+_pcState.month, sheetSynced:true};
+    await fsWritePayment(p); if(!(STATE.payments||[]).some(x=>x.id===p.id)) STATE.payments.push(p); n++; }
+  savePaymentLedger(); renderPaymentIn();
+  showToast('✓ '+n+' added to the app', 5000);
+  await runPaymentCheck();
 }
 
 // Close dropdown when clicking outside
@@ -12066,7 +12385,7 @@ function applyPhonePeSelected() {
       cust.balance = Math.max(0, (cust.balance||0) - res.surplus);
       applyBalanceChange(cust);   // v149.1
     }
-    if(hasUrl) { try { syncPaymentToSheet(entry); } catch(e){} }
+    try { syncPaymentToSheet(entry); } catch(e){}   // v220: Firebase must get it even with no Sheet URL
 
     appliedRefs.push(t.ref);
     count++; sum += t.amount;
