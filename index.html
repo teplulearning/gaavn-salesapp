@@ -280,7 +280,7 @@ body.gf-panel-open #app{ visibility:hidden; }
     <div class="top-bar-left">
       <span class="logo">🐄 GF</span>
       <span class="role-badge" id="role-badge">SALES</span>
-      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v220</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v222</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <!-- v196: this used to be a single button showing the language you would
@@ -486,6 +486,7 @@ body.gf-panel-open #app{ visibility:hidden; }
   <div class="screen" id="screen-dues">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
       <div class="page-title">Payment Dues</div>
+      <button onclick="openReturnsScreen()" style="background:#C62828;color:#fff;border:none;border-radius:8px;padding:7px 10px;font-size:12px;font-weight:700;cursor:pointer;margin-right:6px;">↩ Returns</button>
       <button onclick="showMorningReminders(true)" style="background:var(--amber);color:#fff;border:none;border-radius:8px;padding:7px 10px;font-size:12px;font-weight:700;cursor:pointer;margin-right:6px;">⏰ Reminders</button>
       <button onclick="downloadDuesExcel()" style="background:#1D6F42;color:#fff;border:none;border-radius:8px;padding:7px 10px;font-size:12px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif;margin-right:6px;">📊 Excel</button><button onclick="downloadDuesPDF()" style="background:var(--blue);color:#fff;border:none;border-radius:8px;padding:7px 10px;font-size:12px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif;">📄 PDF</button>
     </div>
@@ -2807,6 +2808,8 @@ function isCustomerBlocked(custId) {
 }
 
 function getCustomerCreditAlerts(custId) {
+  // v222: nothing to chase when credited returns cover everything owed
+  if(retCreditFor(custId)>0 && getCustomerOutstanding((resolveCustomer(custId)||{}).id||custId)<=0.5) return [];
   // Returns list of orders that need attention (warning/due/overdue/stop)
   // v143: also match by customer name — sheet-synced orders have no customerId
   // v149: respect gf_cutover like the Dues screen does — pre-cutover unpaid
@@ -2871,7 +2874,8 @@ function getCustomerOutstanding(custId) {
   const bal = _c ? (parseFloat(_c.balance)||0) : 0;
   const orderDue = getCustomerUnpaidOrders(custId)
     .reduce((s,o)=>s+Math.max(0,(o.total||0)-(o.payment?.amount||0)),0);
-  return bal + orderDue;
+  // v222: less credited customer returns (their own ledger — no order or balance is changed)
+  return Math.round((bal + orderDue - retCreditFor(_c))*100)/100;
 }
 
 // v149: resolve a customer from an id OR a name-key. Dues cards pass a
@@ -5588,7 +5592,7 @@ function renderCustomerList(q='') {
     if(k) _dueByName[k]=(_dueByName[k]||0)+out;
     if(o.customerId && !k) _dueById[o.customerId]=(_dueById[o.customerId]||0)+out;
   });
-  const _outstanding = c => (parseFloat(c.balance)||0)
+  const _outstanding = c => -retCreditFor(c) + (parseFloat(c.balance)||0)   // v222: less credited returns
     + (_dueByName[String(c.name||'').trim().toLowerCase()]||0)
     + (_dueById[c.id]||0);
   // Sort: customers with balance first
@@ -5700,7 +5704,7 @@ async function openClientDetail(id) {
     <div style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px;">
       <div style="min-width:0;">
         <div style="font-size:10px;color:var(--muted);margin-bottom:2px;">TOTAL OUTSTANDING</div>
-        <div style="font-size:24px;font-weight:900;color:${bal>0?'var(--red)':'var(--green)'};">${bal>0?'₹'+bal.toLocaleString('en-IN'):'✓ Clear'}</div>
+        <div style="font-size:24px;font-weight:900;color:${bal>0?'var(--red)':'var(--green)'};">${bal>0?'₹'+bal.toLocaleString('en-IN'):(bal<-0.5?'₹'+(-bal).toLocaleString('en-IN')+' in credit':'✓ Clear')}</div>
       </div>
       <div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0;">
         <button onclick="recordDuePayment('${c.id}')" style="background:var(--green);color:#fff;border:none;border-radius:8px;padding:8px 12px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;">💰 Record Payment</button>
@@ -5767,8 +5771,8 @@ async function openClientDetail(id) {
     }
   } catch(e) { console.log('Sheet fetch error:', e); }
 
-  if (!orders.length && bal === 0) {
-    document.getElementById('client-txn-list').innerHTML = '<div class="empty-state"><p>No transactions found</p></div>';
+  if (!orders.length && bal === 0 && !retCreditList(c).length) {
+    document.getElementById('client-txn-list').innerHTML = retClientBlock(c) + '<div class="empty-state"><p>No transactions found</p></div>';   // v222
     return;
   }
 
@@ -5793,7 +5797,12 @@ async function openClientDetail(id) {
   txnRows.push(`<div style="font-size:10px;color:var(--muted);margin:0 2px 6px;">Showing invoices ${_asOf?'after':'since'} ${_coDate} — older history is inside the opening balance.</div>`);
 
   const ordersAsc = [...orders].filter(o => orderCountsForCust(o, c)).reverse();
+  // v222: credited returns sit in the running balance in date order
+  const _retAsc = retCreditList(c).slice().sort((a,b)=>String(a.date).localeCompare(String(b.date)));
+  let _ri = 0;
+  const _pushRet = r => { runBal -= (parseFloat(r.amount)||0); txnRows.push(retTxnRow(r, runBal)); };
   ordersAsc.forEach(o => {
+    while(_ri < _retAsc.length && String(_retAsc[_ri].date) < String(_normDayStr(o.date)||'')) _pushRet(_retAsc[_ri++]);
     const total = parseFloat(o.total)||0;
     const paid = parseFloat(o.payment?.amount||o.paymentAmount)||0;
     runBal += (total - paid);
@@ -5837,7 +5846,8 @@ async function openClientDetail(id) {
     </div>`);
   });
 
-  document.getElementById('client-txn-list').innerHTML = txnRows.reverse().join('');
+  while(_ri < _retAsc.length) _pushRet(_retAsc[_ri++]);   // v222
+  document.getElementById('client-txn-list').innerHTML = retClientBlock(c) + txnRows.reverse().join('');   // v222: returns on the client page
 }
 
 function openCustomerDetail(id) { openClientDetail(id); }
@@ -5919,7 +5929,7 @@ function renderDues() {
   });
 
   document.getElementById('due-count').textContent  = unpaidOrders.length + custsDue.length;
-  document.getElementById('due-amount').textContent  = '₹'+(totalDue/1000).toFixed(1)+'k';
+  document.getElementById('due-amount').textContent  = '₹'+(Math.max(0,totalDue-retDuesReduction(unpaidOrders,custsDue))/1000).toFixed(1)+'k';   // v222
   document.getElementById('due-overdue').textContent = overdueCount > 0 ? overdueCount+'⚠' : '0';
 
   const list = document.getElementById('dues-list');
@@ -5961,7 +5971,9 @@ function renderDues() {
   if(custEntriesR.length) {
     custEntriesR.forEach(([_key,cg])=>{
       const custId = cg.custId || _key;   // real customer id for the action buttons
-      const totalOwed = (cg.orders.reduce((s,o)=>s+((o.total||0)-(o.payment?.amount||0)),0)) + (cg.openBal||0);
+      const _retCr = retCreditFor(custId);   // v222: credited returns
+      const totalOwed = Math.round(((cg.orders.reduce((s,o)=>s+((o.total||0)-(o.payment?.amount||0)),0)) + (cg.openBal||0) - _retCr)*100)/100;
+      if(totalOwed <= 0.5) return;   // v222: returns credited cover everything owed
       const cfg = getCreditConfig(cg.cat, cg.name);
       const isBlocked = cg.orders.some(o=>getCreditStatus(o).stopOrder);
       const hasOverdue = cg.orders.some(o=>{const cs=getCreditStatus(o);return cs.status==='overdue'||cs.status==='due';});
@@ -5983,6 +5995,7 @@ function renderDues() {
         +'</div>'
         +'<div class="card-body" style="padding:8px 14px;">';
 
+      html += retDuesLine(custId);   // v222
       // Opening balance if any
       if(cg.openBal) {
         html += '<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px dashed var(--border);font-size:12px;">'
@@ -6316,7 +6329,9 @@ async function sendStatement(custId) {
     totalOrders += parseFloat(o.total) || 0;
     totalPaid   += parseFloat(o.payment?.amount || o.paymentAmount) || 0;
   });
-  const totalDue = openingBal + totalOrders - totalPaid;
+  const _stRet = retCreditList(cust).slice().sort((a,b)=>String(a.date).localeCompare(String(b.date)));   // v222
+  const _stRetAmt = _stRet.reduce((s,r)=>s+(parseFloat(r.amount)||0),0);
+  const totalDue = openingBal + totalOrders - totalPaid - _stRetAmt;
 
   const barY = infoY + 8;
   doc.setFillColor(240, 248, 255);
@@ -6400,6 +6415,28 @@ async function sendStatement(custId) {
     curY = doc.lastAutoTable.finalY + 5;
   });
 
+  // ── v222: RETURNS CREDITED ──────────────────────────
+  if (_stRet.length) {
+    doc.autoTable({
+      startY: curY,
+      margin: { left: margin, right: margin },
+      head: [['Goods returned (credited)', 'Qty', 'Rate', 'Amount']],
+      body: [
+        ..._stRet.flatMap(r => (r.items||[]).map(i => [
+          (r.date||'') + '  ' + (i.name||'') + (r.reason ? '  (' + r.reason + ')' : ''),
+          (i.qty||'') + ' ' + (i.unit||''), 'Rs.' + (i.rate||''),
+          '-Rs.' + (parseFloat(i.amount)||0).toLocaleString('en-IN') ])),
+        [{ content: 'Total credited', colSpan: 3, styles: { fontStyle: 'bold', fillColor: [255, 228, 228] } },
+         { content: '-Rs.' + _stRetAmt.toLocaleString('en-IN'), styles: { fontStyle: 'bold', fillColor: [255, 228, 228], halign: 'right', textColor: [180, 30, 30] } }],
+      ],
+      headStyles: { fillColor: [183, 28, 28], textColor: 255, fontSize: 8, fontStyle: 'bold' },
+      bodyStyles: { fontSize: 8 },
+      columnStyles: { 0: { cellWidth: 80 }, 1: { cellWidth: 20 }, 2: { cellWidth: 26 }, 3: { cellWidth: 50, halign: 'right' } },
+      theme: 'grid',
+    });
+    curY = doc.lastAutoTable.finalY + 5;
+  }
+
   // ── TOTAL DUE FOOTER ─────────────────────────────────
   doc.autoTable({
     startY: curY,
@@ -6468,7 +6505,7 @@ async function shareQR(){
     var opening=parseFloat(c.balance)||0;
     var _sn=String(name||'').trim().toLowerCase();
     var od=(STATE.orders||[]).filter(function(o){return (o.customerId===_qrCustId||String(o.customerName||'').trim().toLowerCase()===_sn)&&(o.status==='due'||o.status==='partial'||((o.status==='confirmed'||o.status==='delivered')&&(o.total||0)>((o.payment&&o.payment.amount)||0)));}).reduce(function(s,o){return s+((o.total||0)-((o.payment&&o.payment.amount)||0));},0);
-    due=Math.round((opening+od)*100)/100;
+    due=Math.round((opening+od-retCreditFor(c))*100)/100;   // v222
   }
   var upi=(localStorage.getItem('gf_upi_id')||DEFAULT_UPI).trim();
   var text='Gaavn Fresh (Panvadi Dairy) \u2014 payment request'+(name?' for '+name:'')+(due>0?('\nAmount: \u20b9'+due.toLocaleString('en-IN')):'')+'\nUPI: '+upi+'\nScan the attached QR to pay.';
@@ -6493,7 +6530,7 @@ function showPayQR(custId){
   var opening=parseFloat(c.balance)||0;
   var _qn=String(c.name||'').trim().toLowerCase();
   var orderDue=(STATE.orders||[]).filter(function(o){ return (o.customerId===custId||String(o.customerName||'').trim().toLowerCase()===_qn) && (o.status==='due'||o.status==='partial'||((o.status==='confirmed'||o.status==='delivered')&&(o.total||0)>((o.payment&&o.payment.amount)||0))); }).reduce(function(s,o){return s+((o.total||0)-((o.payment&&o.payment.amount)||0));},0);
-  var due=Math.round((opening+orderDue)*100)/100;
+  var due=Math.round((opening+orderDue-retCreditFor(c))*100)/100;   // v222
   var upi=(localStorage.getItem('gf_upi_id')||DEFAULT_UPI).trim();
   var link='upi://pay?pa='+encodeURIComponent(upi)+'&pn='+encodeURIComponent('Teplu Learning Pvt Ltd')+(due>0?('&am='+due):'')+'&cu=INR&tn='+encodeURIComponent('Gaavn Fresh payment');
   var t=document.getElementById('payqr-title'); if(t) t.textContent=c.name;
@@ -6560,7 +6597,7 @@ function sendCreditWA(custId, type) {
       + (balance>0 ? '\n\u2022 Outstanding balance: \u20b9'+balance.toLocaleString('en-IN') : '')
     : '\u2022 Outstanding balance: \u20b9'+balance.toLocaleString('en-IN');
   const blocked = alerts.some(x=>x.cs.stopOrder);
-  const msg = '\uD83D\uDD34 PAYMENT ALERT \u2014 Gaavn Fresh\n\nCustomer: '+cust.name+'\nCategory: '+cust.category+(cust.phone?'\nPhone: '+cust.phone:'')+'\n\nOverdue Invoices:\n'+orderLines+'\n\nTotal Due: \u20b9'+totalOwed.toLocaleString('en-IN')+(blocked?'\n\n\u26a0 Payment significantly overdue \u2014 please prioritise collection.':'')+'\n\nPlease follow up for payment immediately.';
+  const msg = '\uD83D\uDD34 PAYMENT ALERT \u2014 Gaavn Fresh\n\nCustomer: '+cust.name+'\nCategory: '+cust.category+(cust.phone?'\nPhone: '+cust.phone:'')+'\n\nOverdue Invoices:\n'+orderLines+retRemindLine(custId,'en')+'\n\nTotal Due: \u20b9'+totalOwed.toLocaleString('en-IN')+(blocked?'\n\n\u26a0 Payment significantly overdue \u2014 please prioritise collection.':'')+'\n\nPlease follow up for payment immediately.';
   _openExternal('https://wa.me/?text='+encodeURIComponent(msg));
 }
 
@@ -6584,6 +6621,7 @@ function sendClientReminder(lang, custId) {
   // owing ₹31,070 opening + ₹4,470 overdue was asked for ₹4,470. Every other
   // screen uses getCustomerOutstanding(); reminders now use it too.
   const totalOwed = getCustomerOutstanding(custId);
+  if(totalOwed<=0.5 && retCreditFor(cust)>0){ showToast('Nothing due — returns credited cover the bills'); return; }   // v222
   const cfg = getCreditConfig(cust.category, cust.name);
   const upiId=(localStorage.getItem('gf_upi_id')||DEFAULT_UPI).trim();
   const _balLine = balance>0
@@ -6607,9 +6645,9 @@ function sendClientReminder(lang, custId) {
       : ('\n\n\uD83D\uDCB3 Pay online — UPI ID: '+upiId+'\nTap to pay: '+upiLink)) : '';
   let msg;
   if(lang==='mr'){
-    msg='नमस्कार '+cust.name+',\n\nगावन फ्रेश कडून आपल्या थकित रकमेबाबत ही एक नम्र आठवण.\n\n'+(alerts.length?('थकित बिले ('+alerts.length+'):\n'+lines):lines)+'\n\nएकूण थकित रक्कम: \u20b9'+totalOwed.toLocaleString('en-IN')+'\n\nआपला उधारीचा कालावधी '+cfg.label+' आहे. कृपया लवकरात लवकर रक्कम भरावी.'+payLine+'\n\nधन्यवाद \uD83D\uDE4F\n\u2014 गावन फ्रेश';
+    msg='नमस्कार '+cust.name+',\n\nगावन फ्रेश कडून आपल्या थकित रकमेबाबत ही एक नम्र आठवण.\n\n'+(alerts.length?('थकित बिले ('+alerts.length+'):\n'+lines):lines)+retRemindLine(custId,'mr')+'\n\nएकूण थकित रक्कम: \u20b9'+totalOwed.toLocaleString('en-IN')+'\n\nआपला उधारीचा कालावधी '+cfg.label+' आहे. कृपया लवकरात लवकर रक्कम भरावी.'+payLine+'\n\nधन्यवाद \uD83D\uDE4F\n\u2014 गावन फ्रेश';
   } else {
-    msg='Dear '+cust.name+',\n\nThis is a gentle reminder from Gaavn Fresh regarding your outstanding payment.\n\n'+(alerts.length?('Pending Invoices ('+alerts.length+'):\n'+lines):lines)+'\n\nTotal Outstanding: \u20b9'+totalOwed.toLocaleString('en-IN')+'\n\nYour credit period is '+cfg.label+'. Kindly arrange payment at the earliest to continue receiving our products.'+payLine+'\n\nThank you \uD83D\uDE4F\n\u2014 Gaavn Fresh';
+    msg='Dear '+cust.name+',\n\nThis is a gentle reminder from Gaavn Fresh regarding your outstanding payment.\n\n'+(alerts.length?('Pending Invoices ('+alerts.length+'):\n'+lines):lines)+retRemindLine(custId,'en')+'\n\nTotal Outstanding: \u20b9'+totalOwed.toLocaleString('en-IN')+'\n\nYour credit period is '+cfg.label+'. Kindly arrange payment at the earliest to continue receiving our products.'+payLine+'\n\nThank you \uD83D\uDE4F\n\u2014 Gaavn Fresh';
   }
   const phone=(cust.phone||'').replace(/\D/g,'');
   const waUrl = phone ? 'https://wa.me/91'+phone+'?text='+encodeURIComponent(msg) : 'https://wa.me/?text='+encodeURIComponent(msg);
@@ -6654,7 +6692,11 @@ function buildMorningReminders(){
       total+=(o.total||0)-((o.payment&&o.payment.amount)||0); count++;
       if(daysToDue<nearest){ nearest=daysToDue; dueDateStr=cs.dueDate; }
     });
-    if(count>0) out.push({cust:c,total:total,count:count,daysToDue:nearest,dueDate:dueDateStr});
+    if(count>0){
+      // v222: a customer whose returns cover the bill is not chased; never ask for more than is owed
+      const _net = retCreditFor(c)>0 ? getCustomerOutstanding(c.id) : total;
+      if(_net>0.5) out.push({cust:c,total:Math.min(total,_net),count:count,daysToDue:nearest,dueDate:dueDateStr});
+    }
   });
   return out.sort(function(a,b){ return a.daysToDue-b.daysToDue || b.total-a.total; });
 }
@@ -7214,7 +7256,7 @@ function getDuesRows(){
     if(!by[k]) by[k]={name:o.customerName||'',cat:o.customerCategory||'',phone:o.customerPhone||'',opening:0,orderDue:0};
     by[k].orderDue+=out;
   });
-  const rows=Object.keys(by).map(function(k){const r=by[k]; r.total=r.opening+r.orderDue; return r;}).filter(function(r){return r.total>0.5;});
+  const rows=Object.keys(by).map(function(k){const r=by[k]; r.returns=retCreditFor(_custIdByName(r.name)); r.total=r.opening+r.orderDue-r.returns; return r;}).filter(function(r){return r.total>0.5;});   // v222: less credited returns
   rows.sort(function(a,b){return b.total-a.total;});
   return rows;
 }
@@ -7228,10 +7270,10 @@ async function downloadDuesExcel(){
   try{
     const XLSX=await import('https://cdn.sheetjs.com/xlsx-0.20.1/package/xlsx.mjs');
     const total=rows.reduce(function(s,r){return s+r.total;},0);
-    const data=rows.map(function(r){return {'Customer':r.name,'Category':r.cat,'Phone':r.phone,'Opening Balance':Math.round(r.opening*100)/100,'Order Dues':Math.round(r.orderDue*100)/100,'Total Outstanding':Math.round(r.total*100)/100};});
-    data.push({'Customer':'TOTAL','Category':'','Phone':'','Opening Balance':'','Order Dues':'','Total Outstanding':Math.round(total*100)/100});
-    const ws=XLSX.utils.json_to_sheet(data,{header:['Customer','Category','Phone','Opening Balance','Order Dues','Total Outstanding']});
-    ws['!cols']=[{wch:36},{wch:18},{wch:14},{wch:15},{wch:12},{wch:16}];
+    const data=rows.map(function(r){return {'Customer':r.name,'Category':r.cat,'Phone':r.phone,'Opening Balance':Math.round(r.opening*100)/100,'Order Dues':Math.round(r.orderDue*100)/100,'Returns Credited':Math.round((r.returns||0)*100)/100,'Total Outstanding':Math.round(r.total*100)/100};});
+    data.push({'Customer':'TOTAL','Category':'','Phone':'','Opening Balance':'','Order Dues':'','Returns Credited':'','Total Outstanding':Math.round(total*100)/100});
+    const ws=XLSX.utils.json_to_sheet(data,{header:['Customer','Category','Phone','Opening Balance','Order Dues','Returns Credited','Total Outstanding']});
+    ws['!cols']=[{wch:36},{wch:18},{wch:14},{wch:15},{wch:12},{wch:15},{wch:16}];
     const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,'Dues');
     const outArr=XLSX.write(wb,{bookType:'xlsx',type:'array'});
     _duesDownload(new Blob([outArr],{type:'application/octet-stream'}), 'Gaavn_Dues_'+_duesStamp()+'.xlsx');
@@ -7253,11 +7295,11 @@ function downloadDuesPDF(){
     doc.setFontSize(9); doc.setFont('helvetica','normal');
     doc.text('As of '+new Date().toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}), pageW-14, 15, {align:'right'});
     const total=rows.reduce(function(s,r){return s+r.total;},0);
-    const body=rows.map(function(r){return [r.name, r.cat, r.phone, 'Rs.'+Math.round(r.opening).toLocaleString('en-IN'), 'Rs.'+Math.round(r.orderDue).toLocaleString('en-IN'), 'Rs.'+Math.round(r.total).toLocaleString('en-IN')];});
-    body.push([{content:'TOTAL',colSpan:5,styles:{fontStyle:'bold',halign:'right',fillColor:[240,244,251]}},{content:'Rs.'+Math.round(total).toLocaleString('en-IN'),styles:{fontStyle:'bold',halign:'right',fillColor:[240,244,251]}}]);
-    doc.autoTable({ startY:30, head:[['Customer','Category','Phone','Opening','Order Dues','Total']], body:body,
+    const body=rows.map(function(r){return [r.name, r.cat, r.phone, 'Rs.'+Math.round(r.opening).toLocaleString('en-IN'), 'Rs.'+Math.round(r.orderDue).toLocaleString('en-IN'), (r.returns>0?'-Rs.'+Math.round(r.returns).toLocaleString('en-IN'):''), 'Rs.'+Math.round(r.total).toLocaleString('en-IN')];});
+    body.push([{content:'TOTAL',colSpan:6,styles:{fontStyle:'bold',halign:'right',fillColor:[240,244,251]}},{content:'Rs.'+Math.round(total).toLocaleString('en-IN'),styles:{fontStyle:'bold',halign:'right',fillColor:[240,244,251]}}]);
+    doc.autoTable({ startY:30, head:[['Customer','Category','Phone','Opening','Order Dues','Returns','Total']], body:body,
       headStyles:{fillColor:[26,82,122],textColor:255,fontSize:8}, bodyStyles:{fontSize:7.5},
-      columnStyles:{0:{cellWidth:52},1:{cellWidth:28},2:{cellWidth:24},3:{cellWidth:24,halign:'right'},4:{cellWidth:22,halign:'right'},5:{cellWidth:26,halign:'right'}},
+      columnStyles:{0:{cellWidth:46},1:{cellWidth:18},2:{cellWidth:22},3:{cellWidth:22,halign:'right'},4:{cellWidth:22,halign:'right'},5:{cellWidth:20,halign:'right'},6:{cellWidth:26,halign:'right'}},
       margin:{left:14,right:14}, theme:'grid' });
     doc.save('Gaavn_Dues_'+_duesStamp()+'.pdf');
     showToast('✓ PDF downloaded ('+rows.length+' customers)');
@@ -7795,6 +7837,8 @@ function getAppsScriptCode() {
     '    if (a === "deleteOrder")           return deleteOrder(e.parameter);',
     '    if (a === "getDeletedOrders")      return getDeletedOrders(e.parameter);',
     '    if (a === "dedupeOrderRows")       return dedupeOrderRows(e.parameter);',
+    '    if (a === "logReturn")             return logReturn(e.parameter);',
+    '    if (a === "getReturns")            return getReturns(e.parameter);',
     '    return jsonOut({error: "Unknown action: " + a});',
     '  } catch(err) { return jsonOut({error: err.message}); }',
     '}',
@@ -8266,6 +8310,56 @@ function getAppsScriptCode() {
     '  return jsonOut({status:"ok",row:sh.getLastRow()});',
     '}',
     '',
+    "// ── v221 RETURNS ─────────────────────────────────────────────",
+    "// One \"Returns\" tab, one row per return, upserted by Return ID.",
+    "// A deleted return keeps its row with Status = Deleted.",
+    "// Read-only for everything else: no order, payment or balance is touched.",
+    "var RET_HEADERS=[\"Return ID\",\"Date\",\"Customer\",\"Cust ID\",\"Order ID\",\"Order Date\",\"Items\",\"Amount (Rs)\",\"Reason\",\"Disposition\",\"Credit\",\"Credited (Rs)\",\"Notes\",\"Created By\",\"Updated By\",\"Status\",\"Created At\",\"Updated At\",\"Items Raw\"];",
+    "function logReturn(p) {",
+    "  var id=String(p.retId||\"\").trim();",
+    "  if(!id) return jsonOut({error:\"retId missing\"});",
+    "  var lock=LockService.getScriptLock(); lock.waitLock(20000);",
+    "  try {",
+    "    var ss=SpreadsheetApp.openById(SS_ID);",
+    "    var sh=getOrCreateSheet(ss,\"Returns\");",
+    "    if(sh.getLastRow()===0) {",
+    "      sh.appendRow(RET_HEADERS);",
+    "      sh.getRange(1,1,1,RET_HEADERS.length).setFontWeight(\"bold\").setBackground(\"#B71C1C\").setFontColor(\"#fff\");",
+    "      sh.setFrozenRows(1);",
+    "    }",
+    "    var items=[]; try{ items=JSON.parse(p.items||\"[]\"); }catch(e){}",
+    "    var summary=items.map(function(i){ return (i.qty||0)+\" \"+(i.unit||\"\")+\" \"+(i.name||\"\")+\" @\"+(i.rate||0); }).join(\", \");",
+    "    var row=[id,String(p.date||\"\"),p.custName||\"\",p.custId||\"\",p.orderId||\"\",String(p.orderDate||\"\"),summary,",
+    "      parseFloat(p.amount)||0,p.reason||\"\",p.disposition||\"\",p.credit===\"1\"?\"Yes\":\"No\",p.credit===\"1\"?(parseFloat(p.amount)||0):0,",
+    "      p.notes||\"\",p.createdBy||\"\",p.updatedBy||\"\",",
+    "      p.status===\"Deleted\"?\"Deleted\":\"Active\",parseFloat(p.createdAt)||\"\",parseFloat(p.updatedAt)||\"\",p.items||\"[]\"];",
+    "    var data=sh.getDataRange().getValues();",
+    "    for(var r=1;r<data.length;r++) {",
+    "      if(String(data[r][0])===id) {",
+    "        retTextCols(sh,r+1); sh.getRange(r+1,1,1,row.length).setValues([row]);",
+    "        sh.getRange(r+1,1,1,row.length).setBackground(row[15]===\"Deleted\"?\"#EEEEEE\":\"#FFEBEE\");",
+    "        return jsonOut({status:\"updated\",row:r+1});",
+    "      }",
+    "    }",
+    "    var at=sh.getLastRow()+1;",
+    "    retTextCols(sh,at); sh.getRange(at,1,1,row.length).setValues([row]);",
+    "    sh.getRange(at,1,1,row.length).setBackground(row[15]===\"Deleted\"?\"#EEEEEE\":\"#FFEBEE\");",
+    "    return jsonOut({status:\"ok\",row:at});",
+    "  } finally { lock.releaseLock(); }",
+    "}",
+    "// dates and IDs stay text, so \"2026-09-20\" is never turned into a Date",
+    "function retTextCols(sh,r){ [1,2,4,5,6,19].forEach(function(c){ sh.getRange(r,c).setNumberFormat(\"@\"); }); }",
+    "function getReturns(p) {",
+    "  var ss=SpreadsheetApp.openById(SS_ID);",
+    "  var sh=ss.getSheetByName(\"Returns\");",
+    "  if(!sh||sh.getLastRow()<2) return jsonOut({returns:[],count:0});",
+    "  var tz=Session.getScriptTimeZone();",
+    "  var data=sh.getDataRange().getValues(); var h=data[0];",
+    "  var out=data.slice(1).filter(function(row){ return String(row[0]||\"\").trim(); }).map(function(row){",
+    "    var o={}; h.forEach(function(k,i){ var v=row[i]; if(v instanceof Date) v=Utilities.formatDate(v,tz,\"yyyy-MM-dd\"); o[k]=(v===undefined?\"\":v); }); return o; });",
+    "  return jsonOut({returns:out,count:out.length});",
+    "}",
+    "",
     '// ── MIGRATE DAILY SHEETS TO MONTHLY ─────────────────────────────',
     '// Run ONCE from Apps Script editor: select migrateDailyToMonthly → Run',
     'function migrateDailyToMonthly() {',
@@ -10367,6 +10461,12 @@ function renderHistoryOrders(orders, date) {
         🗑 Delete Order
       </button>` : '';
 
+    const retBtn = (STATE.role==='owner'||STATE.role==='sales'||STATE.role==='delivery') ? `
+      <button data-oid="${o.id}" data-odate="${o.date||date}" onclick="openReturnForm({orderId:this.dataset.oid, orderDate:this.dataset.odate})" ontouchstart=""
+        style="margin-top:6px;width:100%;padding:8px;border-radius:8px;border:1.5px solid #FFCDD2;
+          background:#FFF5F5;color:#C62828;font-size:12px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif;">
+        ↩ Return / rejected goods
+      </button>` : '';   // v222
     return `
       <div id="hcard-${o.id}" style="border:1.5px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px;background:#fff;">
         <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:6px;">
@@ -10382,8 +10482,10 @@ function renderHistoryOrders(orders, date) {
         <div style="font-size:11px;color:var(--muted);line-height:1.6;border-top:1px solid var(--border);padding-top:6px;">${items}</div>
         ${o.notes?`<div style="font-size:11px;color:#795548;margin-top:4px;">📝 ${o.notes}</div>`:''}
         ${payInfo}
+        ${retOrderNote(o.id)}
         ${payBtn}
         ${editBtn}
+        ${retBtn}
         ${deleteBtn}
         <div style="font-size:10px;color:var(--muted);margin-top:6px;opacity:0.6;">#${o.id}${o.createdBy?' · '+o.createdBy:''}</div>
       </div>`;
@@ -13235,6 +13337,427 @@ async function syncOrdersFromSheet() {
     const btn = document.getElementById('btn-sync-orders');
     if(btn) btn.textContent = '☁ Sync';
   }
+}
+
+
+/* ══════════════════════════════════════════════════════════════════════
+   v222 — CUSTOMER RETURNS (a separate credit ledger)
+   Paneer that turns acidic and is rejected at the counter had nowhere to go:
+   the order stayed billed, the customer refused to pay for it, and the loss
+   never appeared anywhere. A return is now its own record, per customer:
+     • what came back (product, qty, rate — taken from the order when one is
+       picked), why (reason) and what happened to it (disposition);
+     • entered from History (↩ Return on any order card), from a client's
+       page, or from Dues → ↩ Returns — by sales, delivery and owner;
+     • editable later: the salesperson can go back and fill in the details.
+   HOW THE CREDIT WORKS — and why it touches nothing else:
+     A credited return is a CREDIT NOTE in its own ledger. It is subtracted
+     wherever the app shows what a customer owes (Dues, client page, reminders,
+     statement, QR, Excel/PDF), exactly like a payment would be — but it never
+     writes to an order, a payment or a customer balance.
+       → Firebase: returns write nothing to Firebase at all. Orders keep their
+         real paid amount (cash only), customers keep their real opening balance.
+       → Google Sheet: order rows, Payments and Balance are untouched; returns
+         live only in their own "Returns" tab.
+       → Dashboard / MIS: every figure they read today is unchanged. Returns are
+         read from the Returns tab (Dashboard v160) as their own line.
+     v221 applied the credit to the order's paid amount instead; that made a
+     credit look like cash in Firebase and on the Dashboard. v221 was never
+     deployed — do not use it.
+   Returns dated on/before the customer's opening-balance date are inside that
+   balance already, so — like orders — they are not counted again.
+   ══════════════════════════════════════════════════════════════════════ */
+const LS_RETURNS='gf_returns_v1';
+const RET_REASONS=['Sour / acidic','Texture / crumbly','Smell / taste off','Short weight','Packing damaged','Late delivery','Not ordered / excess','Other'];
+const RET_DISPOS=['Discarded','Back to plant — reused','Resold','Replaced free','Other'];
+let _retSheetMissing=false;
+
+function retLoad(){ try{ const a=JSON.parse(localStorage.getItem(LS_RETURNS)||'[]'); return Array.isArray(a)?a:[]; }catch(e){ return []; } }
+// never writes an empty list over saved returns: if STATE was reset (role switch)
+// retAll() reloads them from the phone first
+function retSave(){ try{ const a=retAll(); if(Array.isArray(a)) localStorage.setItem(LS_RETURNS, JSON.stringify(a)); }catch(e){} }
+function retAll(){ if(!STATE || typeof STATE!=='object') return []; if(!Array.isArray(STATE.returns)) STATE.returns=retLoad(); return STATE.returns; }
+function retActive(){ return retAll().filter(r=>!r.deleted); }
+function retCanEdit(){ return STATE.role==='owner'||STATE.role==='sales'||STATE.role==='delivery'; }
+function retCanDelete(){ return STATE.role==='owner'||STATE.role==='sales'; }
+function retMoney(n){ return '₹'+Math.round(parseFloat(n)||0).toLocaleString('en-IN'); }
+function retEsc(s){ return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function retCustFor(r){
+  let c=(STATE.customers||[]).find(x=>x.id===r.custId);
+  if(!c && r.custName){ const k=_nameKey(r.custName); c=(STATE.customers||[]).find(x=>_nameKey(x.name)===k); }
+  return c||null;
+}
+function retOrderById(id){ return (STATE.orders||[]).find(o=>String(o.id)===String(id))||null; }
+function retIsForCust(r, c){
+  if(!r || !c) return false;
+  if(r.custId && c.id && r.custId===c.id) return true;
+  return !!r.custName && _nameKey(r.custName)===_nameKey(c.name);
+}
+// Credited returns that count against what this customer owes now.
+function retCreditList(c){
+  if(!c) return [];
+  return retActive().filter(r=>r.credit && (parseFloat(r.amount)||0)>0 && retIsForCust(r,c) && orderCountsForCust({date:r.date}, c));
+}
+// ₹ credit for a customer (a customer object, an id, or a Dues name-key).
+function retCreditFor(c){
+  try{
+    if(!c) return 0;
+    if(typeof c==='string'){ c=(STATE.customers||[]).find(x=>x.id===c) || (typeof resolveCustomer==='function'?resolveCustomer(c):null); }
+    if(!c) return 0;
+    return Math.round(retCreditList(c).reduce((s,r)=>s+(parseFloat(r.amount)||0),0)*100)/100;
+  }catch(e){ return 0; }
+}
+// Credited returns linked to one order (shown on that order's card).
+function retForOrder(orderId){
+  return retActive().filter(r=>r.credit && r.orderId && String(r.orderId)===String(orderId));
+}
+// ── Sheet ──
+async function retSyncToSheet(r){
+  const url=getSheetUrl(); if(!url){ r.sheetSynced=false; retSave(); return false; }
+  const p=new URLSearchParams({action:'logReturn', retId:r.id, date:r.date||TODAY_KEY,
+    custName:r.custName||'', custId:r.custId||'', orderId:r.orderId||'', orderDate:r.orderDate||'',
+    items:JSON.stringify(r.items||[]), amount:String(r.amount||0), reason:r.reason||'', disposition:r.disposition||'',
+    credit:r.credit?'1':'0', notes:r.notes||'',
+    createdBy:r.createdBy||'', updatedBy:r.updatedBy||'', status:r.deleted?'Deleted':'Active',
+    createdAt:String(r.createdAt||''), updatedAt:String(r.updatedAt||'')});
+  let ok=false;
+  try{
+    const res=await fetch(url+'?'+p.toString(),{cache:'no-store'});
+    const j=await res.json();
+    if(j && j.error){ if(/unknown action/i.test(j.error)) _retSheetMissing=true; ok=false; }
+    else { ok=true; _retSheetMissing=false; }
+  }catch(e){ ok=false; }
+  r.sheetSynced=ok; retSave();
+  return ok;
+}
+async function retFlushPending(){
+  const pend=retAll().filter(r=>r.sheetSynced===false);
+  for(const r of pend){ try{ await retSyncToSheet(r); }catch(e){} }
+}
+function retFromSheetRow(o){
+  const J=s=>{ try{ const v=JSON.parse(String(s||'')); return Array.isArray(v)?v:[]; }catch(e){ return []; } };
+  const N=v=>parseFloat(v)||0;
+  const d=_normDayStr(o['Date']||'')||String(o['Date']||'').slice(0,10);
+  return { id:String(o['Return ID']||'').trim(), date:d,
+    custName:String(o['Customer']||''), custId:String(o['Cust ID']||''),
+    orderId:String(o['Order ID']||''), orderDate:_normDayStr(o['Order Date']||'')||'',
+    items:J(o['Items Raw']), amount:N(o['Amount (Rs)']), reason:String(o['Reason']||''), disposition:String(o['Disposition']||''),
+    credit:String(o['Credit']||'')==='Yes', notes:String(o['Notes']||''),
+    createdBy:String(o['Created By']||''), updatedBy:String(o['Updated By']||''),
+    deleted:String(o['Status']||'')==='Deleted', createdAt:N(o['Created At']), updatedAt:N(o['Updated At']),
+    sheetSynced:true };
+}
+// Sheet is the shared copy; a return still waiting to reach it stays as is.
+async function retPullFromSheet(){
+  const url=getSheetUrl(); if(!url) return false;
+  try{
+    const res=await fetch(url+'?action=getReturns&_t='+Date.now(),{cache:'no-store'});
+    const j=await res.json();
+    if(j && j.error){ if(/unknown action/i.test(j.error)) _retSheetMissing=true; return false; }
+    _retSheetMissing=false;
+    const list=retAll(); const byId={}; list.forEach(r=>{ byId[r.id]=r; });
+    (j.returns||[]).forEach(row=>{
+      const s=retFromSheetRow(row); if(!s.id) return;
+      const l=byId[s.id];
+      if(!l){ list.push(s); byId[s.id]=s; return; }
+      if(l.sheetSynced===false) return;
+      if((s.updatedAt||0)>=(l.updatedAt||0)) Object.assign(l,s);
+    });
+    retSave(); return true;
+  }catch(e){ return false; }
+}
+
+// ── Form ──
+function retEnsureUI(){
+  if(document.getElementById('screen-returns')) return;
+  const inp="width:100%;box-sizing:border-box;background:var(--cream);border:1.5px solid var(--border);border-radius:10px;padding:10px 12px;font-family:'DM Sans',sans-serif;font-size:14px;color:var(--ink);outline:none;";
+  const scr=document.createElement('div'); scr.className='screen'; scr.id='screen-returns';
+  scr.innerHTML=
+    '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;gap:6px;flex-wrap:wrap;">'
+    +'<div class="page-title">↩ Returns</div>'
+    +'<button onclick="openReturnForm({})" style="background:var(--red);color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:12px;font-weight:700;cursor:pointer;font-family:\'DM Sans\',sans-serif;">+ New return</button></div>'
+    +'<div class="page-sub">Goods customers sent back · tap a return to edit it</div>'
+    +'<div id="ret-sheet-warn" style="display:none;background:#FFF3E0;border:1.5px solid #FFB74D;border-radius:10px;padding:8px 10px;font-size:12px;margin:8px 0;"></div>'
+    +'<div class="stats-row" style="grid-template-columns:repeat(3,1fr);">'
+    +'<div class="stat-box"><div class="stat-num" id="ret-stat-n">0</div><div class="stat-lbl">Returns</div></div>'
+    +'<div class="stat-box"><div class="stat-num" id="ret-stat-amt" style="font-size:16px;">₹0</div><div class="stat-lbl">Value</div></div>'
+    +'<div class="stat-box"><div class="stat-num" id="ret-stat-cr" style="font-size:16px;">₹0</div><div class="stat-lbl">Credited</div></div></div>'
+    +'<div style="display:flex;gap:8px;margin:10px 0 6px;">'
+    +'<input type="month" id="ret-month" onchange="renderReturns()" style="'+inp+'flex:0 0 150px;width:150px;">'
+    +'<input type="text" id="ret-search" placeholder="🔍 Customer…" oninput="renderReturns()" autocomplete="off" style="'+inp+'flex:1;"></div>'
+    +'<div id="ret-reasons" style="margin:4px 0 8px;"></div>'
+    +'<div id="ret-list"></div>';
+  const after=document.getElementById('screen-payment-in')||document.querySelector('.screen:last-of-type');
+  if(after && after.parentNode) after.parentNode.insertBefore(scr, after.nextSibling); else document.body.appendChild(scr);
+
+  const m=document.createElement('div'); m.className='modal-overlay'; m.id='modal-return';
+  m.innerHTML=
+    '<div class="modal-sheet" style="max-height:92vh;overflow-y:auto;">'
+    +'<div class="modal-handle"></div>'
+    +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">'
+    +'<div class="modal-title" style="margin-bottom:0;" id="ret-modal-title">Record Return</div>'
+    +'<button onclick="closeModal(\'modal-return\')" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--muted);">✕</button></div>'
+    +'<input type="hidden" id="ret-edit-id">'
+    +'<div class="field"><label>Customer</label>'
+    +'<input type="text" id="ret-cust" list="ret-cust-list" placeholder="Type customer name…" autocomplete="off" onchange="retOnCustomer()" oninput="retOnCustomer()" style="'+inp+'">'
+    +'<datalist id="ret-cust-list"></datalist><div id="ret-cust-due" style="font-size:12px;color:var(--muted);margin-top:4px;"></div></div>'
+    +'<div class="field"><label>Return date</label><input type="date" id="ret-date" style="'+inp+'"></div>'
+    +'<div class="field"><label>From which delivery <span style="font-size:10px;color:var(--muted);font-weight:400;">(fills the items and rates)</span></label>'
+    +'<select id="ret-order" onchange="retOnOrder()" style="'+inp+'"><option value="">— not linked to an order —</option></select></div>'
+    +'<div class="field"><label>Items returned</label><div id="ret-items"></div>'
+    +'<button type="button" onclick="retAddRow()" style="margin-top:6px;background:#fff;border:1.5px dashed var(--border);border-radius:8px;padding:7px 12px;font-size:12px;font-weight:700;cursor:pointer;">+ add item</button>'
+    +'<div style="margin-top:8px;font-size:14px;font-weight:800;">Return value: <span id="ret-total">₹0</span></div></div>'
+    +'<div class="field"><label>Reason</label><select id="ret-reason" style="'+inp+'">'+RET_REASONS.map(x=>'<option>'+x+'</option>').join('')+'</select></div>'
+    +'<div class="field"><label>What happened to the goods</label><select id="ret-dispo" style="'+inp+'">'+RET_DISPOS.map(x=>'<option>'+x+'</option>').join('')+'</select></div>'
+    +'<div class="field"><label style="display:flex;align-items:center;gap:8px;font-weight:700;"><input type="checkbox" id="ret-credit" checked style="width:18px;height:18px;"> Credit the customer — reduce what they owe</label>'
+    +'<div style="font-size:11px;color:var(--muted);margin-top:2px;">Untick if the goods were replaced free or the bill was already corrected.</div></div>'
+    +'<div class="field"><label>Notes</label><textarea id="ret-notes" rows="2" placeholder="e.g. 3 ladis sour on opening, chef called at 11am" style="'+inp+'"></textarea></div>'
+    +'<button id="ret-save-btn" onclick="saveReturn()" style="width:100%;background:var(--red);color:#fff;border:none;border-radius:10px;padding:13px;font-size:15px;font-weight:800;cursor:pointer;font-family:\'DM Sans\',sans-serif;">Save return</button>'
+    +'<button id="ret-del-btn" onclick="deleteReturn(document.getElementById(\'ret-edit-id\').value)" style="display:none;width:100%;margin-top:8px;background:#fff;color:#C62828;border:1.5px solid #FFCDD2;border-radius:10px;padding:10px;font-size:13px;font-weight:700;cursor:pointer;">🗑 Delete return</button>'
+    +'</div>';
+  document.body.appendChild(m);
+}
+
+function retRowHtml(it){
+  it=it||{};
+  const opts=PRODUCTS.map(p=>'<option value="'+retEsc(p.name)+'"'+(p.name===it.name?' selected':'')+'>'+retEsc(p.name)+'</option>').join('');
+  const known=PRODUCTS.some(p=>p.name===it.name);
+  const s="background:var(--cream);border:1.5px solid var(--border);border-radius:8px;padding:8px;font-size:13px;box-sizing:border-box;";
+  return '<div class="ret-row" style="display:grid;grid-template-columns:1fr 64px 72px 28px;gap:6px;margin-bottom:6px;align-items:center;">'
+    +'<select class="ret-prod" onchange="retRowProd(this)" style="'+s+'min-width:0;">'+(it.name&&!known?'<option selected>'+retEsc(it.name)+'</option>':'')+opts+'</select>'
+    +'<input class="ret-qty" type="number" inputmode="decimal" min="0" step="0.01" placeholder="Qty" value="'+(it.qty!=null&&it.qty!==''?it.qty:'')+'" oninput="retCalc()" style="'+s+'width:100%;">'
+    +'<input class="ret-rate" type="number" inputmode="decimal" min="0" step="0.01" placeholder="Rate" value="'+(it.rate!=null&&it.rate!==''?it.rate:'')+'" oninput="retCalc()" style="'+s+'width:100%;">'
+    +'<button type="button" onclick="this.parentNode.remove();retCalc()" style="background:none;border:none;color:#C62828;font-size:18px;cursor:pointer;">✕</button>'
+    +'<input class="ret-unit" type="hidden" value="'+retEsc(it.unit||'')+'"></div>';
+}
+function retAddRow(it){ document.getElementById('ret-items').insertAdjacentHTML('beforeend', retRowHtml(it)); retCalc(); }
+function retRowProd(sel){
+  const row=sel.closest('.ret-row'); const p=PRODUCTS.find(x=>x.name===sel.value);
+  const cust=retFindCust(document.getElementById('ret-cust').value);
+  if(p){ row.querySelector('.ret-unit').value=p.unit||'';
+    const r=row.querySelector('.ret-rate'); if(!r.value){ const cr=cust&&cust.pricing&&parseFloat(cust.pricing[p.id]); r.value=(cr>0?cr:p.stdRate)||''; } }
+  retCalc();
+}
+function retReadItems(){
+  return [...document.querySelectorAll('#ret-items .ret-row')].map(row=>{
+    const name=row.querySelector('.ret-prod').value;
+    const qty=parseFloat(row.querySelector('.ret-qty').value)||0;
+    const rate=parseFloat(row.querySelector('.ret-rate').value)||0;
+    const p=PRODUCTS.find(x=>x.name===name);
+    return {name, qty, unit:row.querySelector('.ret-unit').value||(p&&p.unit)||'', rate, amount:Math.round(qty*rate*100)/100};
+  }).filter(i=>i.qty>0);
+}
+function retCalc(){ const t=retReadItems().reduce((s,i)=>s+i.amount,0); const el=document.getElementById('ret-total'); if(el) el.textContent=retMoney(t); return t; }
+function retFindCust(name){ const k=_nameKey(name); if(!k) return null; return (STATE.customers||[]).find(c=>_nameKey(c.name)===k)||null; }
+function retCustOrders(cust, name){
+  const k=_nameKey(cust?cust.name:name); const id=cust?cust.id:'';
+  const lim=new Date(TODAY_KEY+'T00:00:00'); lim.setDate(lim.getDate()-60);
+  const limK=lim.toISOString().slice(0,10);
+  return (STATE.orders||[]).filter(o=>(id&&o.customerId===id)||(k&&_nameKey(o.customerName)===k))
+    .filter(o=>String(o.date||'')>=limK && !(typeof isOrderDeleted==='function'&&isOrderDeleted(o.id)))
+    .sort((a,b)=>String(b.date).localeCompare(String(a.date)));
+}
+function retOnCustomer(keepOrder){
+  const name=document.getElementById('ret-cust').value;
+  const cust=retFindCust(name);
+  const due=document.getElementById('ret-cust-due');
+  due.textContent=cust?('Owes '+retMoney(getCustomerOutstanding(cust.id))):(name.trim()?'Not in the customer list — pick from the suggestions':'');
+  const sel=document.getElementById('ret-order'); const cur=keepOrder||sel.value;
+  const orders=retCustOrders(cust,name);
+  sel.innerHTML='<option value="">— not linked to an order —</option>'+orders.map(o=>{
+    const it=(o.items||[]).map(i=>i.qty+' '+i.unit+' '+i.name).join(', ');
+    return '<option value="'+retEsc(o.id)+'">'+retEsc(String(o.date).slice(8,10)+'/'+String(o.date).slice(5,7)+' · '+retMoney(o.total)+' · '+it).slice(0,90)+'</option>';
+  }).join('');
+  if(cur && [...sel.options].some(x=>x.value===cur)) sel.value=cur;
+  else if(cur){ sel.insertAdjacentHTML('beforeend','<option value="'+retEsc(cur)+'">Order #'+retEsc(String(cur).slice(-5))+'</option>'); sel.value=cur; }
+}
+function retOnOrder(){
+  const id=document.getElementById('ret-order').value; if(!id) return;
+  const o=retOrderById(id); if(!o) return;
+  const box=document.getElementById('ret-items');
+  const hasQty=retReadItems().length>0;
+  if(hasQty && !confirm('Replace the items with this order\'s items?')) return;
+  box.innerHTML=''; (o.items||[]).forEach(i=>retAddRow({name:i.name, unit:i.unit, rate:i.rate, qty:''}));
+  if(!(o.items||[]).length) retAddRow();
+  retCalc();
+}
+function openReturnForm(opts){
+  opts=opts||{};
+  if(!retCanEdit()){ showToast('Your role cannot record returns'); return; }
+  retEnsureUI();
+  const dl=document.getElementById('ret-cust-list');
+  dl.innerHTML=(STATE.customers||[]).map(c=>'<option value="'+retEsc(c.name)+'">').join('');
+  const r=opts.editId ? retAll().find(x=>x.id===opts.editId) : null;
+  document.getElementById('ret-edit-id').value=r?r.id:'';
+  document.getElementById('ret-modal-title').textContent=r?'Edit Return':'Record Return';
+  document.getElementById('ret-del-btn').style.display=(r&&retCanDelete())?'block':'none';
+  let custName=r?r.custName:'', orderId=r?r.orderId:(opts.orderId||'');
+  if(!r && opts.orderId){ const o=retOrderById(opts.orderId)||(opts.orderDate?getOrdersForDate(opts.orderDate).find(x=>x.id===opts.orderId):null);
+    if(o){ custName=o.customerName; if(!retOrderById(o.id)) (STATE.orders||[]).push(o); } }
+  if(!r && !custName && opts.custId){ const c=(STATE.customers||[]).find(x=>x.id===opts.custId)||resolveCustomer(opts.custId); if(c) custName=c.name; }
+  document.getElementById('ret-cust').value=custName||'';
+  document.getElementById('ret-date').value=r?r.date:TODAY_KEY;
+  document.getElementById('ret-reason').value=r&&r.reason?r.reason:RET_REASONS[0];
+  document.getElementById('ret-dispo').value=r&&r.disposition?r.disposition:RET_DISPOS[0];
+  document.getElementById('ret-credit').checked=r?!!r.credit:true;
+  document.getElementById('ret-notes').value=r?(r.notes||''):'';
+  document.getElementById('ret-items').innerHTML='';
+  document.getElementById('ret-order').innerHTML='<option value="">— not linked to an order —</option>';   // never carry the last form's order
+  retOnCustomer(orderId);
+  if(r){ (r.items||[]).forEach(i=>retAddRow(i)); if(!(r.items||[]).length) retAddRow(); }
+  else if(orderId){ document.getElementById('ret-order').value=orderId; retOnOrder(); }
+  else retAddRow();
+  retCalc();
+  document.getElementById('modal-return').classList.add('open');
+}
+
+let _retSaving=false;
+async function saveReturn(){
+  if(_retSaving) return;
+  const name=document.getElementById('ret-cust').value.trim();
+  const cust=retFindCust(name);
+  const date=document.getElementById('ret-date').value;
+  const items=retReadItems();
+  if(!name||!cust){ showToast('Pick the customer from the list'); return; }
+  if(!date){ showToast('Select the return date'); return; }
+  if(!items.length){ showToast('Enter the quantity returned'); return; }
+  const amount=Math.round(items.reduce((s,i)=>s+i.amount,0)*100)/100;
+  if(!(amount>0)){ showToast('Enter a rate for the items'); return; }
+  _retSaving=true;
+  try{
+    const editId=document.getElementById('ret-edit-id').value;
+    const orderId=document.getElementById('ret-order').value;
+    const ord=orderId?retOrderById(orderId):null;
+    let r=editId?retAll().find(x=>x.id===editId):null;
+    if(!r){ r={id:'RET'+Date.now().toString().slice(-9), createdAt:Date.now(), createdBy:STATE.role||''}; retAll().unshift(r); }
+    const credit=document.getElementById('ret-credit').checked;
+    Object.assign(r,{date, custName:cust.name, custId:cust.id, orderId:orderId||'', orderDate:ord?String(ord.date||''):(r.orderDate&&r.orderId===orderId?r.orderDate:''),
+      items, amount, reason:document.getElementById('ret-reason').value, disposition:document.getElementById('ret-dispo').value,
+      credit, notes:document.getElementById('ret-notes').value.trim(),
+      updatedAt:Date.now(), updatedBy:STATE.role||'', deleted:false, sheetSynced:false});
+    retSave();
+    closeModal('modal-return');
+    const net=getCustomerOutstanding(cust.id);
+    let msg=(editId?'✓ Return updated':'✓ Return saved')+' — '+retMoney(amount);
+    if(credit) msg+=' · '+cust.name+(net>0?' now owes '+retMoney(net):(net<0?' is '+retMoney(-net)+' in credit':' owes nothing'));
+    showToast(msg);
+    retRefreshScreens();
+    retSyncToSheet(r).then(ok=>{ if(!ok) showToast(_retSheetMissing?'⚠ Return saved on this phone — update the Apps Script (Setup) to send it to the Sheet':'⚠ Return saved on this phone — will send to the Sheet when online'); retRefreshScreens(); });
+  } finally { _retSaving=false; }
+}
+async function deleteReturn(id){
+  const r=retAll().find(x=>x.id===id); if(!r) return;
+  if(!retCanDelete()){ showToast('Only sales or owner can delete a return'); return; }
+  if(!confirm('Delete this return of '+retMoney(r.amount)+' for '+r.custName+'?'+(r.credit?'\nThe '+retMoney(r.amount)+' credit will be added back to what they owe.':''))) return;
+  r.deleted=true; r.updatedAt=Date.now(); r.updatedBy=STATE.role||''; r.sheetSynced=false; retSave();
+  try{ closeModal('modal-return'); }catch(e){}
+  showToast('✓ Return deleted');
+  retRefreshScreens();
+  retSyncToSheet(r).then(()=>retRefreshScreens());
+}
+function retRefreshScreens(){
+  const a=document.querySelector('.screen.active'); const id=a&&a.id;
+  try{ if(id==='screen-returns') renderReturns(); }catch(e){}
+  try{ if(id==='screen-dues') renderDues(); }catch(e){}
+  try{ if(id==='screen-history') renderHistory(); }catch(e){}
+  try{ if(id==='screen-customers' && typeof currentClientId!=='undefined' && currentClientId && document.getElementById('clients-detail-panel').style.display!=='none') openClientDetail(currentClientId); }catch(e){}
+}
+
+function openReturnsScreen(){
+  retEnsureUI();
+  const m=document.getElementById('ret-month'); if(m && !m.value) m.value=TODAY_KEY.slice(0,7);
+  showScreen('returns');
+  renderReturns();
+  (async function(){ try{ await retFlushPending(); await retPullFromSheet(); }catch(e){} try{ renderReturns(); }catch(e){} })();
+}
+function renderReturns(){
+  retEnsureUI();
+  const month=(document.getElementById('ret-month').value||TODAY_KEY.slice(0,7));
+  const q=_nameKey(document.getElementById('ret-search').value||'');
+  const list=retActive().filter(r=>String(r.date||'').slice(0,7)===month && (!q || _nameKey(r.custName).indexOf(q)>=0))
+    .sort((a,b)=>String(b.date).localeCompare(String(a.date))||(b.createdAt||0)-(a.createdAt||0));
+  const amt=list.reduce((s,r)=>s+(parseFloat(r.amount)||0),0), cr=list.reduce((s,r)=>s+(r.credit?(parseFloat(r.amount)||0):0),0);
+  document.getElementById('ret-stat-n').textContent=list.length;
+  document.getElementById('ret-stat-amt').textContent=retMoney(amt);
+  document.getElementById('ret-stat-cr').textContent=retMoney(cr);
+  const w=document.getElementById('ret-sheet-warn'); const pend=retAll().filter(r=>r.sheetSynced===false).length;
+  if(_retSheetMissing){ w.style.display='block'; w.innerHTML='⚠ The Google Sheet script does not know about returns yet. Returns are kept on this phone. Owner: Setup → copy the Apps Script, paste it in the Sheet\'s script editor and deploy a new version.'; }
+  else if(pend){ w.style.display='block'; w.textContent='⏳ '+pend+' return(s) not yet in the Sheet — they will be sent when the Sheet answers.'; }
+  else w.style.display='none';
+  const byR={}; list.forEach(r=>{ const k=r.reason||'Other'; byR[k]=(byR[k]||0)+(parseFloat(r.amount)||0); });
+  document.getElementById('ret-reasons').innerHTML=Object.keys(byR).sort((a,b)=>byR[b]-byR[a]).map(k=>
+    '<span style="display:inline-block;background:#FFEBEE;color:#B71C1C;border-radius:12px;padding:3px 10px;font-size:11px;font-weight:700;margin:0 6px 6px 0;">'+retEsc(k)+' '+retMoney(byR[k])+'</span>').join('');
+  document.getElementById('ret-list').innerHTML=list.length?list.map(r=>{
+    const it=(r.items||[]).map(i=>i.qty+' '+(i.unit||'')+' '+i.name+' @₹'+i.rate).join(' · ');
+    const crTxt=r.credit?'Credited '+retMoney(r.amount):'No credit';
+    return '<div onclick="openReturnForm({editId:\''+retEsc(r.id)+'\'})" style="cursor:pointer;border:1.5px solid var(--border);border-left:4px solid #C62828;border-radius:10px;padding:10px 12px;margin-bottom:8px;background:#fff;">'
+      +'<div style="display:flex;justify-content:space-between;gap:8px;"><div style="min-width:0;"><div style="font-weight:700;font-size:14px;">'+retEsc(r.custName)+'</div>'
+      +'<div style="font-size:11px;color:var(--muted);">'+retEsc(String(r.date).slice(8,10)+'/'+String(r.date).slice(5,7))+(r.orderId?' · order #'+retEsc(String(r.orderId).slice(-5)):'')+' · '+retEsc(r.reason||'')+' · '+retEsc(r.disposition||'')+'</div></div>'
+      +'<div style="text-align:right;flex-shrink:0;"><div style="font-weight:800;color:#C62828;">'+retMoney(r.amount)+'</div><div style="font-size:10px;color:var(--muted);">'+crTxt+'</div></div></div>'
+      +'<div style="font-size:11px;color:var(--ink);margin-top:4px;">'+retEsc(it)+'</div>'
+      +(r.notes?'<div style="font-size:11px;color:#795548;margin-top:3px;">📝 '+retEsc(r.notes)+'</div>':'')
+      +'<div style="font-size:10px;color:var(--muted);margin-top:4px;">#'+retEsc(r.id)+(r.updatedBy?' · '+retEsc(r.updatedBy):'')+(r.sheetSynced===false?' · ⏳ not in Sheet yet':' · ✓ Sheet')+' · tap to edit</div></div>';
+  }).join(''):'<div class="empty-state"><div class="empty-icon">↩</div><p>No returns in this month</p></div>';
+}
+// Returns for one customer (used on the client page).
+function retForCustomer(c){
+  const k=_nameKey(c.name);
+  return retActive().filter(r=>r.custId===c.id||_nameKey(r.custName)===k).sort((a,b)=>String(b.date).localeCompare(String(a.date)));
+}
+function retClientBlock(c){
+  const list=retForCustomer(c);
+  const tot=list.reduce((s,r)=>s+(parseFloat(r.amount)||0),0);
+  return '<div style="background:#FFEBEE;border:1.5px solid #FFCDD2;border-radius:10px;padding:10px 12px;margin-bottom:8px;">'
+    +'<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;"><div style="font-size:12px;font-weight:700;color:#B71C1C;">↩ Returns: '+list.length+(list.length?' · '+retMoney(tot):'')+'</div>'
+    +'<button onclick="openReturnForm({custId:\''+retEsc(c.id)+'\'})" style="background:#C62828;color:#fff;border:none;border-radius:8px;padding:6px 10px;font-size:12px;font-weight:700;cursor:pointer;">+ Return</button></div>'
+    +list.slice(0,5).map(r=>'<div onclick="openReturnForm({editId:\''+retEsc(r.id)+'\'})" style="cursor:pointer;display:flex;justify-content:space-between;font-size:11px;padding:5px 0;border-top:1px dashed #FFCDD2;margin-top:4px;">'
+      +'<span>'+retEsc(String(r.date).slice(8,10)+'/'+String(r.date).slice(5,7))+' · '+retEsc((r.items||[]).map(i=>i.qty+' '+i.name).join(', '))+' · '+retEsc(r.reason||'')+'</span>'
+      +'<span style="font-weight:700;white-space:nowrap;margin-left:6px;">'+retMoney(r.amount)+(r.credit?' cr':'')+'</span></div>').join('')
+    +(list.length>5?'<div style="font-size:11px;margin-top:4px;"><a href="javascript:void(0)" onclick="openReturnsScreen()">All returns →</a></div>':'')
+    +'</div>';
+}
+// start-up: load, then retry anything the Sheet has not confirmed
+try{ STATE.returns=retLoad(); }catch(e){}
+setTimeout(function(){ try{ retFlushPending(); }catch(e){} }, 8000);
+
+// ── v222 helpers used by Dues, client page, statement, reminders, History ──
+// Rupees the Dues headline should drop: per customer, never more than owed.
+function retDuesReduction(unpaidOrders, custsDue){
+  try{
+    if(!retActive().some(r=>r.credit)) return 0;
+    const owed={};
+    (unpaidOrders||[]).forEach(o=>{ const k=_nameKey(o.customerName); if(k) owed[k]=(owed[k]||0)+((o.total||0)-(o.payment?.amount||0)); });
+    (custsDue||[]).forEach(c=>{ const k=_nameKey(c.name); if(k) owed[k]=(owed[k]||0)+(parseFloat(c.balance)||0); });
+    let red=0;
+    Object.keys(owed).forEach(k=>{ const c=(STATE.customers||[]).find(x=>_nameKey(x.name)===k); if(!c) return;
+      red+=Math.min(Math.max(0,owed[k]), retCreditFor(c)); });
+    return Math.round(red*100)/100;
+  }catch(e){ return 0; }
+}
+function retDuesLine(custId){
+  const cr=retCreditFor(custId); if(!(cr>0)) return '';
+  return '<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px dashed var(--border);font-size:12px;">'
+    +'<span style="color:#B71C1C;">↩ Returns credited</span><span style="font-weight:700;color:#B71C1C;">−'+retMoney(cr)+'</span></div>';
+}
+function retTxnRow(r, runBal){
+  const it=(r.items||[]).map(i=>i.qty+' '+(i.unit||'')+' '+i.name).join(', ');
+  return '<div onclick="openReturnForm({editId:\''+retEsc(r.id)+'\'})" style="cursor:pointer;background:#FFF5F5;border-radius:12px;margin-bottom:8px;border:1.5px solid #FFCDD2;overflow:hidden;">'
+    +'<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;">'
+    +'<div><div style="font-size:12px;font-weight:700;color:#B71C1C;">↩ Return credited</div>'
+    +'<div style="font-size:11px;color:var(--muted);">'+retEsc(String(r.date||''))+' · '+retEsc(it)+' · '+retEsc(r.reason||'')+'</div></div>'
+    +'<div style="font-size:14px;font-weight:800;color:#B71C1C;">−'+retMoney(r.amount)+'</div></div>'
+    +'<div style="display:flex;justify-content:space-between;padding:6px 12px;background:#F5F5F5;font-size:11px;font-weight:700;">'
+    +'<span style="color:var(--muted);">Receivable Balance</span><span style="color:var(--red);">₹'+(Math.round(runBal*100)/100).toLocaleString('en-IN')+'</span></div></div>';
+}
+function retOrderNote(orderId){
+  const l=retForOrder(orderId); if(!l.length) return '';
+  const amt=l.reduce((s,r)=>s+(parseFloat(r.amount)||0),0);
+  return '<div style="background:#FFEBEE;border-radius:8px;padding:6px 10px;margin-top:6px;font-size:12px;color:#B71C1C;font-weight:600;">↩ Return credited '+retMoney(amt)
+    +' — '+retEsc(l.map(r=>(r.items||[]).map(i=>i.qty+' '+(i.unit||'')+' '+i.name).join(', ')).join('; '))+' · comes off what the customer owes</div>';
+}
+function retRemindLine(custId, lang){
+  const cr=retCreditFor(custId); if(!(cr>0)) return '';
+  return '\n'+(lang==='mr'?('\u2022 परत केलेला माल (जमा): -\u20b9'+Math.round(cr).toLocaleString('en-IN')):('\u2022 Less goods returned (credited): -\u20b9'+Math.round(cr).toLocaleString('en-IN')));
 }
 
 </script>
