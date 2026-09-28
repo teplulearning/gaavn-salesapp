@@ -280,7 +280,7 @@ body.gf-panel-open #app{ visibility:hidden; }
     <div class="top-bar-left">
       <span class="logo">🐄 GF</span>
       <span class="role-badge" id="role-badge">SALES</span>
-      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v223</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v224</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <!-- v196: this used to be a single button showing the language you would
@@ -903,7 +903,6 @@ body.gf-panel-open #app{ visibility:hidden; }
       <div id="hist-fetch-status" style="font-size:12px;color:var(--muted);min-height:18px;margin-bottom:8px;"></div>
       <button class="btn btn-primary" onclick="fetchAllHistoryMonths()" style="width:100%;margin-bottom:8px;">☁ Load ALL Months (full history)</button>
       <button class="btn btn-secondary" onclick="checkSheetVsPhone()" style="width:100%;margin-bottom:8px;">🔍 Check Sheet vs Phone</button>
-      <button class="btn btn-secondary" onclick="cleanDuplicateRows()" style="width:100%;margin-bottom:8px;">🧹 Clean duplicate rows in Sheet</button>
       <button class="btn btn-primary" onclick="fetchHistoryMonth()" style="width:100%;margin-bottom:8px;background:#2E7D32;">🗓 Load Whole Month</button>
       <div class="btn-row">
         <button class="btn btn-secondary" onclick="closeModal('modal-hist-fetch')">Cancel</button>
@@ -8187,9 +8186,9 @@ function getAppsScriptCode() {
     "  var del = [];",
     "  sets.forEach(function(b){ if(best[b.id] !== b) del = del.concat(b.rows); });",
     "  del.sort(function(x,y){ return y - x; });",
-    "  var dry = String(p && p.dryRun || \"\") === \"1\";",
-    "  if(!dry) del.forEach(function(rn){ sh.deleteRow(rn); });",
-    "  return jsonOut({status:\"ok\", removed:del.length, month:month, dryRun:dry});",
+    "  // v224: REPORT ONLY. The orders in the sheet are checked by hand and are the",
+    "  // record; this never deletes a row, whatever the request says.",
+    "  return jsonOut({status:\"ok\", removed:0, found:del.length, month:month, dryRun:true, reportOnly:true});",
     "}",
     "",
     '// v161: return the shared delete list so every device can honour a',
@@ -10822,35 +10821,10 @@ async function fetchAllHistoryMonths() {
 // v162: ask the Sheet to drop superseded row-sets (same Order ID written
 // twice by an older build). Runs a dry run first and asks before deleting.
 async function cleanDuplicateRows(){
-  const url = getSheetUrl();
-  if(!url){ showToast('\u2699 Set the Sheet URL in Setup first'); return; }
-  const statusEl = document.getElementById('hist-fetch-status');
-  const say = t => { if(statusEl){ statusEl.textContent = t; statusEl.style.color='var(--muted)'; } };
-  const months = [];
-  const now = new Date();
-  for(let i=0;i<3;i++){ const d=new Date(now.getFullYear(), now.getMonth()-i, 1);
-    months.push(d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')); }
-  say('\u23f3 Checking for superseded rows\u2026');
-  let found = 0; const detail = [];
-  for(const m of months){
-    try{
-      const r = await fetch(url+'?action=dedupeOrderRows&month='+m+'&dryRun=1',{cache:'no-store'});
-      const j = await r.json();
-      if(j && typeof j.removed === 'number' && j.removed>0){ found += j.removed; detail.push(m+': '+j.removed); }
-      if(j && j.error){ say('\u2717 '+j.error+' \u2014 re-deploy the Apps Script from Setup'); return; }
-    }catch(e){ say('\u2717 Could not reach the Sheet'); return; }
-  }
-  if(!found){ say('\u2713 No superseded rows found \u2014 the Sheet is clean.'); showToast('\u2713 Sheet already clean'); return; }
-  if(!confirm('Found '+found+' superseded row(s) in the Sheet ('+detail.join(', ')+').\n\n'+
-              'These are older copies of orders that were re-synced later — the newest version of every order is kept, and day totals do not change.\n\nRemove them?')) { say('Cancelled.'); return; }
-  say('\u23f3 Removing '+found+' row(s)\u2026');
-  let removed = 0;
-  for(const m of months){
-    try{ const r = await fetch(url+'?action=dedupeOrderRows&month='+m,{cache:'no-store'});
-      const j = await r.json(); removed += (j && j.removed) || 0; }catch(e){}
-  }
-  say('\u2713 Removed '+removed+' superseded row(s). Tap Load ALL Months to refresh this device.');
-  showToast('\u2713 Cleaned '+removed+' duplicate row(s) from the Sheet');
+  // v224: removed. The orders in the Sheet are the checked record and are never
+  // deleted from this app. (v162–v223 could remove rows here.)
+  showToast('Nothing is removed from the Sheet — the orders there are kept as they are');
+  return false;
 }
 
 async function checkSheetVsPhone(){
