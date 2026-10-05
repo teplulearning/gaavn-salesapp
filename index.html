@@ -280,7 +280,7 @@ body.gf-panel-open #app{ visibility:hidden; }
     <div class="top-bar-left">
       <span class="logo">🐄 GF</span>
       <span class="role-badge" id="role-badge">SALES</span>
-      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v224</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v225</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <!-- v196: this used to be a single button showing the language you would
@@ -734,9 +734,32 @@ body.gf-panel-open #app{ visibility:hidden; }
 
     <div class="setup-card owner-only">
       <div class="section-label" style="margin-top:0;">🧾 Product GST Master</div>
-      <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">Set HSN code and GST rate for each product. Used in GST Report for your CA. Fresh dairy is generally exempt (0%). Flavoured drinks attract 12%.</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">Set HSN code and GST rate for each product. Used in GST Report for your CA. Saved once, applies on every device. Since 22 Sep 2025: paneer 0%, ghee 5%, packed curd / lassi / buttermilk 5%.</div>
       <div id="gst-master-list"></div>
       <button class="btn btn-success" style="margin-top:10px;" onclick="saveGSTMaster()">💾 Save GST Master</button>
+    </div>
+
+    <!-- v225 -->
+    <div class="setup-card owner-only" id="hist-copy-card" style="border-color:#1A527A;">
+      <div class="section-label" style="margin-top:0;color:#1A527A;">📚 Copy Sheet history into Firebase</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:10px;line-height:1.6;">
+        The app reads orders from Firebase only. History uploaded into the Sheet's monthly
+        <b>Orders_YYYY-MM</b> tabs (e.g. the Khatabook import) never reached Firebase, so reports
+        could not see it. This copies orders dated <b>before the live window</b> from those tabs into
+        Firebase, once. Orders already in Firebase (same Order ID) are skipped, so running it again
+        adds nothing twice. Dues and balances are not affected — these dates are before every
+        customer's Balance-As-Of. <b>Check first</b>, then copy.
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+        <div class="field" style="margin:0;"><label>From month</label>
+          <input type="month" id="hc-from" value="2025-04" style="width:100%;background:var(--cream);border:1.5px solid var(--border);border-radius:8px;padding:8px 10px;font-size:13px;"></div>
+        <div class="field" style="margin:0;"><label>To month</label>
+          <input type="month" id="hc-to" value="" style="width:100%;background:var(--cream);border:1.5px solid var(--border);border-radius:8px;padding:8px 10px;font-size:13px;"></div>
+      </div>
+      <div id="hc-status" style="font-size:12px;min-height:16px;margin:8px 0;line-height:1.5;"></div>
+      <button class="btn btn-secondary" style="width:100%;" onclick="histCopyCheck()">🔍 Check (nothing is written)</button>
+      <button class="btn btn-blue" id="hc-run" style="width:100%;margin-top:6px;display:none;" onclick="histCopyRun()">⬆ Copy to Firebase</button>
+      <button class="btn btn-secondary" id="hc-undo" style="width:100%;margin-top:6px;display:none;" onclick="histCopyUndo()">↩ Undo the last copy</button>
     </div>
 
     <div class="setup-card owner-only">
@@ -1516,7 +1539,7 @@ const PRODUCTS = [
   {id:'lp',     name:'Low Fat Paneer',      unit:'kg',   stdRate:240, emoji:'🥗', hsn:'0406', gstRate:0},
   {id:'lpl',    name:'Low Fat Paneer Ladi', unit:'ladi', stdRate:240, emoji:'🧱', isLaadi:true, rateFromPaneer:true, rateFrom:'lp', hsn:'0406', gstRate:0},
   {id:'lc',     name:'Lite Curd',     unit:'jar',  stdRate:270, emoji:'🥛', altUnit:'kg', altRate:60, jarToKg:1, hsn:'0406', gstRate:0},
-  {id:'ghee',   name:'Ghee',          unit:'unit', stdRate:650, emoji:'🫙', hsn:'0405', gstRate:12},
+  {id:'ghee',   name:'Ghee',          unit:'unit', stdRate:650, emoji:'🫙', hsn:'0405', gstRate:5},   // v225: 12% -> 5% (GST rates revised 22 Sep 2025)
   {id:'cream',  name:'Cream',         unit:'unit', stdRate:300, emoji:'🍦', hsn:'0401', gstRate:0},
   {id:'cmk',    name:'CM Khoya',      unit:'kg',   stdRate:234, emoji:'🍫', hsn:'0406', gstRate:0},
   {id:'stk',    name:'Std Khoya',     unit:'kg',   stdRate:234, emoji:'🍫', hsn:'0406', gstRate:0},
@@ -1984,6 +2007,14 @@ function fsStartConfigListener(){
       if(c.apiKey && localStorage.getItem('gf_api_key')!==c.apiKey){
         localStorage.setItem('gf_api_key', c.apiKey); changed=true;
       }
+      /* v225: GST Master is shared — one change applies on every device */
+      try{
+        if(c.productGst && applySharedProductGST(c.productGst)){
+          const _su=document.getElementById('screen-setup');
+          if(_su && _su.classList.contains('active') && typeof renderGSTMaster==='function') renderGSTMaster();
+          try{ if(typeof previewGSTReport==='function' && document.getElementById('gst-from') && document.getElementById('gst-from').value) previewGSTReport(); }catch(x){}
+        }
+      }catch(x){ console.warn('productGst', x); }
       FS.configSeen=true;
       if(changed){
         try{ updateSheetDot(); }catch(e){}
@@ -3018,7 +3049,29 @@ function loadProductGSTData() {
         if(saved[p.id].gstRate !== undefined) p.gstRate = saved[p.id].gstRate;
       }
     });
+    /* v225: a phone that once saved the GST Master stored ghee at the old 12%,
+       and that local copy outranks the corrected default. Move it to 5% once.
+       After that, the shared rates from Firebase (config/app) decide. */
+    const _g=PRODUCTS.find(p=>p.id==='ghee');
+    if(_g && parseFloat(_g.gstRate)===12 && localStorage.getItem('gf_gst_v225')!=='1'){
+      _g.gstRate=5; saveProductGSTData();
+    }
+    localStorage.setItem('gf_gst_v225','1');
   } catch(e) {}
+}
+/* v225: apply the GST Master shared through Firebase (config/app.productGst).
+   Only known products, only sane numbers. Returns true if anything changed. */
+function applySharedProductGST(m){
+  if(!m || typeof m!=='object') return false;
+  let changed=false;
+  PRODUCTS.forEach(p=>{
+    const e=m[p.id]; if(!e || typeof e!=='object') return;
+    if(e.hsn!==undefined && String(e.hsn)!==String(p.hsn||'')){ p.hsn=String(e.hsn); changed=true; }
+    const r=parseFloat(e.gstRate);
+    if(isFinite(r) && r>=0 && r<=28 && r!==parseFloat(p.gstRate)){ p.gstRate=r; changed=true; }
+  });
+  if(changed){ try{ saveProductGSTData(); }catch(x){} }
+  return changed;
 }
 
 function saveProductGSTData() {
@@ -3449,7 +3502,7 @@ function showScreen(id) {
     if(id==='new-order')  initNewOrder();
     // v195.1: re-apply the owner gate every time Setup opens — renderSetup()
     // repaints cards, and a role switch must not leave a stale screen behind.
-    if(id==='setup')      { renderSetup(); renderGSTMaster(); applySetupRoleUI(); }
+    if(id==='setup')      { renderSetup(); renderGSTMaster(); applySetupRoleUI(); try{ const _u=document.getElementById('hc-undo'); if(_u) _u.style.display=localStorage.getItem('gf_hist_copy_last')?'':'none'; }catch(e){} }
     if(id==='manage')     renderManageCustomers();
     if(id==='history')  { renderHistory(); setTimeout(function(){ try{ autoSyncHistory(false); }catch(e){} }, 400); setTimeout(function(){ try{ pullDeletedOrders(false); }catch(e){} }, 900); }
     if(id==='payment-in') renderPaymentIn();
@@ -7792,7 +7845,17 @@ function saveGSTMaster() {
     if(rateEl) p.gstRate = parseFloat(rateEl.value)||0;
   });
   saveProductGSTData();
-  showToast('✓ GST Master saved');
+  /* v225: the GST Master used to live only on the phone it was edited on.
+     The owner's save now goes to Firebase config/app and reaches every device. */
+  if(STATE.role==='owner' && typeof fsCanWrite==='function' && fsCanWrite()){
+    const data={}; PRODUCTS.forEach(p=>{ data[p.id]={hsn:String(p.hsn||''), gstRate:parseFloat(p.gstRate)||0}; });
+    FS.db.collection('config').doc('app').set({productGst:data,
+        productGstUpdatedAt:new Date().toISOString(), productGstUpdatedBy:(FS.user&&FS.user.email)||''},{merge:true})
+      .then(()=>showToast('✓ GST Master saved — applies on every device'))
+      .catch(e=>showToast('⚠ Saved on this phone only — Firebase refused: '+(e&&e.message||e)));
+  } else {
+    showToast('✓ GST Master saved on this phone (sign in to Firebase as owner to share it)');
+  }
 }
 
 // ── APPS SCRIPT CODE ─────────────────────────────────────────────────
@@ -10061,6 +10124,22 @@ function getAllOrdersInRange(from, to) {
     seen.add(o.id); orders.push(o);
   });
 
+  /* v225: orders older than the live listener's window (150 days) were
+     invisible to every report — the April–May gap in the GST report, and the
+     whole 2025-26 history. fsEnsureOldRange() fetches them from Firebase on
+     demand into FS_OLD; they are added here and NOWHERE else. They never enter
+     STATE.orders, so dues, balances and the day screens are untouched. */
+  if(liveFromFirebase){
+    Object.keys(FS_OLD.orders).forEach(id => {
+      const o = FS_OLD.orders[id];
+      if(!o || seen.has(id)) return;
+      const d = o.date || '';
+      if(d < from || d > to) return;
+      if(isOrderDeleted(id)) return;
+      seen.add(id); orders.push(o);
+    });
+  }
+
   // localStorage day-caches only when Firebase is NOT the source
   if(!liveFromFirebase){
     for(let i=0; i<localStorage.length; i++) {
@@ -10080,10 +10159,224 @@ function getAllOrdersInRange(from, to) {
   return orders.sort((a,b) => (a.date||'').localeCompare(b.date||''));
 }
 
-function previewGSTReport() {
+
+/* ── v225: ON-DEMAND READ OF ORDERS OLDER THAN THE LIVE WINDOW ─────────────
+   The live listener reads orders from FS.windowFrom onward (floored at 150
+   days, v206). A report for an older range asks Firebase once for
+   [from, windowFrom) and keeps the result for 10 minutes. */
+const FS_OLD={from:'', upper:'', ts:0, orders:{}, count:0, busy:null};
+function fsOldInvalidate(){ FS_OLD.from=''; FS_OLD.upper=''; FS_OLD.ts=0; FS_OLD.orders={}; FS_OLD.count=0; }
+async function fsEnsureOldRange(from){
+  if(!(typeof fsOwnsOrders==='function' && fsOwnsOrders())) return 0;
+  const upper=FS.windowFrom||'';
+  if(!from || !upper || from>=upper) return 0;
+  const fresh = FS_OLD.ts && (Date.now()-FS_OLD.ts < 10*60*1000);
+  if(fresh && FS_OLD.upper===upper && FS_OLD.from && FS_OLD.from<=from) return FS_OLD.count;
+  if(FS_OLD.busy) { try{ await FS_OLD.busy; }catch(e){} return fsEnsureOldRange(from); }
+  FS_OLD.busy=(async()=>{
+    const snap=await FS.db.collection('orders').where('date','>=',from).where('date','<',upper).get();
+    const m={};
+    snap.forEach(doc=>{ const d=doc.data()||{}; if(d.deleted===true) return; m[doc.id]=fsOrderToApp(doc.id,d); });
+    FS_OLD.orders=m; FS_OLD.count=Object.keys(m).length; FS_OLD.from=from; FS_OLD.upper=upper; FS_OLD.ts=Date.now();
+  })();
+  try{ await FS_OLD.busy; } finally { FS_OLD.busy=null; }
+  return FS_OLD.count;
+}
+
+/* ── v225: COPY SHEET HISTORY INTO FIREBASE ───────────────────────────────
+   Since v179 the app reads orders only from Firebase. History that was put
+   into the Sheet's Orders_YYYY-MM tabs afterwards (the Khatabook import,
+   Apr 2025 – Mar 2026) therefore never reached any screen or report.
+   This copies Sheet orders dated BEFORE the live window into Firebase:
+     · an Order ID already in Firebase is skipped (deleted ones included), so a
+       second run writes nothing twice;
+     · orders on or after FS.windowFrom are left alone — that range is live;
+     · each copied order carries source:'sheet-history' and an importBatch, so
+       one copy can be undone exactly.
+   Dues cannot move: these dates are older than every Balance-As-Of and the
+   live listener never loads them into STATE.orders. */
+let _HC={plan:null, busy:false};
+function _hcMonthTags(from,to){
+  const out=[]; if(!/^\d{4}-\d{2}$/.test(from)||!/^\d{4}-\d{2}$/.test(to)||from>to) return out;
+  let y=+from.slice(0,4), m=+from.slice(5,7);
+  for(let i=0;i<60;i++){ const t=y+'-'+String(m).padStart(2,'0'); if(t>to) break; out.push(t); m++; if(m>12){m=1;y++;} }
+  return out;
+}
+function _hcDay(row){
+  let d=row._date||row['Date']||'';
+  if(d && typeof d==='string' && d.indexOf('T')>0){ try{ const x=new Date(d); if(!isNaN(x)) return x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0')+'-'+String(x.getDate()).padStart(2,'0'); }catch(e){} }
+  d=String(d).trim();
+  const m=d.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/); if(m) return m[3]+'-'+m[2].padStart(2,'0')+'-'+m[1].padStart(2,'0');
+  return d.slice(0,10);
+}
+const _hcNum=v=>{ const n=parseFloat(String(v===undefined||v===null?'':v).replace(/,/g,'')); return isFinite(n)?n:0; };
+/* Sheet rows -> orders. One row per item; unlike the History loader this does
+   NOT merge two rows of the same product (KB26-8275 has Chaas 1 Litre twice,
+   6 L and 1 L). A row-set written twice by an old build is collapsed. */
+function _hcParse(rows){
+  const map={}, seq=[];
+  (rows||[]).forEach(row=>{
+    const id=String(row['Order ID']||'').trim(); if(!id) return;
+    if(!map[id]){ map[id]={id:id, date:_hcDay(row), rows:[], first:row}; seq.push(id); }
+    map[id].rows.push(row);
+  });
+  return seq.map(id=>{
+    const g=map[id], r0=g.first;
+    let items=[];
+    const raw=r0['Items Raw']||'';
+    if(raw){ try{ const p=JSON.parse(raw); if(Array.isArray(p)) items=p.map(i=>({name:String(i.name||''),qty:_hcNum(i.qty),unit:String(i.unit||''),rate:_hcNum(i.rate),amount:_hcNum(i.amount)||_hcNum(i.qty)*_hcNum(i.rate)})); }catch(e){} }
+    if(!items.length){
+      items=g.rows.filter(r=>{ const pn=String(r['Product']||'').trim(); return pn && pn!=='(no items)'; })
+        .map(r=>({name:String(r['Product']).trim(),qty:_hcNum(r['Qty']),unit:String(r['Unit']||''),rate:_hcNum(r['Rate (Rs)']),amount:_hcNum(r['Amount (Rs)'])}));
+    }
+    let total=_hcNum(r0['Order Total (Rs)']||r0['Total']);
+    const key=i=>i.name+'|'+i.qty+'|'+i.rate+'|'+i.amount;
+    const sum=a=>a.reduce((s,i)=>s+i.amount,0);
+    if(items.length>=2 && items.length%2===0){
+      const h=items.length/2, a=items.slice(0,h), b=items.slice(h);
+      if(a.every((x,k)=>key(x)===key(b[k])) && total>0 && Math.abs(sum(a)-total)<=1 && Math.abs(sum(items)-total)>1) items=a;
+    }
+    if(!(total>0)) total=sum(items);
+    return {id:g.id, date:g.date, customerName:String(r0['Customer']||'').trim(),
+      category:String(r0['Category']||''), area:String(r0['Area']||''),
+      status:String(r0['Status']||'delivered')||'delivered', total:total, items:items,
+      paidAmount:_hcNum(r0['Payment Amt']), paymentMode:String(r0['Payment Mode']||''),
+      notes:String(r0['Notes']||''), createdBy:String(r0['Created By']||''),
+      mismatch: items.length && Math.abs(sum(items)-total)>1 };
+  }).filter(o=>/^\d{4}-\d{2}-\d{2}$/.test(o.date));
+}
+const _hcRs=n=>'₹'+Math.round(n).toLocaleString('en-IN');
+async function histCopyCheck(){
+  const st=document.getElementById('hc-status');
+  const say=h=>{ if(st) st.innerHTML=h; };
+  document.getElementById('hc-run').style.display='none';
+  _HC.plan=null;
+  if(STATE.role!=='owner'){ say('<span style="color:#C62828;">Owner only.</span>'); return; }
+  if(!(typeof fsOwnsOrders==='function' && fsOwnsOrders())){ say('<span style="color:#C62828;">Not signed in to Firebase — sign in first.</span>'); return; }
+  const url=getSheetUrl(); if(!url){ say('<span style="color:#C62828;">No Sheet URL on this device.</span>'); return; }
+  const upper=FS.windowFrom||'';
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(upper)){ say('<span style="color:#C62828;">Live window not known yet — wait for orders to load and try again.</span>'); return; }
+  const hf=document.getElementById('hc-from'), ht=document.getElementById('hc-to');
+  if(!ht.value) ht.value=upper.slice(0,7);
+  const tags=_hcMonthTags(hf.value, ht.value);
+  if(!tags.length){ say('<span style="color:#C62828;">Pick a valid month range.</span>'); return; }
+  if(_HC.busy) return; _HC.busy=true;
+  try{
+    // 1. every order already in Firebase over the range (deleted included)
+    say('⏳ Reading what Firebase already has…');
+    const start=tags[0]+'-01';
+    const fb={}; let fbN=0;
+    if(start<upper){
+      const snap=await FS.db.collection('orders').where('date','>=',start).where('date','<',upper).get();
+      snap.forEach(doc=>{ const d=doc.data()||{}; fb[doc.id]={date:String(d.date||'').slice(0,10), total:parseFloat(d.total)||0, deleted:d.deleted===true}; fbN++; });
+    }
+    (STATE.orders||[]).forEach(o=>{ if(o&&o.id&&!fb[o.id]) fb[o.id]={date:o.date,total:o.total,deleted:false,live:true}; });
+    // 2. Sheet, month by month
+    const months=[], toCopy=[]; const sheetIds={};
+    for(const tag of tags){
+      say('⏳ Reading Sheet tab Orders_'+tag+' …');
+      let rows=null, err='';
+      try{ const r=await fetch(url+'?action=getMonthOrders&month='+tag,{cache:'no-store'}); const d=await r.json();
+           if(d && Array.isArray(d.orders)) rows=d.orders; else err=(d&&d.error)||'no data'; }catch(e){ err=e.message||String(e); }
+      const all=_hcParse(rows||[]);
+      const before=all.filter(o=>o.date<upper);
+      const m={tag:tag, err:err, sheet:before.length, sheetAmt:0, have:0, copy:0, copyAmt:0, other:0, otherAmt:0, mismatch:0, live:all.length-before.length};
+      before.forEach(o=>{
+        sheetIds[o.id]=1; m.sheetAmt+=o.total;
+        if(fb[o.id] || isOrderDeleted(o.id)){ m.have++; return; }
+        m.copy++; m.copyAmt+=o.total; if(o.mismatch) m.mismatch++; toCopy.push(o);
+      });
+      Object.keys(fb).forEach(id=>{ const f=fb[id]; if(!f.deleted && !sheetIds[id] && String(f.date).slice(0,7)===tag && f.date<upper){ m.other++; m.otherAmt+=f.total; } });
+      months.push(m);
+    }
+    _HC.plan={upper:upper, orders:toCopy, months:months};
+    const tot=months.reduce((a,m)=>({copy:a.copy+m.copy, amt:a.amt+m.copyAmt, have:a.have+m.have}),{copy:0,amt:0,have:0});
+    const td='style="padding:3px 4px;text-align:right;"';
+    let h='<div style="margin-bottom:6px;">Live window starts <b>'+upper+'</b> — only Sheet orders <b>before</b> that date are considered. Firebase already holds '+fbN+' order(s) in this range.</div>'
+      +'<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:11px;">'
+      +'<tr style="font-weight:700;color:var(--muted);border-bottom:1px solid var(--border);"><td>Month</td><td '+td+'>In Sheet</td><td '+td+'>Already in FB</td><td '+td+'>To copy</td><td '+td+'>₹ to copy</td><td '+td+'>Other FB orders</td></tr>';
+    months.forEach(m=>{
+      const warn = m.err ? ' <span style="color:#C62828;">⚠ '+m.err+'</span>' : (m.sheet===0 && m.live===0 ? ' <span style="color:#C8830A;">⚠ no tab / empty</span>' : '');
+      h+='<tr style="border-bottom:1px solid var(--border);"><td style="padding:3px 4px;">'+m.tag+warn+'</td><td '+td+'>'+m.sheet+'</td><td '+td+'>'+m.have+'</td><td '+td+'><b>'+m.copy+'</b>'+(m.mismatch?' <span title="items do not add up to order total" style="color:#C8830A;">('+m.mismatch+'≠)</span>':'')+'</td><td '+td+'>'+_hcRs(m.copyAmt)+'</td><td '+td+(m.other?' title="Firebase orders this month with a different Order ID — check this is not the same sale twice"':'')+'>'+(m.other?('<span style="color:#C8830A;">'+m.other+' · '+_hcRs(m.otherAmt)+'</span>'):'0')+'</td></tr>';
+    });
+    h+='</table></div>'
+      +'<div style="margin-top:6px;"><b>'+tot.copy+' order(s), '+_hcRs(tot.amt)+'</b> will be copied; '+tot.have+' already in Firebase will be skipped.</div>'
+      +'<div style="margin-top:4px;color:var(--muted);">⚠ "no tab / empty": the Sheet has no tab named exactly Orders_YYYY-MM for that month (a tab called e.g. "Orders_2025-11 (1)" is not read — rename it and check again). '
+      +'"Other FB orders": orders already in Firebase that month under a different Order ID — if that is the same sale, it would be counted twice.</div>';
+    say(h);
+    if(tot.copy>0) document.getElementById('hc-run').style.display='';
+  }catch(e){ say('<span style="color:#C62828;">Check failed: '+(e&&e.message||e)+'</span>'); }
+  finally{ _HC.busy=false; }
+}
+async function histCopyRun(){
+  const st=document.getElementById('hc-status');
+  const plan=_HC.plan;
+  if(!plan || !plan.orders.length){ showToast('Run Check first'); return; }
+  if(STATE.role!=='owner' || !(typeof fsCanWrite==='function' && fsCanWrite())){ showToast('Owner, signed in to Firebase, only'); return; }
+  if(plan.upper!==FS.windowFrom){ showToast('The live window moved — run Check again'); return; }
+  const amt=plan.orders.reduce((s,o)=>s+o.total,0);
+  if(!confirm('Copy '+plan.orders.length+' order(s) worth '+_hcRs(amt)+' from the Sheet into Firebase?\n\nNothing already in Firebase is changed. You can undo this copy afterwards.')) return;
+  if(_HC.busy) return; _HC.busy=true;
+  const batchId='sheet-history '+new Date().toISOString();
+  let done=0, failed='';
+  try{
+    for(let i=0;i<plan.orders.length;i+=400){
+      const chunk=plan.orders.slice(i,i+400);
+      const b=FS.db.batch(); const now=new Date().toISOString();
+      chunk.forEach(o=>{
+        b.set(FS.db.collection('orders').doc(String(o.id)), {
+          customerId: fsResolveCustId(o.customerName) || null,
+          customerNameAtImport: o.customerName, category:o.category, area:o.area,
+          date:o.date, status:o.status, total:o.total,
+          paidAmount:o.paidAmount, paymentMode:o.paymentMode, sheetSynced:true,
+          items:o.items.map(i=>({product:i.name, qty:i.qty, unit:i.unit, rate:i.rate, amount:i.amount})),
+          notes:o.notes, createdBy:o.createdBy||'sheet-history',
+          deliveredBy:'', deliveredAt:null, editedBy:'', editedAt:null,
+          deleted:false, source:'sheet-history', importBatch:batchId, updatedAt:now });
+      });
+      await b.commit();
+      done+=chunk.length;
+      if(st) st.innerHTML='⏳ Copied '+done+' of '+plan.orders.length+' …';
+    }
+  }catch(e){ failed=(e&&e.message)||String(e); }
+  finally{ _HC.busy=false; }
+  if(done){ try{ localStorage.setItem('gf_hist_copy_last', batchId); }catch(e){} document.getElementById('hc-undo').style.display=''; }
+  fsOldInvalidate();
+  _HC.plan=null; document.getElementById('hc-run').style.display='none';
+  if(st) st.innerHTML = failed
+    ? '<span style="color:#C62828;">Stopped after '+done+' order(s): '+failed+'</span><br>Run Check again — what was copied is skipped, the rest is offered again.'
+    : '<b style="color:#2E7D32;">✓ Copied '+done+' order(s) into Firebase.</b> Run the GST report from '+(document.getElementById('hc-from').value||'')+'-01 to see them.';
+}
+async function histCopyUndo(){
+  const st=document.getElementById('hc-status');
+  let id=''; try{ id=localStorage.getItem('gf_hist_copy_last')||''; }catch(e){}
+  if(!id){ showToast('No copy to undo on this phone'); return; }
+  if(STATE.role!=='owner' || !(typeof fsCanWrite==='function' && fsCanWrite())){ showToast('Owner, signed in to Firebase, only'); return; }
+  if(_HC.busy) return; _HC.busy=true;
+  try{
+    const snap=await FS.db.collection('orders').where('importBatch','==',id).get();
+    const docs=[]; snap.forEach(d=>{ if((d.data()||{}).source==='sheet-history') docs.push(d.ref); });
+    if(!confirm('Remove the '+docs.length+' order(s) added by the copy of '+id.replace('sheet-history ','')+'?')){ return; }
+    for(let i=0;i<docs.length;i+=400){ const b=FS.db.batch(); docs.slice(i,i+400).forEach(r=>b.delete(r)); await b.commit(); }
+    try{ localStorage.removeItem('gf_hist_copy_last'); }catch(e){}
+    document.getElementById('hc-undo').style.display='none';
+    fsOldInvalidate();
+    if(st) st.innerHTML='<b>↩ Removed '+docs.length+' copied order(s).</b>';
+  }catch(e){ if(st) st.innerHTML='<span style="color:#C62828;">Undo failed: '+(e&&e.message||e)+'</span>'; }
+  finally{ _HC.busy=false; }
+}
+
+async function previewGSTReport() {
   const from = document.getElementById('gst-from').value;
   const to   = document.getElementById('gst-to').value;
   if(!from || !to) return;
+  let _oldNote='';
+  if(typeof fsOwnsOrders==='function' && fsOwnsOrders() && FS.windowFrom && from < FS.windowFrom){
+    const pv=document.getElementById('gst-preview');
+    if(pv && !(FS_OLD.ts && FS_OLD.from && FS_OLD.from<=from)) pv.innerHTML='<div style="font-size:12px;color:var(--muted);padding:8px;">⏳ Fetching orders before '+FS.windowFrom+' from Firebase…</div>';
+    try{ await fsEnsureOldRange(from); _oldNote=' (incl. older orders fetched)'; }
+    catch(e){ _oldNote=' — ⚠ could not fetch orders before '+FS.windowFrom+': '+(e&&e.message||e); }
+  }
   const orders = getAllOrdersInRange(from, to).filter(o => o.status !== 'cancelled');
   const appTotal = orders.reduce((s,o) => {
     const itemsSum = (o.items||[]).reduce((si,i)=>si+(parseFloat(i.amount)||0),0);
@@ -10106,7 +10399,7 @@ function previewGSTReport() {
     `<div style="background:var(--surface);border:1.5px solid var(--border);border-radius:10px;padding:12px 14px;font-size:13px;">
       <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
         <span style="color:var(--muted);">${orders.length} orders · ${Object.keys(byProduct).length} products
-          &nbsp;·&nbsp;<b>${((typeof fsReadsOn==='function')&&fsReadsOn()&&FS.user)?'live from Firebase':'from this phone'}</b></span>
+          &nbsp;·&nbsp;<b>${((typeof fsReadsOn==='function')&&fsReadsOn()&&FS.user)?'live from Firebase':'from this phone'}</b>${_oldNote}</span>
         <span style="font-weight:700;color:var(--amber);">₹${appTotal.toLocaleString('en-IN',{maximumFractionDigits:2})}</span>
       </div>
       ${manualTotal > 0 ? `<div style="display:flex;justify-content:space-between;padding:4px 0;border-top:1px solid var(--border);font-size:12px;color:var(--muted);">
@@ -10123,10 +10416,16 @@ function previewGSTReport() {
     </div>`;
 }
 
-function generateGSTReport(format) {
+async function generateGSTReport(format) {
   const from = document.getElementById('gst-from').value;
   const to   = document.getElementById('gst-to').value;
   if(!from || !to) { showToast('Select date range'); return; }
+  // v225: a range reaching before the live window fetches those orders first
+  if(typeof fsOwnsOrders==='function' && fsOwnsOrders() && FS.windowFrom && from < FS.windowFrom){
+    showToast('⏳ Fetching orders before '+FS.windowFrom+' from Firebase…');
+    try{ await fsEnsureOldRange(from); }
+    catch(e){ showToast('⚠ Could not fetch orders before '+FS.windowFrom+' — report not made'); return; }
+  }
 
   const orders = getAllOrdersInRange(from, to).filter(o => o.status !== 'cancelled');
   if(!orders.length) { showToast('No orders in this range'); return; }
