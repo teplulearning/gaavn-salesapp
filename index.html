@@ -280,7 +280,7 @@ body.gf-panel-open #app{ visibility:hidden; }
     <div class="top-bar-left">
       <span class="logo">🐄 GF</span>
       <span class="role-badge" id="role-badge">SALES</span>
-      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v225</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v226</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <!-- v196: this used to be a single button showing the language you would
@@ -745,10 +745,10 @@ body.gf-panel-open #app{ visibility:hidden; }
       <div style="font-size:12px;color:var(--muted);margin-bottom:10px;line-height:1.6;">
         The app reads orders from Firebase only. History uploaded into the Sheet's monthly
         <b>Orders_YYYY-MM</b> tabs (e.g. the Khatabook import) never reached Firebase, so reports
-        could not see it. This copies orders dated <b>before the live window</b> from those tabs into
-        Firebase, once. Orders already in Firebase (same Order ID) are skipped, so running it again
-        adds nothing twice. Dues and balances are not affected — these dates are before every
-        customer's Balance-As-Of. <b>Check first</b>, then copy.
+        could not see it. This copies orders dated <b>before the app took over from Khatabook</b> (5 Jul 2026) from
+        those tabs into Firebase, once. Orders already in Firebase (same Order ID) are skipped, so
+        running it again adds nothing twice. Dues and balances are not affected — copied orders are
+        kept as sales history only and never added to anyone's dues. <b>Check first</b>, then copy.
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
         <div class="field" style="margin:0;"><label>From month</label>
@@ -1683,6 +1683,7 @@ function fsOrderToApp(id, d){
   return {
     id:id, date:String(d.date||'').slice(0,10),
     customerId:d.customerId||'',
+    source:String(d.source||''),   // v226: 'sheet-history' never counts toward dues
     // resolved from the customer record, never stored on the order
     customerName: c ? c.name : (d.customerNameAtImport||'(unknown customer)'),
     customerCategory: c ? (c.category||'') : (d.category||''),
@@ -2866,6 +2867,10 @@ function _nameKey(x){ return String(x||'').replace(/\s+/g,' ').trim().toLowerCas
 // balance already covers — only orders AFTER that date are counted on top.
 // Customers without the date fall back to the global gf_cutover (>=).
 function orderCountsForCust(o, cust){
+  /* v226: orders copied in from the Sheet's history (Khatabook era) are sales
+     record only — every customer's opening balance already covers them, so
+     they never add to dues, even when their date falls inside the live window. */
+  if(o && o.source==='sheet-history') return false;
   const d=_normDayStr(o&&o.date); if(!d) return false;
   const asOf = cust&&cust.balanceAsOf ? _normDayStr(cust.balanceAsOf) : '';
   if(asOf) return d > asOf;
@@ -10196,6 +10201,19 @@ async function fsEnsureOldRange(from){
    Dues cannot move: these dates are older than every Balance-As-Of and the
    live listener never loads them into STATE.orders. */
 let _HC={plan:null, busy:false};
+/* v226: copy up to the day the app took over from Khatabook (gf_cutover,
+   default 2026-07-05), not only up to the 150-day live window — otherwise
+   Khatabook months inside the window (8-31 May 2026) could never be copied.
+   Safe for dues: copied orders carry source:'sheet-history', which
+   orderCountsForCust() never counts. Never earlier than the live window. */
+function _hcUpper(){
+  const w=FS.windowFrom||'';
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(w)) return '';
+  let c=''; try{ c=localStorage.getItem('gf_cutover')||''; }catch(e){}
+  c=(typeof _normDayStr==='function') ? _normDayStr(c||'2026-07-05') : String(c||'2026-07-05').slice(0,10);
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(c)) c='2026-07-05';
+  return c>w ? c : w;
+}
 function _hcMonthTags(from,to){
   const out=[]; if(!/^\d{4}-\d{2}$/.test(from)||!/^\d{4}-\d{2}$/.test(to)||from>to) return out;
   let y=+from.slice(0,4), m=+from.slice(5,7);
@@ -10254,7 +10272,7 @@ async function histCopyCheck(){
   if(STATE.role!=='owner'){ say('<span style="color:#C62828;">Owner only.</span>'); return; }
   if(!(typeof fsOwnsOrders==='function' && fsOwnsOrders())){ say('<span style="color:#C62828;">Not signed in to Firebase — sign in first.</span>'); return; }
   const url=getSheetUrl(); if(!url){ say('<span style="color:#C62828;">No Sheet URL on this device.</span>'); return; }
-  const upper=FS.windowFrom||'';
+  const upper=_hcUpper();
   if(!/^\d{4}-\d{2}-\d{2}$/.test(upper)){ say('<span style="color:#C62828;">Live window not known yet — wait for orders to load and try again.</span>'); return; }
   const hf=document.getElementById('hc-from'), ht=document.getElementById('hc-to');
   if(!ht.value) ht.value=upper.slice(0,7);
@@ -10292,7 +10310,7 @@ async function histCopyCheck(){
     _HC.plan={upper:upper, orders:toCopy, months:months};
     const tot=months.reduce((a,m)=>({copy:a.copy+m.copy, amt:a.amt+m.copyAmt, have:a.have+m.have}),{copy:0,amt:0,have:0});
     const td='style="padding:3px 4px;text-align:right;"';
-    let h='<div style="margin-bottom:6px;">Live window starts <b>'+upper+'</b> — only Sheet orders <b>before</b> that date are considered. Firebase already holds '+fbN+' order(s) in this range.</div>'
+    let h='<div style="margin-bottom:6px;">Sheet orders dated <b>before '+upper+'</b> (when the app took over from Khatabook) are considered. They are kept as sales history and never added to anyone\'s dues. Firebase already holds '+fbN+' order(s) in this range.</div>'
       +'<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:11px;">'
       +'<tr style="font-weight:700;color:var(--muted);border-bottom:1px solid var(--border);"><td>Month</td><td '+td+'>In Sheet</td><td '+td+'>Already in FB</td><td '+td+'>To copy</td><td '+td+'>₹ to copy</td><td '+td+'>Other FB orders</td></tr>';
     months.forEach(m=>{
@@ -10313,7 +10331,7 @@ async function histCopyRun(){
   const plan=_HC.plan;
   if(!plan || !plan.orders.length){ showToast('Run Check first'); return; }
   if(STATE.role!=='owner' || !(typeof fsCanWrite==='function' && fsCanWrite())){ showToast('Owner, signed in to Firebase, only'); return; }
-  if(plan.upper!==FS.windowFrom){ showToast('The live window moved — run Check again'); return; }
+  if(plan.upper!==_hcUpper()){ showToast('The live window moved — run Check again'); return; }
   const amt=plan.orders.reduce((s,o)=>s+o.total,0);
   if(!confirm('Copy '+plan.orders.length+' order(s) worth '+_hcRs(amt)+' from the Sheet into Firebase?\n\nNothing already in Firebase is changed. You can undo this copy afterwards.')) return;
   if(_HC.busy) return; _HC.busy=true;
