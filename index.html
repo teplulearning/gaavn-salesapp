@@ -280,7 +280,7 @@ body.gf-panel-open #app{ visibility:hidden; }
     <div class="top-bar-left">
       <span class="logo">🐄 GF</span>
       <span class="role-badge" id="role-badge">SALES</span>
-      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v226</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v227</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <!-- v196: this used to be a single button showing the language you would
@@ -762,6 +762,29 @@ body.gf-panel-open #app{ visibility:hidden; }
       <button class="btn btn-secondary" id="hc-undo" style="width:100%;margin-top:6px;display:none;" onclick="histCopyUndo()">↩ Undo the last copy</button>
     </div>
 
+    <!-- v227 -->
+    <div class="setup-card owner-only" id="orc-card" style="border-color:#B3261E;">
+      <div class="section-label" style="margin-top:0;color:#B3261E;">🔎 Orders — app (Firebase) vs Sheet</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:10px;line-height:1.6;">
+        The app and the GST report read <b>Firebase</b>; the Dashboard reads the <b>Sheet</b>. An order that
+        reached only one of them makes the two disagree. This compares them month by month, order by order,
+        and lets you copy what is missing in each direction. <b>Check first</b> — nothing is written until
+        you tap a button below the result, and every button shows the exact orders it will touch.
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+        <div class="field" style="margin:0;"><label>From month</label>
+          <input type="month" id="orc-from" style="width:100%;background:var(--cream);border:1.5px solid var(--border);border-radius:8px;padding:8px 10px;font-size:13px;"></div>
+        <div class="field" style="margin:0;"><label>To month</label>
+          <input type="month" id="orc-to" style="width:100%;background:var(--cream);border:1.5px solid var(--border);border-radius:8px;padding:8px 10px;font-size:13px;"></div>
+      </div>
+      <div id="orc-status" style="font-size:12px;min-height:16px;margin:8px 0;line-height:1.5;">Pick the months and tap Check.</div>
+      <button class="btn btn-secondary" style="width:100%;" onclick="orcCheck()">🔍 Check (nothing is written)</button>
+      <button class="btn btn-blue" id="orc-copy" style="width:100%;margin-top:6px;display:none;" onclick="orcCopy()">⬆ Copy Sheet-only orders into Firebase</button>
+      <button class="btn btn-blue" id="orc-send" style="width:100%;margin-top:6px;display:none;" onclick="orcSend()">⬇ Send app-only / corrected orders to the Sheet</button>
+      <button class="btn btn-secondary" id="orc-rmsheet" style="width:100%;margin-top:6px;display:none;" onclick="orcRemoveFromSheet()">🗑 Remove orders deleted in the app from the Sheet</button>
+      <button class="btn btn-secondary" id="orc-undo" style="width:100%;margin-top:6px;display:none;" onclick="orcUndo()">↩ Undo the last copy into Firebase</button>
+    </div>
+
     <div class="setup-card owner-only">
       <div class="section-label" style="margin-top:0;">Data Management</div>
       <div class="btn-row">
@@ -866,8 +889,8 @@ body.gf-panel-open #app{ visibility:hidden; }
           <input type="date" id="gst-to" onchange="previewGSTReport()" style="width:100%;background:var(--cream);border:1.5px solid var(--border);border-radius:8px;padding:8px 10px;font-size:13px;color:var(--ink);">
         </div>
       </div>
-      <!-- Load from Sheet button -->
-      <div style="background:var(--surface);border:1.5px solid var(--border);border-radius:10px;padding:10px 14px;margin-bottom:14px;">
+      <!-- Load from Sheet button (v227: hidden while Firebase is live — it only showed a toast) -->
+      <div id="gst-load-box" style="background:var(--surface);border:1.5px solid var(--border);border-radius:10px;padding:10px 14px;margin-bottom:14px;">
         <div style="font-size:12px;font-weight:600;color:var(--ink);margin-bottom:4px;">📥 Missing dates? Load from Sheet first</div>
         <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">If the report is missing days, tap below to pull all dates in the selected range from your Google Sheet into this device. This may take 1-2 minutes for a full month.</div>
         <div id="gst-load-progress" style="display:none;margin-bottom:8px;">
@@ -879,6 +902,7 @@ body.gf-panel-open #app{ visibility:hidden; }
         <button class="btn btn-secondary" id="btn-gst-load-sheet" onclick="loadRangeFromSheet()" style="width:100%;">☁ Load Missing Dates from Sheet</button>
       </div>
       <div id="gst-preview" style="margin-bottom:14px;"></div>
+      <div id="gst-sheetcheck" style="margin-bottom:14px;"></div>
 
       <!-- Manual line items -->
       <div style="background:var(--surface);border:1.5px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:14px;">
@@ -2284,7 +2308,14 @@ async function fsFlushOutbox(){
   if(_flushing || !fsCanWrite()) return;
   let a=_outboxRead(); if(!a.length) return;
   _flushing=true;
-  const keep=[];
+  /* v227: two ways the outbox could lose work.
+     1. After 25 failed tries an entry was dropped — no message, no record.
+        It is now kept (marked stuck) and shown on Home until it goes.
+     2. The flush wrote back only what IT had read at the start. Anything
+        queued while it was running (it awaits every write) was overwritten.
+        The end of the flush now re-reads the outbox and removes only the
+        entries this run actually delivered. */
+  const keep=[]; const _sent=new Set(); const _failed={};
   for(const it of a){
     try{
       if(it.kind==='order')         await fsWriteOrder(it.obj, true);
@@ -2294,16 +2325,19 @@ async function fsFlushOutbox(){
       else if(it.kind==='delete')   await fsDeleteOrder(it.obj && it.obj.id, true);
       else if(it.kind==='paydelete') await fsDeletePayment(it.obj && it.obj.id, true);   // v220
       FS.flushed=(FS.flushed||0)+1;
+      _sent.add(it.key+'|'+it.at);
     }catch(e){
       it.tries=(it.tries||0)+1;
-      if(it.tries<25) keep.push(it);           // keep trying; never silently drop
-      else FS.flushDropped=(FS.flushDropped||0)+1;
+      _failed[it.key+'|'+it.at]=it.tries;
+      keep.push(it);                           // v227: never dropped
     }
   }
-  _outboxWrite(keep);
+  { const cur=_outboxRead().filter(function(x){ return !_sent.has(x.key+'|'+x.at); });
+    cur.forEach(function(x){ const t=_failed[x.key+'|'+x.at]; if(t) x.tries=t; if((x.tries||0)>=25) x.stuck=true; });
+    _outboxWrite(cur); }
   _flushing=false;
   try{ updateOutboxBadge(); }catch(e){}
-  if(!keep.length && a.length) try{ showToast('✓ '+a.length+' saved item(s) sent to Firebase'); }catch(e){}
+  if(!keep.length && a.length) try{ showToast('✓ '+_sent.size+' saved item(s) sent to Firebase'); }catch(e){}
 }
 /* Flush whenever there is any chance Firebase has just become available. */
 setInterval(function(){ if(outboxCount()) fsFlushOutbox(); }, 20000);
@@ -2334,7 +2368,11 @@ function selfCheckToday(){
       if(x.what==='created'||x.what==='replaced'||x.what==='second-copy-kept') typed.add(String(x.id));
     });
     const expected=[...typed].filter(function(id){ return !isOrderDeleted(id); });
-    const have=new Set((STATE.orders||[]).filter(function(o){ return o && String(o.date)===TODAY_KEY; })
+    /* v227: a back-dated order is typed today but carries an earlier date. It
+       was never in this "have" list, so every back-dated order looked missing
+       even when it had arrived — and a real miss looked the same as a false
+       alarm. Any order Firebase has, whatever its date, now counts. */
+    const have=new Set((STATE.orders||[]).filter(function(o){ return o && o.fromFirestore; })
                                           .map(function(o){ return String(o.id); }));
     const missing=expected.filter(function(id){ return !have.has(id); });
     return {missing:missing, typed:expected.length, have:expected.length-missing.length};
@@ -2361,8 +2399,16 @@ function renderSelfCheck(){
 async function fixMissingToday(){
   const r=selfCheckToday();
   if(!r.missing.length){ showToast('Nothing pending'); return; }
-  let cache=[]; try{ cache=JSON.parse(localStorage.getItem(LS_PREFIX+TODAY_KEY)||'[]')||[]; }catch(e){}
-  const byId={}; cache.forEach(function(o){ if(o&&o.id) byId[String(o.id)]=o; });
+  // v227: back-dated orders live under their own date key — look in every day cache
+  const byId={};
+  try{
+    for(let i=0;i<localStorage.length;i++){
+      const k=localStorage.key(i); if(!k || k.indexOf(LS_PREFIX)!==0) continue;
+      let arr=[]; try{ arr=JSON.parse(localStorage.getItem(k)||'[]')||[]; }catch(e){}
+      arr.forEach(function(o){ if(o&&o.id&&!byId[String(o.id)]) byId[String(o.id)]=o; });
+    }
+  }catch(e){}
+  (STATE.orders||[]).forEach(function(o){ if(o&&o.id&&!byId[String(o.id)]) byId[String(o.id)]=o; });
   const lost=[];
   for(const id of r.missing){
     const o=byId[id];
@@ -2385,7 +2431,14 @@ function updateOutboxBadge(){
   const el=document.getElementById('outbox-badge'); if(!el) return;
   const n=outboxCount();
   el.style.display = n ? 'block' : 'none';
-  el.textContent = n ? ('⏳ '+n+' entry(ies) waiting to reach Firebase — they are safe, they will go automatically') : '';
+  /* v227: "they will go automatically" was untrue on a phone that is signed
+     out of Firebase — nothing goes until someone signs in. */
+  let _signedOut=false; try{ _signedOut = fsReadsOn() && FS.authResolved && !FS.user; }catch(e){}
+  let _stuck=0; try{ _stuck=_outboxRead().filter(function(x){ return x && x.stuck; }).length; }catch(e){}
+  el.textContent = !n ? '' : (_signedOut
+    ? ('⚠ '+n+' entry(ies) are saved ONLY on this phone — it is signed out of Firebase. Sign in (Setup) to send them. They are in the Sheet but not in the app or the GST report until then.')
+    : ('⏳ '+n+' entry(ies) waiting to reach Firebase'+(_stuck?(' ('+_stuck+' keep failing — tell the owner)'):' — they are safe, they will go automatically')));
+  if(n && (_signedOut||_stuck)){ el.style.background='#FDECEA'; el.style.color='#B3261E'; }
 }
 
 async function fsWriteOrder(o, _fromOutbox){
@@ -2415,7 +2468,7 @@ async function fsWriteOrder(o, _fromOutbox){
       deleted:false, source:'app', updatedAt:new Date().toISOString()
     }, {merge:true});
     fsWriteOk();
-  }catch(e){ fsWriteErr('order '+o.id, e); fsRequeue('order', o, _fromOutbox); }
+  }catch(e){ fsWriteErr('order '+o.id, e); fsRequeue('order', o, _fromOutbox); if(_fromOutbox) throw e; }   // v227: let the flush see the failure
 }
 
 async function fsWriteCustomer(c, _fromOutbox){
@@ -10094,6 +10147,7 @@ function openGSTExport() {
   renderGSTManualItems();
   document.getElementById('gst-load-progress').style.display = 'none';
   document.getElementById('btn-gst-load-sheet').disabled = false;
+  try{ const _lb=document.getElementById('gst-load-box'); if(_lb) _lb.style.display=(typeof fsOwnsOrders==='function'&&fsOwnsOrders())?'none':''; }catch(e){}
   previewGSTReport();
   document.getElementById('modal-gst-export').classList.add('open');
 }
@@ -10114,7 +10168,38 @@ function openGSTExport() {
 
    Overstating sales to a tax authority is worse than understating them, so
    this errs toward the live source and excludes anything deleted. */
+/* ── v227: THE GST REPORT READS FIREBASE ITSELF, NOT THIS PHONE'S COPY ──────
+   On 9 Oct the desktop showed 255 orders / Rs 8,09,209 for September and the
+   phone 253 / Rs 7,07,009 — both labelled "live from Firebase". The report was
+   built from STATE.orders (this device's live list) minus this device's own
+   deletion list. A phone whose list had not caught up (two orders entered on
+   4-5 Oct for 27 and 30 Sep were missing) or that remembers a deletion only
+   locally gives a different figure. A figure for the CA must not depend on
+   which phone made it, so the report now asks the Firebase SERVER for the
+   range every time it is opened or downloaded. Only if that read fails
+   (offline) does it fall back to this phone's copy, and it says so. */
+const _GSTR={from:'', to:'', ts:0, ok:false, orders:[], err:'', pendingHere:0};
+async function gstLoadServer(from, to){
+  _GSTR.ok=false; _GSTR.err='';
+  if(!(typeof fsOwnsOrders==='function' && fsOwnsOrders())){ _GSTR.err='this device is not signed in to Firebase'; return false; }
+  if(typeof navigator!=='undefined' && navigator.onLine===false){ _GSTR.err='offline'; return false; }
+  try{
+    const snap=await FS.db.collection('orders').where('date','>=',from).where('date','<=',to).get({source:'server'});
+    const list=[];
+    snap.forEach(function(doc){ const d=doc.data()||{}; if(d.deleted===true) return; list.push(fsOrderToApp(doc.id, d)); });
+    _GSTR.orders=list; _GSTR.from=from; _GSTR.to=to; _GSTR.ts=Date.now(); _GSTR.ok=true;
+    try{
+      const ids=new Set(list.map(function(o){ return String(o.id); }));
+      _GSTR.pendingHere=(getPendingOrders()||[]).filter(function(o){ return o && o.date>=from && o.date<=to && !ids.has(String(o.id)); }).length;
+    }catch(e){ _GSTR.pendingHere=0; }
+    return true;
+  }catch(e){ _GSTR.err=(e&&e.message)||String(e); return false; }
+}
 function getAllOrdersInRange(from, to) {
+  // v227: the server read for exactly this range wins
+  if(_GSTR.ok && _GSTR.from===from && _GSTR.to===to && (Date.now()-_GSTR.ts) < 10*60*1000){
+    return _GSTR.orders.slice().sort((a,b) => (a.date||'').localeCompare(b.date||''));
+  }
   const orders = [];
   const seen = new Set();
   const liveFromFirebase = (typeof fsReadsOn==='function') && fsReadsOn() && FS.user;
@@ -10384,12 +10469,230 @@ async function histCopyUndo(){
   finally{ _HC.busy=false; }
 }
 
+
+/* ══════════════════════════════════════════════════════════════════════
+   v227 — ORDERS: APP (FIREBASE) vs SHEET
+
+   What went wrong in September 2026: 54 orders (Rs 1,13,906) reached the Sheet
+   and never reached Firebase — whole days (13, 25, 26, 27, 29 Sep) typed in a
+   few late sittings by a device that wrote nothing to Firebase in those
+   sittings. Another 6 (Rs 20,620) reached Firebase and are not in the Sheet.
+   The app and GST report read Firebase, the Dashboard reads the Sheet, so the
+   two showed different Septembers and neither was complete.
+
+   This compares the two, month by month, ORDER ID BY ORDER ID, and repairs in
+   both directions. Nothing is written by Check.
+     · Sheet-only  → copied into Firebase with the same Order ID (so a phone that
+                     still holds it can never create a second copy), marked
+                     source:'sheet-repair' and an importBatch, so one copy can be
+                     undone exactly. They are ordinary sales and count in dues
+                     like any app order (only orders after a customer's
+                     Balance-As-Of date are counted, as always).
+     · App-only and different totals → the app's version is sent to the Sheet
+                     with the normal order write (logOrder replaces by Order ID).
+     · Deleted in the app, still in the Sheet → removed from the Sheet with
+                     the normal deleteOrder call.
+   ══════════════════════════════════════════════════════════════════════ */
+let _ORC={plan:null, busy:false};
+function _orcDefaults(){
+  const f=document.getElementById('orc-from'), t=document.getElementById('orc-to');
+  const now=new Date(); const cur=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
+  const p=new Date(now.getFullYear(), now.getMonth()-1, 1); const prev=p.getFullYear()+'-'+String(p.getMonth()+1).padStart(2,'0');
+  if(f && !f.value) f.value=prev; if(t && !t.value) t.value=cur;
+}
+function _orcHide(){ ['orc-copy','orc-send','orc-rmsheet'].forEach(function(id){ const b=document.getElementById(id); if(b) b.style.display='none'; }); }
+async function orcCheck(){
+  const st=document.getElementById('orc-status');
+  const say=h=>{ if(st) st.innerHTML=h; };
+  _orcDefaults(); _orcHide(); _ORC.plan=null;
+  if(STATE.role!=='owner'){ say('<span style="color:#C62828;">Owner only.</span>'); return; }
+  if(!(typeof fsOwnsOrders==='function' && fsOwnsOrders())){ say('<span style="color:#C62828;">Not signed in to Firebase — sign in first.</span>'); return; }
+  const url=getSheetUrl(); if(!url){ say('<span style="color:#C62828;">No Sheet URL on this device.</span>'); return; }
+  const tags=_hcMonthTags(document.getElementById('orc-from').value, document.getElementById('orc-to').value);
+  if(!tags.length){ say('<span style="color:#C62828;">Pick a valid month range.</span>'); return; }
+  if(_ORC.busy) return; _ORC.busy=true;
+  try{
+    say('⏳ Reading the Sheet\'s deleted-orders list…');
+    const sheetDel={};
+    try{ const r=await fetch(url+'?action=getDeletedOrders',{cache:'no-store'}); const d=await r.json();
+         (d&&d.deleted||[]).forEach(function(x){ sheetDel[String(x.id||'').trim()]=1; }); }catch(e){}
+    const months=[], copy=[], send=[], rmsheet=[];
+    for(const tag of tags){
+      say('⏳ Reading '+tag+' from Firebase and the Sheet…');
+      const start=tag+'-01', end=tag+'-31';
+      const fb={};
+      const snap=await FS.db.collection('orders').where('date','>=',start).where('date','<=',end).get({source:'server'});
+      snap.forEach(function(doc){ fb[doc.id]={data:doc.data()||{}}; });
+      let rows=null, err='';
+      try{ const r=await fetch(url+'?action=getMonthOrders&month='+tag,{cache:'no-store'}); const d=await r.json();
+           if(d && Array.isArray(d.orders)) rows=d.orders; else err=(d&&d.error)||'no data'; }catch(e){ err=e.message||String(e); }
+      const m={tag:tag, err:err, sheet:0, sheetAmt:0, app:0, appAmt:0, sheetOnly:[], appOnly:[], diff:[], deletedInApp:[]};
+      if(rows===null){ months.push(m); continue; }
+      const _raw={}; rows.forEach(function(r){ const id=String(r['Order ID']||'').trim(); if(id && !(id in _raw)) _raw[id]=_hcNum(r['Order Total (Rs)']||r['Total']); });
+      const sheet={}; _hcParse(rows).forEach(function(o){ o.sheetTotal=_raw[o.id]||0; sheet[o.id]=o; });
+      Object.values(sheet).forEach(function(o){ m.sheet++; m.sheetAmt+=o.sheetTotal; });
+      Object.keys(fb).forEach(function(id){ const d=fb[id].data; if(d.deleted===true) return; m.app++; m.appAmt+=(parseFloat(d.total)||0); });
+      Object.values(sheet).forEach(function(o){
+        const f=fb[o.id];
+        if(!f){
+          if(sheetDel[o.id] || isOrderDeleted(o.id)) return;      // deleted on purpose — never resurrect
+          m.sheetOnly.push(o); copy.push(o); return;
+        }
+        if(f.data.deleted===true){ m.deletedInApp.push(o); rmsheet.push(o); return; }
+        const ft=parseFloat(f.data.total)||0;
+        if(Math.abs(ft-(parseFloat(o.sheetTotal)||0))>1){ const a=fsOrderToApp(o.id, f.data); m.diff.push({app:a, sheet:o}); send.push(a); }
+      });
+      Object.keys(fb).forEach(function(id){
+        const d=fb[id].data; if(d.deleted===true || sheet[id]) return;
+        const a=fsOrderToApp(id, d); m.appOnly.push(a); send.push(a);
+      });
+      months.push(m);
+    }
+    _ORC.plan={copy:copy, send:send, rmsheet:rmsheet, tags:tags};
+    const R=n=>'₹'+Math.round(n).toLocaleString('en-IN');
+    const sum=a=>a.reduce(function(s,o){ return s+(parseFloat(o.total)||0); },0);
+    const td='style="padding:3px 4px;text-align:right;"';
+    let h='<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:11px;">'
+      +'<tr style="font-weight:700;color:var(--muted);border-bottom:1px solid var(--border);"><td>Month</td><td '+td+'>Sheet</td><td '+td+'>App</td><td '+td+'>Sheet only</td><td '+td+'>App only</td><td '+td+'>Total differs</td><td '+td+'>Deleted in app</td></tr>';
+    months.forEach(function(m){
+      const ok=!m.err && !m.sheetOnly.length && !m.appOnly.length && !m.diff.length && !m.deletedInApp.length;
+      h+='<tr style="border-bottom:1px solid var(--border);"><td style="padding:3px 4px;">'+m.tag+(m.err?' <span style="color:#C62828;">⚠ '+m.err+'</span>':(ok?' <span style="color:#2E7D32;">✓</span>':''))+'</td>'
+        +'<td '+td+'>'+m.sheet+'<br><span style="color:var(--muted);">'+R(m.sheetAmt)+'</span></td>'
+        +'<td '+td+'>'+m.app+'<br><span style="color:var(--muted);">'+R(m.appAmt)+'</span></td>'
+        +'<td '+td+'>'+(m.sheetOnly.length?('<b style="color:#C62828;">'+m.sheetOnly.length+'</b><br>'+R(sum(m.sheetOnly))):'0')+'</td>'
+        +'<td '+td+'>'+(m.appOnly.length?('<b style="color:#C8830A;">'+m.appOnly.length+'</b><br>'+R(sum(m.appOnly))):'0')+'</td>'
+        +'<td '+td+'>'+m.diff.length+'</td><td '+td+'>'+m.deletedInApp.length+'</td></tr>';
+    });
+    h+='</table></div>';
+    const list=function(title, arr, fmt){ if(!arr.length) return ''; return '<details style="margin-top:6px;"><summary style="cursor:pointer;font-weight:700;">'+title+' ('+arr.length+')</summary><div style="font-family:monospace;font-size:10.5px;line-height:1.5;max-height:220px;overflow:auto;">'+arr.map(fmt).join('<br>')+'</div></details>'; };
+    const so=months.reduce(function(a,m){ return a.concat(m.sheetOnly); },[]);
+    const ao=months.reduce(function(a,m){ return a.concat(m.appOnly); },[]);
+    const df=months.reduce(function(a,m){ return a.concat(m.diff); },[]);
+    const da=months.reduce(function(a,m){ return a.concat(m.deletedInApp); },[]);
+    h+=list('In the Sheet, not in the app', so, function(o){ return o.date+' · '+o.id+' · '+o.customerName+' · '+R(o.total)+' · '+o.items.map(function(i){ return i.name+' '+i.qty; }).join(', '); });
+    h+=list('In the app, not in the Sheet', ao, function(o){ return o.date+' · '+o.id+' · '+o.customerName+' · '+R(o.total); });
+    h+=list('Total differs (app → Sheet)', df, function(x){ return x.app.date+' · '+x.app.id+' · '+x.app.customerName+' · app '+R(x.app.total)+' / Sheet '+R(x.sheet.sheetTotal); });
+    h+=list('Deleted in the app, still in the Sheet', da, function(o){ return o.date+' · '+o.id+' · '+o.customerName+' · '+R(o.total); });
+    if(!so.length && !ao.length && !df.length && !da.length) h+='<div style="margin-top:6px;color:#2E7D32;font-weight:700;">✓ The app and the Sheet agree for every order in this range.</div>';
+    say(h);
+    if(copy.length){ const b=document.getElementById('orc-copy'); b.style.display=''; b.textContent='⬆ Copy '+copy.length+' Sheet-only order(s) into Firebase ('+R(sum(copy))+')'; }
+    if(send.length){ const b=document.getElementById('orc-send'); b.style.display=''; b.textContent='⬇ Send '+send.length+' order(s) from the app to the Sheet ('+R(sum(send))+')'; }
+    if(rmsheet.length){ const b=document.getElementById('orc-rmsheet'); b.style.display=''; b.textContent='🗑 Remove '+rmsheet.length+' app-deleted order(s) from the Sheet ('+R(sum(rmsheet))+')'; }
+    let last=''; try{ last=localStorage.getItem('gf_orc_last')||''; }catch(e){}
+    const u=document.getElementById('orc-undo'); if(u) u.style.display=last?'':'none';
+  }catch(e){ say('<span style="color:#C62828;">Check failed: '+((e&&e.message)||e)+'</span>'); }
+  finally{ _ORC.busy=false; }
+}
+async function orcCopy(){
+  const st=document.getElementById('orc-status');
+  const plan=_ORC.plan; if(!plan || !plan.copy.length){ showToast('Run Check first'); return; }
+  if(STATE.role!=='owner' || !(typeof fsCanWrite==='function' && fsCanWrite())){ showToast('Owner, signed in to Firebase, only'); return; }
+  const amt=plan.copy.reduce(function(s,o){ return s+o.total; },0);
+  if(!confirm('Copy '+plan.copy.length+' order(s) worth ₹'+Math.round(amt).toLocaleString('en-IN')+' from the Sheet into Firebase?\n\n'
+    +'They keep their Order IDs, so no order can be created twice. They are real sales: they will appear in the app, the GST report and customer dues like any order. You can undo this copy afterwards.')) return;
+  if(_ORC.busy) return; _ORC.busy=true;
+  const batchId='sheet-repair '+new Date().toISOString();
+  let done=0, failed='';
+  try{
+    for(let i=0;i<plan.copy.length;i+=400){
+      const chunk=plan.copy.slice(i,i+400);
+      // never overwrite: re-check each id right before writing
+      const b=FS.db.batch(); const now=new Date().toISOString(); let n=0;
+      for(const o of chunk){
+        const ex=await FS.db.collection('orders').doc(String(o.id)).get({source:'server'});
+        if(ex.exists) continue;
+        b.set(FS.db.collection('orders').doc(String(o.id)), {
+          customerId: fsResolveCustId(o.customerName) || null,
+          customerNameAtImport: o.customerName, category:o.category, area:o.area,
+          date:o.date, status:o.status||'confirmed', total:o.total,
+          paidAmount:o.paidAmount||0, paymentMode:o.paymentMode||'', sheetSynced:true,
+          items:o.items.map(function(it){ return {product:it.name, qty:it.qty, unit:it.unit, rate:it.rate, amount:it.amount}; }),
+          notes:o.notes||'', createdBy:o.createdBy||'sheet-repair',
+          deliveredBy:'', deliveredAt:null, editedBy:'', editedAt:null,
+          deleted:false, source:'sheet-repair', importBatch:batchId, updatedAt:now });
+        n++;
+      }
+      if(n) await b.commit();
+      done+=n;
+      if(st) st.innerHTML='⏳ Copied '+done+' of '+plan.copy.length+' …';
+    }
+  }catch(e){ failed=(e&&e.message)||String(e); }
+  finally{ _ORC.busy=false; }
+  if(done){ try{ localStorage.setItem('gf_orc_last', batchId); }catch(e){} const u=document.getElementById('orc-undo'); if(u) u.style.display=''; }
+  try{ fsOldInvalidate(); }catch(e){}
+  document.getElementById('orc-copy').style.display='none'; _ORC.plan.copy=[];
+  if(st) st.innerHTML = failed
+    ? '<span style="color:#C62828;">Stopped after '+done+' order(s): '+failed+'</span><br>Run Check again — what was copied is skipped.'
+    : '<b style="color:#2E7D32;">✓ Copied '+done+' order(s) into Firebase.</b> Run Check again to confirm the month now matches.';
+}
+async function orcSend(){
+  const st=document.getElementById('orc-status');
+  const plan=_ORC.plan; if(!plan || !plan.send.length){ showToast('Run Check first'); return; }
+  if(STATE.role!=='owner'){ showToast('Owner only'); return; }
+  if(!getSheetUrl()){ showToast('No Sheet URL on this device'); return; }
+  const amt=plan.send.reduce(function(s,o){ return s+(parseFloat(o.total)||0); },0);
+  if(!confirm('Send '+plan.send.length+' order(s) worth ₹'+Math.round(amt).toLocaleString('en-IN')+' from the app to the Sheet?\n\nEach replaces any row with the same Order ID in the Sheet. Nothing in the app changes.')) return;
+  if(_ORC.busy) return; _ORC.busy=true;
+  let ok=0, bad=[];
+  try{
+    for(const o of plan.send){
+      if(isOrderDeleted(o.id)){ bad.push(o.id+' (deleted on this phone)'); continue; }
+      let res=false; try{ res=await syncOneOrder(o.id, o); }catch(e){ res=false; }
+      if(res) ok++; else bad.push(o.id);
+      if(st) st.innerHTML='⏳ Sent '+ok+' of '+plan.send.length+' …';
+    }
+  }finally{ _ORC.busy=false; }
+  document.getElementById('orc-send').style.display='none'; _ORC.plan.send=[];
+  if(st) st.innerHTML='<b style="color:'+(bad.length?'#C62828':'#2E7D32')+';">'+(bad.length?'⚠ ':'✓ ')+ok+' order(s) written to the Sheet'+(bad.length?(', '+bad.length+' NOT confirmed: '+bad.join(', ')):'')+'.</b> Run Check again to confirm.';
+}
+async function orcRemoveFromSheet(){
+  const st=document.getElementById('orc-status');
+  const plan=_ORC.plan; if(!plan || !plan.rmsheet.length){ showToast('Run Check first'); return; }
+  if(STATE.role!=='owner'){ showToast('Owner only'); return; }
+  const url=getSheetUrl(); if(!url){ showToast('No Sheet URL on this device'); return; }
+  if(!confirm('Remove '+plan.rmsheet.length+' order(s) from the Sheet?\n\nThey are marked deleted in the app already; this only brings the Sheet into line.\n\n'+plan.rmsheet.map(function(o){ return o.date+'  '+o.customerName+'  ₹'+Math.round(o.total); }).join('\n'))) return;
+  if(_ORC.busy) return; _ORC.busy=true;
+  let ok=0, bad=[];
+  try{
+    for(const o of plan.rmsheet){
+      try{ const r=await fetch(url+'?'+new URLSearchParams({action:'deleteOrder',orderId:o.id,date:o.date}).toString(),{cache:'no-store'});
+           if(r.ok) ok++; else bad.push(o.id); }catch(e){ bad.push(o.id); }
+    }
+  }finally{ _ORC.busy=false; }
+  document.getElementById('orc-rmsheet').style.display='none'; _ORC.plan.rmsheet=[];
+  if(st) st.innerHTML='<b>'+ok+' removed from the Sheet'+(bad.length?(', '+bad.length+' failed: '+bad.join(', ')):'')+'.</b> Run Check again to confirm.';
+}
+async function orcUndo(){
+  const st=document.getElementById('orc-status');
+  let id=''; try{ id=localStorage.getItem('gf_orc_last')||''; }catch(e){}
+  if(!id){ showToast('No copy to undo on this phone'); return; }
+  if(STATE.role!=='owner' || !(typeof fsCanWrite==='function' && fsCanWrite())){ showToast('Owner, signed in to Firebase, only'); return; }
+  if(_ORC.busy) return; _ORC.busy=true;
+  try{
+    const snap=await FS.db.collection('orders').where('importBatch','==',id).get({source:'server'});
+    const docs=[]; snap.forEach(function(d){ if((d.data()||{}).source==='sheet-repair') docs.push(d.ref); });
+    if(!confirm('Remove the '+docs.length+' order(s) added by the copy of '+id.replace('sheet-repair ','')+'? The Sheet is not touched.')) return;
+    for(let i=0;i<docs.length;i+=400){ const b=FS.db.batch(); docs.slice(i,i+400).forEach(function(r){ b.delete(r); }); await b.commit(); }
+    try{ localStorage.removeItem('gf_orc_last'); }catch(e){}
+    document.getElementById('orc-undo').style.display='none';
+    if(st) st.innerHTML='<b>↩ Removed '+docs.length+' copied order(s).</b>';
+  }catch(e){ if(st) st.innerHTML='<span style="color:#C62828;">Undo failed: '+((e&&e.message)||e)+'</span>'; }
+  finally{ _ORC.busy=false; }
+}
+
+let _gstPreviewSeq=0;
 async function previewGSTReport() {
   const from = document.getElementById('gst-from').value;
   const to   = document.getElementById('gst-to').value;
   if(!from || !to) return;
+  const _seq=++_gstPreviewSeq;
   let _oldNote='';
-  if(typeof fsOwnsOrders==='function' && fsOwnsOrders() && FS.windowFrom && from < FS.windowFrom){
+  // v227: read the range from the Firebase server
+  { const _pv=document.getElementById('gst-preview'); if(_pv) _pv.innerHTML='<div style="font-size:12px;color:var(--muted);padding:8px;">⏳ Reading '+from+' to '+to+' from Firebase…</div>'; }
+  const _sc=document.getElementById('gst-sheetcheck'); if(_sc) _sc.innerHTML='';
+  const _srv = await gstLoadServer(from, to);
+  if(_seq!==_gstPreviewSeq) return;               // a newer date range was picked meanwhile
+  if(!_srv && typeof fsOwnsOrders==='function' && fsOwnsOrders() && FS.windowFrom && from < FS.windowFrom){
     const pv=document.getElementById('gst-preview');
     if(pv && !(FS_OLD.ts && FS_OLD.from && FS_OLD.from<=from)) pv.innerHTML='<div style="font-size:12px;color:var(--muted);padding:8px;">⏳ Fetching orders before '+FS.windowFrom+' from Firebase…</div>';
     try{ await fsEnsureOldRange(from); _oldNote=' (incl. older orders fetched)'; }
@@ -10417,7 +10720,7 @@ async function previewGSTReport() {
     `<div style="background:var(--surface);border:1.5px solid var(--border);border-radius:10px;padding:12px 14px;font-size:13px;">
       <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
         <span style="color:var(--muted);">${orders.length} orders · ${Object.keys(byProduct).length} products
-          &nbsp;·&nbsp;<b>${((typeof fsReadsOn==='function')&&fsReadsOn()&&FS.user)?'live from Firebase':'from this phone'}</b>${_oldNote}</span>
+          &nbsp;·&nbsp;<b>${_srv?'read from Firebase just now — same on every device':('⚠ from this phone\'s copy ('+(_GSTR.err||'Firebase not read')+') — may differ from other devices')}</b>${_oldNote}${(_srv&&_GSTR.pendingHere)?(' · <span style="color:#C62828;">'+_GSTR.pendingHere+' order(s) on this phone have not reached Firebase and are not counted</span>'):''}</span>
         <span style="font-weight:700;color:var(--amber);">₹${appTotal.toLocaleString('en-IN',{maximumFractionDigits:2})}</span>
       </div>
       ${manualTotal > 0 ? `<div style="display:flex;justify-content:space-between;padding:4px 0;border-top:1px solid var(--border);font-size:12px;color:var(--muted);">
@@ -10432,14 +10735,71 @@ async function previewGSTReport() {
         <span>${name}</span><span style="color:var(--muted);">${d.qty % 1 === 0 ? d.qty : d.qty.toFixed(2)} · ₹${d.amt.toLocaleString('en-IN',{maximumFractionDigits:2})}</span>
       </div>`).join('')}
     </div>`;
+  if(_srv) gstSheetCheck(from, to, orders, _seq);   // v227
+}
+
+/* v227: before the report goes to the CA, compare it with the Sheet (which the
+   Dashboard reads). If they disagree, say so here, with the counts, instead of
+   the difference being found later on the Dashboard. Nothing is written. */
+async function gstSheetCheck(from, to, appOrders, seq){
+  const box=document.getElementById('gst-sheetcheck'); if(!box) return;
+  const url=getSheetUrl(); if(!url){ box.innerHTML=''; return; }
+  box.innerHTML='<div style="font-size:12px;color:var(--muted);">⏳ Comparing with the Sheet…</div>';
+  try{
+    const tags=_hcMonthTags(from.slice(0,7), to.slice(0,7));
+    const sheet={};
+    for(const tag of tags){
+      const r=await fetch(url+'?action=getMonthOrders&month='+tag,{cache:'no-store'});
+      const d=await r.json();
+      if(!d || !Array.isArray(d.orders)) throw new Error((d&&d.error)||('no data for '+tag));
+      const _raw={}; d.orders.forEach(r=>{ const id=String(r['Order ID']||'').trim(); if(id && !(id in _raw)) _raw[id]=_hcNum(r['Order Total (Rs)']||r['Total']); });
+      _hcParse(d.orders).forEach(o=>{ if(o.date>=from && o.date<=to){ o.total=_raw[o.id]||0; sheet[o.id]=o; } });   // the Sheet's own Order Total, as the Dashboard adds it
+    }
+    if(seq!==_gstPreviewSeq) return;
+    const app={}; (appOrders||[]).forEach(o=>{ app[String(o.id)]=o; });
+    const sum=a=>a.reduce((s,o)=>s+(parseFloat(o.total)||0),0);
+    const sheetList=Object.values(sheet);
+    const sheetOnly=sheetList.filter(o=>!app[o.id] && !isOrderDeleted(o.id));
+    const appOnly=Object.values(app).filter(o=>!sheet[o.id]);
+    const diffTot=Object.values(app).filter(o=>sheet[o.id] && Math.abs((parseFloat(o.total)||0)-(parseFloat(sheet[o.id].total)||0))>1);
+    const R=n=>'₹'+Math.round(n).toLocaleString('en-IN');
+    if(!sheetOnly.length && !appOnly.length && !diffTot.length){
+      box.innerHTML='<div style="font-size:12px;color:#2E7D32;background:#E8F5E9;border-radius:8px;padding:8px 10px;">✓ Matches the Sheet: '+sheetList.length+' orders, '+R(sum(sheetList))+'. The Dashboard will show the same.</div>';
+      return;
+    }
+    box.innerHTML='<div style="font-size:12px;line-height:1.55;color:#7A1F1A;background:#FDECEA;border:1.5px solid #C62828;border-radius:8px;padding:9px 11px;">'
+      +'<b>⚠ The Sheet does not match this report.</b> Sheet: '+sheetList.length+' orders, '+R(sum(sheetList))+'.<br>'
+      +(sheetOnly.length?('• '+sheetOnly.length+' order(s), '+R(sum(sheetOnly))+', are in the Sheet but not in the app — <b>missing from this report</b>.<br>'):'')
+      +(appOnly.length?('• '+appOnly.length+' order(s), '+R(sum(appOnly))+', are in the app but not in the Sheet.<br>'):'')
+      +(diffTot.length?('• '+diffTot.length+' order(s) have a different total in the Sheet.<br>'):'')
+      +'Fix this before sending the report: <a href="#" onclick="gstOpenOrc(\''+from.slice(0,7)+'\',\''+to.slice(0,7)+'\');return false;" style="color:#B3261E;font-weight:700;">Setup → Orders — app vs Sheet</a></div>';
+  }catch(e){
+    if(seq!==_gstPreviewSeq) return;
+    box.innerHTML='<div style="font-size:12px;color:#C8830A;">⚠ Could not compare with the Sheet: '+((e&&e.message)||e)+'</div>';
+  }
+}
+function gstOpenOrc(fromTag, toTag){
+  try{ closeModal('modal-gst-export'); }catch(e){}
+  showScreen('setup');
+  setTimeout(function(){
+    const f=document.getElementById('orc-from'), t=document.getElementById('orc-to');
+    if(f) f.value=fromTag; if(t) t.value=toTag;
+    const c=document.getElementById('orc-card'); if(c) c.scrollIntoView({behavior:'smooth', block:'start'});
+  }, 300);
 }
 
 async function generateGSTReport(format) {
   const from = document.getElementById('gst-from').value;
   const to   = document.getElementById('gst-to').value;
   if(!from || !to) { showToast('Select date range'); return; }
+  // v227: always build the CA's report from the Firebase server
+  showToast('⏳ Reading '+from+' to '+to+' from Firebase…');
+  const _srvOk = await gstLoadServer(from, to);
+  if(!_srvOk && typeof fsOwnsOrders==='function' && fsOwnsOrders()){
+    if(!confirm('Could not read Firebase ('+(_GSTR.err||'unknown error')+').\n\nMake the report from this phone\'s copy instead? It may be out of date and differ from other devices.')) return;
+  }
   // v225: a range reaching before the live window fetches those orders first
-  if(typeof fsOwnsOrders==='function' && fsOwnsOrders() && FS.windowFrom && from < FS.windowFrom){
+  if(!_srvOk && typeof fsOwnsOrders==='function' && fsOwnsOrders() && FS.windowFrom && from < FS.windowFrom){
     showToast('⏳ Fetching orders before '+FS.windowFrom+' from Firebase…');
     try{ await fsEnsureOldRange(from); }
     catch(e){ showToast('⚠ Could not fetch orders before '+FS.windowFrom+' — report not made'); return; }
