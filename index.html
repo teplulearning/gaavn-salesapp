@@ -186,6 +186,9 @@ body.gf-panel-open #app{ visibility:hidden; }
 .pin-back{font-size:16px;color:var(--muted);}
 .pin-cancel{font-size:14px;color:var(--muted);}
 @keyframes shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-8px)}75%{transform:translateX(8px)}}
+/* v229: off-screen cards in the long lists skip layout until scrolled near */
+#dues-list > .card, #pi-list > .card, #orders-list .card{content-visibility:auto;contain-intrinsic-size:auto 160px;}
+@media print{ #dues-list > .card, #pi-list > .card, #orders-list .card{content-visibility:visible;} }
 </style>
 <!-- Load fonts async — app renders instantly with system fonts, custom fonts swap in -->
 <script>
@@ -280,7 +283,7 @@ body.gf-panel-open #app{ visibility:hidden; }
     <div class="top-bar-left">
       <span class="logo">🐄 GF</span>
       <span class="role-badge" id="role-badge">SALES</span>
-      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v227</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v229</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <!-- v196: this used to be a single button showing the language you would
@@ -304,6 +307,7 @@ body.gf-panel-open #app{ visibility:hidden; }
       <div style="font-size:12px;color:var(--muted);" id="dash-greeting">Good morning 🌅</div>
       <div class="page-title" style="margin-bottom:12px;">Today's Summary</div>
     </div>
+    <div id="orc-banner" class="owner-only" style="display:none;margin-bottom:10px;background:#FDECEA;border:1.5px solid #C62828;border-radius:10px;padding:10px 12px;font-size:13px;line-height:1.5;color:#7A1F1A;cursor:pointer;" onclick="orcBannerOpen()"></div>
     <div class="stats-row">
       <div class="stat-box"><div class="stat-num" id="stat-orders">0</div><div class="stat-lbl">Orders</div></div>
       <div class="stat-box"><div class="stat-num" id="stat-revenue" style="font-size:16px;">₹0</div><div class="stat-lbl">Revenue</div></div>
@@ -441,7 +445,7 @@ body.gf-panel-open #app{ visibility:hidden; }
       </div>
       <div class="search-box" style="margin-bottom:8px;">
         <span class="search-icon">🔍</span>
-        <input type="text" id="cust-list-search" placeholder="Search by name, area or category..." oninput="renderCustomerList(this.value)">
+        <input type="text" id="cust-list-search" placeholder="Search by name, area or category..." oninput="gfDebounce('custlist',()=>renderCustomerList(this.value))">
       </div>
       <div style="display:flex;gap:6px;margin-bottom:10px;overflow-x:auto;padding-bottom:4px;">
         <button class="filter-btn active" onclick="filterCustomers('all',this)">All</button>
@@ -496,7 +500,7 @@ body.gf-panel-open #app{ visibility:hidden; }
       <div class="stat-box"><div class="stat-num" id="due-amount" style="font-size:16px;">&#8377;0</div><div class="stat-lbl">Total Due</div></div>
       <div class="stat-box"><div class="stat-num" id="due-overdue">0</div><div class="stat-lbl">Stop/Overdue</div></div>
     </div>
-    <input id="dues-search" type="text" placeholder="🔍 Search client by name…" oninput="renderDues()" autocomplete="off" style="width:100%;box-sizing:border-box;margin:10px 0 4px;padding:11px 14px;border:1.5px solid var(--border);border-radius:10px;font-size:14px;font-family:inherit;">
+    <input id="dues-search" type="text" placeholder="🔍 Search client by name…" oninput="gfDebounce('dues',renderDues)" autocomplete="off" style="width:100%;box-sizing:border-box;margin:10px 0 4px;padding:11px 14px;border:1.5px solid var(--border);border-radius:10px;font-size:14px;font-family:inherit;">
     <div id="dues-list"></div>
   </div>
 
@@ -554,13 +558,13 @@ body.gf-panel-open #app{ visibility:hidden; }
            this WRAPPER, not on the label — applySetupRoleUI() sets display:''
            for the owner, which would wipe the label's own display:flex. -->
       <div class="owner-only" style="margin-top:10px;padding-top:10px;border-top:1px solid rgba(46,125,50,.25);">
-        <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;">
-          <input type="checkbox" id="fs-reads-chk" onchange="fsToggleReads(this.checked)"
-                 style="width:20px;height:20px;margin-top:2px;flex-shrink:0;">
+        <label style="display:flex;align-items:flex-start;gap:10px;">
+          <input type="checkbox" id="fs-reads-chk" checked disabled
+                 style="width:20px;height:20px;margin-top:2px;flex-shrink:0;display:none;">
           <span style="font-size:12px;line-height:1.6;color:#5D6B5D;">
-            <b>Advanced — read data from Firebase</b><br>
-            Leave this on. It is how the app works. Turning it off makes this device read the
-            Google Sheet only, and it will fall out of step with every other device.
+            <b>Firebase — the shared record</b><br>
+            Every phone reads and writes Firebase. (v228: the per-phone off switch was removed —
+            it let a phone drop out of the shared record without anyone noticing.)
             <span id="fs-status-line" style="display:block;margin-top:6px;font-family:monospace;font-size:11px;color:#2E7D32;white-space:pre-line;"></span>
           </span>
         </label>
@@ -809,7 +813,7 @@ body.gf-panel-open #app{ visibility:hidden; }
     <div id="dup-cust-out" style="display:none;margin-bottom:12px;"></div>
     <div class="search-box">
       <span class="search-icon">🔍</span>
-      <input type="text" id="manage-search" placeholder="Search customer..." oninput="renderManageCustomers(this.value)">
+      <input type="text" id="manage-search" placeholder="Search customer..." oninput="gfDebounce('manage',()=>renderManageCustomers(this.value))">
     </div>
     <div id="manage-list"></div>
   </div>
@@ -1015,7 +1019,7 @@ body.gf-panel-open #app{ visibility:hidden; }
     <!-- Search + Filter -->
     <div class="search-box" style="margin-bottom:10px;">
       <span class="search-icon">🔍</span>
-      <input type="text" id="pi-search" placeholder="Search customer name..." oninput="renderPaymentIn()">
+      <input type="text" id="pi-search" placeholder="Search customer name..." oninput="_piLimit=150;gfDebounce('pi',renderPaymentIn)">
     </div>
     <div style="display:flex;gap:8px;margin-bottom:14px;overflow-x:auto;padding-bottom:4px;">
       <button class="filter-btn active" id="pif-all"    onclick="piFilter('all',this)">All</button>
@@ -1542,10 +1546,9 @@ body.gf-panel-open #app{ visibility:hidden; }
       style="width:100%;margin-top:16px;padding:14px;border:none;border-radius:10px;background:#2E7D32;color:#fff;
              font-size:15px;font-weight:700;cursor:pointer;">Sign in</button>
     <div id="fs-msg" style="margin-top:12px;font-size:13px;color:#C62828;line-height:1.6;"></div>
-    <div style="margin-top:18px;border-top:1px solid #E8DFC9;padding-top:12px;">
-      <button onclick="fsUseSheetInstead()"
-        style="width:100%;padding:11px;border:1.5px solid #E8DFC9;border-radius:10px;background:#fff;color:#8A8070;
-               font-size:13px;cursor:pointer;">Go back to reading from the Google Sheet</button>
+    <div style="margin-top:14px;font-size:12px;color:#8A8070;line-height:1.6;">
+      Forgot the password? Ask the owner. Orders cannot be entered until this phone is signed in —
+      that keeps every phone on one shared record.
     </div>
   </div>
 </div>
@@ -1647,8 +1650,17 @@ const LS_FS_DEFAULTED='gf_fs_default_v203';
     }
   }catch(e){}
 })();
+/* v228: THE PER-PHONE SWITCH IS GONE. Firebase is always on.
+   Every phone kept its own "Read data from Firebase" setting, and the sign-in
+   screen offered "Go back to reading from the Google Sheet". One tap on that
+   turned a phone into a Sheet-only phone for good: its orders went to the
+   Sheet and never to the app, while its own screen (reading the Sheet) showed
+   everything as normal. That is how whole days of September reached the Sheet
+   and not the app. A setting that lets one phone silently leave the shared
+   record cannot exist — so it no longer does. Any stored "off" is cleared. */
+try{ localStorage.removeItem(LS_FS_READS); }catch(e){}
 function fsReadsOn(){
-  try{ return localStorage.getItem(LS_FS_READS) !== '0'; }catch(e){ return true; }
+  return true;
 }
 
 /* ── v186: STATE.orders single-writer lock ─────────────────────────────────
@@ -1758,18 +1770,35 @@ function fsPayToApp(id, d){
           sheetSynced:(d.sheetSynced===undefined?null:!!d.sheetSynced)};
 }
 
+/* v229 — SPEED. Every Firebase update (an order saved, each of 156 imported
+   payments, a customer edit) used to redraw SIX screens — customers, orders,
+   dues, home, payments and the report — whether you were looking at them or
+   not. With ~4,000 payments and ~900 orders one redraw took over a second on a
+   phone, and one Submit triggers two or three updates: that was the lag after
+   Submit and while typing in a search box. Now updates arriving together are
+   merged into ONE redraw, ~150 ms later, of the screen that is actually open.
+   Every other screen is drawn fresh when you open it (showScreen does that). */
+let _fsRepaintT=null;
 function fsRepaint(){
-  try{ if(typeof renderCustomerList==='function') renderCustomerList(); }catch(e){}
-  try{ if(typeof renderOrdersList==='function')   renderOrdersList();   }catch(e){}
-  try{ if(typeof renderDues==='function')         renderDues();         }catch(e){}
-  try{ if(typeof renderDashboard==='function')    renderDashboard();    }catch(e){}
+  if(_fsRepaintT) return;
+  _fsRepaintT=setTimeout(function(){ _fsRepaintT=null; _fsRepaintNow(); }, 150);
+}
+function _gfShown(id){ const e=document.getElementById(id); return !!(e && e.getClientRects().length); }
+function _fsRepaintNow(){
+  // which screens are on view — asked once, BEFORE drawing (asking after a draw forces a slow layout)
+  const V={}; ['screen-customers','screen-orders','screen-dues','screen-home','screen-payment-in','rep-search'].forEach(function(id){ V[id]=_gfShown(id); });
+  try{ if(V['screen-customers'] && typeof renderCustomerList==='function')
+         renderCustomerList(((document.getElementById('cust-list-search')||{}).value)||''); }catch(e){}
+  try{ if(V['screen-orders'] && typeof renderOrdersList==='function')   renderOrdersList();   }catch(e){}
+  try{ if(V['screen-dues'] && typeof renderDues==='function')           renderDues();         }catch(e){}
+  try{ if(V['screen-home'] && typeof renderDashboard==='function')      renderDashboard();    }catch(e){}
   /* v187 BUG FIX: the payments listener called fsRepaint() after setting
      STATE.payments, but fsRepaint() never repainted the Payments In screen or
      the Sales & Collections report. If you were sitting on Payments In when the
      data arrived — which is exactly what happens after a backfill — the screen
      kept showing the old list until you navigated away and back. */
-  try{ if(typeof renderPaymentIn==='function')    renderPaymentIn();    }catch(e){}
-  try{ if(typeof renderReport==='function')       renderReport();       }catch(e){}
+  try{ if(V['screen-payment-in'] && typeof renderPaymentIn==='function') renderPaymentIn(); }catch(e){}
+  try{ if(V['rep-search'] && typeof renderReport==='function')          renderReport();       }catch(e){}
 }
 
 function fsStopListening(){ FS.unsub.forEach(function(u){ try{u();}catch(e){} }); FS.unsub=[]; }
@@ -2338,6 +2367,8 @@ async function fsFlushOutbox(){
   _flushing=false;
   try{ updateOutboxBadge(); }catch(e){}
   if(!keep.length && a.length) try{ showToast('✓ '+_sent.size+' saved item(s) sent to Firebase'); }catch(e){}
+  // v228: orders held back from the Sheet go there now that Firebase has them
+  if(_sent.size) setTimeout(function(){ try{ autoSyncPending(true); }catch(e){} }, 1500);
 }
 /* Flush whenever there is any chance Firebase has just become available. */
 setInterval(function(){ if(outboxCount()) fsFlushOutbox(); }, 20000);
@@ -2430,6 +2461,7 @@ setInterval(renderSelfCheck, 45000);
 function updateOutboxBadge(){
   const el=document.getElementById('outbox-badge'); if(!el) return;
   const n=outboxCount();
+  // v228: orders Firebase has not confirmed yet are also waiting (they are held back from the Sheet)
   el.style.display = n ? 'block' : 'none';
   /* v227: "they will go automatically" was untrue on a phone that is signed
      out of Firebase — nothing goes until someone signs in. */
@@ -2442,8 +2474,8 @@ function updateOutboxBadge(){
 }
 
 async function fsWriteOrder(o, _fromOutbox){
-  if(!o || !o.id) return;
-  if(!fsCanWrite()){ if(!_fromOutbox) fsQueue('order', o); return; }
+  if(!o || !o.id) return false;
+  if(!fsCanWrite()){ if(!_fromOutbox) fsQueue('order', o); return false; }
   try{
     await FS.db.collection('orders').doc(String(o.id)).set({
       customerId: o.customerId || fsResolveCustId(o.customerName) || null,
@@ -2468,7 +2500,8 @@ async function fsWriteOrder(o, _fromOutbox){
       deleted:false, source:'app', updatedAt:new Date().toISOString()
     }, {merge:true});
     fsWriteOk();
-  }catch(e){ fsWriteErr('order '+o.id, e); fsRequeue('order', o, _fromOutbox); if(_fromOutbox) throw e; }   // v227: let the flush see the failure
+    return true;                                   // v228: confirmed by Firebase
+  }catch(e){ fsWriteErr('order '+o.id, e); fsRequeue('order', o, _fromOutbox); if(_fromOutbox) throw e; return false; }   // v227: let the flush see the failure
 }
 
 async function fsWriteCustomer(c, _fromOutbox){
@@ -2702,15 +2735,8 @@ async function fsLoginTap(){
 // An escape hatch that is always reachable: if Firebase will not let someone
 // in, the app must not become a brick. Turning the switch off restores v178
 // behaviour immediately.
-function fsUseSheetInstead(){
-  localStorage.setItem(LS_FS_READS,'0');
-  fsHideLogin();
-  location.reload();
-}
-function fsToggleReads(on){
-  localStorage.setItem(LS_FS_READS, on?'1':'0');
-  location.reload();
-}
+function fsUseSheetInstead(){ showToast('Sign in to continue — this phone must share the app\'s record'); }   // v228: no escape to Sheet-only
+function fsToggleReads(on){ try{ localStorage.removeItem(LS_FS_READS); }catch(e){} }                           // v228: switch removed
 
 const TODAY = new Date();
 const TODAY_STR = TODAY.toLocaleDateString('en-IN',{weekday:'short',day:'numeric',month:'short',year:'numeric'});
@@ -2751,7 +2777,14 @@ const CREDIT_CONFIG = {
 };
 
 function _credKey(s){ return (s||'').trim().toLowerCase(); }
-function getCreditOverrides(){ try{ return JSON.parse(localStorage.getItem('gf_credit_overrides')||'{}'); }catch(e){ return {}; } }
+/* v229: read once and kept; re-read only when the stored text changes */
+let _credOvRaw=null, _credOvObj={}, _credStatusMemo=new Map();
+function getCreditOverrides(){
+  let raw='{}'; try{ raw=localStorage.getItem('gf_credit_overrides')||'{}'; }catch(e){}
+  if(raw!==_credOvRaw){ _credOvRaw=raw; _credStatusMemo.clear(); try{ _credOvObj=JSON.parse(raw)||{}; }catch(e){ _credOvObj={}; } }
+  return JSON.parse(JSON.stringify(_credOvObj));
+}
+function _credOvFast(){ getCreditOverrides(); return _credOvObj; }
 function setCreditOverride(name, days){
   var o=getCreditOverrides(); var k=_credKey(name);
   if(days===null||days===undefined||days===''){ delete o[k]; } else { o[k]=parseInt(days,10)||0; }
@@ -2760,7 +2793,7 @@ function setCreditOverride(name, days){
 function getCreditConfig(category, nameKey) {
   var base = CREDIT_CONFIG[category] || CREDIT_CONFIG['Retail'];
   if(nameKey){
-    var o=getCreditOverrides(); var k=_credKey(nameKey);
+    var o=_credOvFast(); var k=_credKey(nameKey);   // v229: no copy, no re-parse
     if(k in o){
       var d=parseInt(o[k],10)||0;
       return { days:d, warnDaysBefore:(d>0?1:0), graceDays:(base.graceDays||3),
@@ -2826,7 +2859,18 @@ function daysBetween(dateStr1, dateStr2) {
   return Math.floor((d2-d1)/86400000);
 }
 
+/* v229: the answer depends only on the order date, category, customer name,
+   today's date and the credit overrides — so it is worked out once and reused.
+   The Dues screen asked for it thousands of times per redraw (inside a sort),
+   and each answer formatted a date with toLocaleDateString, which is slow. */
 function getCreditStatus(order) {
+  _credOvFast();                                   // clears the memo if overrides changed
+  const _mk=TODAY_KEY+'|'+(order&&order.date)+'|'+(order&&order.customerCategory)+'|'+(order&&order.customerName);
+  let _r=_credStatusMemo.get(_mk);
+  if(!_r){ _r=_getCreditStatusRaw(order); if(_credStatusMemo.size>20000) _credStatusMemo.clear(); _credStatusMemo.set(_mk,_r); }
+  return Object.assign({}, _r);
+}
+function _getCreditStatusRaw(order) {
   // Returns: {daysElapsed, dueDate, daysOverdue, status, stopOrder}
   // status: 'ok' | 'warning' | 'due' | 'overdue' | 'stop'
   const cfg = getCreditConfig(order.customerCategory, order.customerName);
@@ -2912,6 +2956,9 @@ function getCustomerCreditAlerts(custId) {
 
 // v149: normalized name key — collapses inner whitespace exactly like the
 // backend's norm(), so 'Priya  General' (sheet typo) matches 'Priya General'.
+/* v229: run a redraw once typing pauses */
+const _gfDeb={};
+function gfDebounce(key, fn, ms){ clearTimeout(_gfDeb[key]); _gfDeb[key]=setTimeout(function(){ try{ fn(); }catch(e){ console.warn(e); } }, ms||200); }
 function _nameKey(x){ return String(x||'').replace(/\s+/g,' ').trim().toLowerCase(); }
 
 // v155: PER-CUSTOMER BALANCE DATE. Balances were loaded in two batches
@@ -5027,7 +5074,22 @@ function submitOrder() {
   }
 }
 
+/* v228: a phone that is signed out of Firebase cannot take an order. It used
+   to — the order went to the Sheet only. Now it asks for sign-in first. While
+   the app is still starting up (sign-in not yet known) the order is accepted:
+   it waits on the phone and goes to Firebase, then the Sheet. */
+function _signedOutBlock(){
+  try{
+    if(FS && FS.authResolved && !FS.user){
+      alert('This phone is signed out of the app.\n\nSign in first — orders entered while signed out do not reach the app or the GST report.');
+      try{ fsShowLogin(); }catch(e){}
+      return true;
+    }
+  }catch(e){}
+  return false;
+}
 function _submitOrderInner(_release) {
+  if(_signedOutBlock()){ if(_release) _release(); return; }
   const items = Object.entries(STATE.cart).map(([pid,v])=>{
     const p=PRODUCTS.find(x=>x.id===pid);
     const isLaadi = p.isLaadi||false;
@@ -6113,7 +6175,11 @@ function renderDues() {
       }
 
       // Order rows with credit status
-      cg.orders.forEach(o=>{
+      // v229: a client with dozens of unpaid invoices drew dozens of rows, and the
+      // whole list (thousands of rows) was laid out again on every update and every
+      // letter typed in the search. The first 6 show; the rest sit folded below.
+      const _dRows=[];
+      cg.orders.forEach(o=>{ let html=''; 
         const cs = getCreditStatus(o);
         const outstanding = (o.total||0)-(o.payment?.amount||0);
         const statusColors = {ok:'var(--green)',warning:'#F39C12',due:'#E67E22',overdue:'#C0392B',stop:'#C0392B',cash:'var(--green)'};
@@ -6125,7 +6191,15 @@ function renderDues() {
           +'</div>'
           +'<span style="font-size:11px;font-weight:700;color:'+statusColors[cs.status||'ok']+';">'+statusLabels[cs.status||'ok']+'</span>'
         +'</div>';
+        _dRows.push({h:html, amt:outstanding});
       });
+      _dRows.slice(0,6).forEach(r=>{ html+=r.h; });
+      if(_dRows.length>6){
+        const _rest=_dRows.slice(6);
+        html += '<details style="margin-top:2px;"><summary style="font-size:11.5px;color:var(--blue);font-weight:700;cursor:pointer;padding:6px 0;">+ '
+          +_rest.length+' more invoice'+(_rest.length>1?'s':'')+' · ₹'+Math.round(_rest.reduce((s,r)=>s+r.amt,0)).toLocaleString('en-IN')+'</summary>'
+          +_rest.map(r=>r.h).join('')+'</details>';
+      }
 
       // WA Reminder button + Record Payment
       const custPhone = STATE.customers.find(c=>c.id===custId)?.phone||'';
@@ -7249,9 +7323,31 @@ async function syncOneOrder(orderId, orderObj) {
      is doing. The Sheet is a copy and may fail without taking the record
      with it. */
   const _o = orderObj || (STATE.orders||[]).find(o=>o.id===orderId);
+  /* ── v228: FIREBASE FIRST, THE SHEET ONLY AFTER ────────────────────────
+     Until v227 the Sheet write went ahead whether or not Firebase had the
+     order. On a phone that could not reach Firebase (signed out, or switched
+     to Sheet-only) every order went to the Sheet alone, so the Sheet and the
+     app drifted apart a little every day. Now the Sheet is written ONLY once
+     Firebase has confirmed the order. Anything Firebase has not confirmed
+     stays "waiting" on the phone (red badge on Home) and is retried —
+     on reconnect, on sign-in, every 3 minutes — first Firebase, then Sheet.
+     The Sheet can therefore never hold an order the app does not. */
+  let _fbOk=false;
   if(_o && _o.id && String(_o.id)!=='undefined' && !isOrderDeleted(_o.id)){
     if(!_o.date || _o.date==='undefined') _o.date = TODAY_KEY;
-    try{ fsWriteOrder(_o); }catch(e){ console.warn('fsWriteOrder', e); }
+    /* Until the Sheet write below succeeds, Firebase must record that the Sheet
+       does NOT have it yet. If this copy is queued (phone not signed in yet) and
+       lands in Firebase later, every phone then sees it as "waiting for the
+       Sheet" and sends it on; an unknown flag would have read as "synced" and
+       the Sheet would never have got it. */
+    if(_o.sheetSynced!==true) _o.sheetSynced=false;
+    try{
+      _fbOk = await Promise.race([ fsWriteOrder(_o), new Promise(function(r){ setTimeout(function(){ r(false); }, 15000); }) ]);
+    }catch(e){ console.warn('fsWriteOrder', e); _fbOk=false; }
+  }
+  if(!_fbOk){
+    try{ if(_o){ _o.sheetSynced=false; } FS.sheetHeld=(FS.sheetHeld||0)+1; updateOutboxBadge(); updateOnlineIndicator(); }catch(e){}
+    return false;                                // waits; autoSyncPending / the outbox will bring it back
   }
   const url=getSheetUrl();
   if(!url){
@@ -10516,9 +10612,9 @@ async function orcCheck(){
     const sheetDel={};
     try{ const r=await fetch(url+'?action=getDeletedOrders',{cache:'no-store'}); const d=await r.json();
          (d&&d.deleted||[]).forEach(function(x){ sheetDel[String(x.id||'').trim()]=1; }); }catch(e){}
-    const months=[], copy=[], send=[], rmsheet=[];
-    for(const tag of tags){
-      say('⏳ Reading '+tag+' from Firebase and the Sheet…');
+    const _cmp=await orcCompare(tags, sheetDel, function(t){ say('⏳ Reading '+t+' from Firebase and the Sheet…'); });
+    const months=_cmp.months, copy=_cmp.copy, send=_cmp.send, rmsheet=_cmp.rmsheet;
+    if(false) for(const tag of tags){
       const start=tag+'-01', end=tag+'-31';
       const fb={};
       const snap=await FS.db.collection('orders').where('date','>=',start).where('date','<=',end).get({source:'server'});
@@ -10549,6 +10645,7 @@ async function orcCheck(){
       months.push(m);
     }
     _ORC.plan={copy:copy, send:send, rmsheet:rmsheet, tags:tags};
+    try{ orcBannerUpdate(months); }catch(e){}
     const R=n=>'₹'+Math.round(n).toLocaleString('en-IN');
     const sum=a=>a.reduce(function(s,o){ return s+(parseFloat(o.total)||0); },0);
     const td='style="padding:3px 4px;text-align:right;"';
@@ -10583,6 +10680,94 @@ async function orcCheck(){
   }catch(e){ say('<span style="color:#C62828;">Check failed: '+((e&&e.message)||e)+'</span>'); }
   finally{ _ORC.busy=false; }
 }
+
+/* v228: the same comparison, as a function the daily check can use. */
+async function orcCompare(tags, sheetDel, onTag){
+  const url=getSheetUrl();
+  const months=[], copy=[], send=[], rmsheet=[];
+  for(const tag of tags){
+    if(onTag) onTag(tag);
+    const start=tag+'-01', end=tag+'-31';
+    const fb={};
+    const snap=await FS.db.collection('orders').where('date','>=',start).where('date','<=',end).get({source:'server'});
+    snap.forEach(function(doc){ fb[doc.id]={data:doc.data()||{}}; });
+    let rows=null, err='';
+    try{ const r=await fetch(url+'?action=getMonthOrders&month='+tag,{cache:'no-store'}); const d=await r.json();
+         if(d && Array.isArray(d.orders)) rows=d.orders; else err=(d&&d.error)||'no data'; }catch(e){ err=e.message||String(e); }
+    const m={tag:tag, err:err, sheet:0, sheetAmt:0, app:0, appAmt:0, sheetOnly:[], appOnly:[], diff:[], deletedInApp:[]};
+    if(rows===null){ months.push(m); continue; }
+    const _raw={}; rows.forEach(function(r){ const id=String(r['Order ID']||'').trim(); if(id && !(id in _raw)) _raw[id]=_hcNum(r['Order Total (Rs)']||r['Total']); });
+    const sheet={}; _hcParse(rows).forEach(function(o){ o.sheetTotal=_raw[o.id]||0; sheet[o.id]=o; });
+    Object.values(sheet).forEach(function(o){ m.sheet++; m.sheetAmt+=o.sheetTotal; });
+    Object.keys(fb).forEach(function(id){ const d=fb[id].data; if(d.deleted===true) return; m.app++; m.appAmt+=(parseFloat(d.total)||0); });
+    Object.values(sheet).forEach(function(o){
+      const f=fb[o.id];
+      if(!f){ if((sheetDel&&sheetDel[o.id]) || isOrderDeleted(o.id)) return; m.sheetOnly.push(o); copy.push(o); return; }
+      if(f.data.deleted===true){ m.deletedInApp.push(o); rmsheet.push(o); return; }
+      const ft=parseFloat(f.data.total)||0;
+      if(Math.abs(ft-(parseFloat(o.sheetTotal)||0))>1){ const a=fsOrderToApp(o.id, f.data); m.diff.push({app:a, sheet:o}); send.push(a); }
+    });
+    Object.keys(fb).forEach(function(id){
+      const d=fb[id].data; if(d.deleted===true || sheet[id]) return;
+      const a=fsOrderToApp(id, d); m.appOnly.push(a); send.push(a);
+    });
+    months.push(m);
+  }
+  return {months:months, copy:copy, send:send, rmsheet:rmsheet};
+}
+/* v228: AUTOMATIC CHECK on the owner's phone — this month and last, once a
+   day (and again whenever the owner taps Check). A difference shows as a red
+   banner on Home with the counts; tapping it opens the repair tool on those
+   months. No more finding it at month end. Nothing is written by the check. */
+function _orcMonthTag(d){ return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'); }
+function orcBannerUpdate(months){
+  const b=document.getElementById('orc-banner'); if(!b) return;
+  const bad=(months||[]).filter(function(m){ return m.err || m.sheetOnly.length || m.appOnly.length || m.diff.length || m.deletedInApp.length; });
+  if(!bad.length){ b.style.display='none'; b.innerHTML=''; try{ localStorage.removeItem('gf_orc_bad'); }catch(e){} return; }
+  const R=n=>'₹'+Math.round(n).toLocaleString('en-IN');
+  const parts=bad.map(function(m){
+    if(m.err) return m.tag+': could not read the Sheet ('+m.err+')';
+    const x=[];
+    if(m.sheetOnly.length) x.push(m.sheetOnly.length+' only in the Sheet ('+R(m.sheetOnly.reduce(function(s,o){return s+o.total;},0))+')');
+    if(m.appOnly.length) x.push(m.appOnly.length+' only in the app ('+R(m.appOnly.reduce(function(s,o){return s+(parseFloat(o.total)||0);},0))+')');
+    if(m.diff.length) x.push(m.diff.length+' with a different total');
+    if(m.deletedInApp.length) x.push(m.deletedInApp.length+' deleted in the app but still in the Sheet');
+    return m.tag+': '+x.join(', ');
+  });
+  b.innerHTML='<b>⚠ The app and the Sheet do not match.</b><br>'+parts.join('<br>')+'<br><u>Tap to review and fix</u>';
+  b.dataset.from=bad[0].tag; b.dataset.to=bad[bad.length-1].tag;
+  b.style.display='block';
+}
+function orcBannerOpen(){
+  const b=document.getElementById('orc-banner'); if(!b) return;
+  showScreen('setup');
+  setTimeout(function(){
+    const f=document.getElementById('orc-from'), t=document.getElementById('orc-to');
+    if(f) f.value=b.dataset.from||''; if(t) t.value=b.dataset.to||'';
+    const c=document.getElementById('orc-card'); if(c) c.scrollIntoView({behavior:'smooth', block:'start'});
+    try{ orcCheck(); }catch(e){}
+  }, 300);
+}
+async function orcAutoCheck(force){
+  try{
+    if(STATE.role!=='owner') return;
+    if(!(typeof fsOwnsOrders==='function' && fsOwnsOrders()) || !FS.ordersServerSeen) return;
+    if(!getSheetUrl() || navigator.onLine===false) return;
+    const today=(typeof TODAY_KEY!=='undefined')?TODAY_KEY:new Date().toISOString().slice(0,10);
+    let last=''; try{ last=localStorage.getItem('gf_orc_auto_day')||''; }catch(e){}
+    if(!force && last===today) return;
+    const now=new Date(), prev=new Date(now.getFullYear(), now.getMonth()-1, 1);
+    let sheetDel={};
+    try{ const r=await fetch(getSheetUrl()+'?action=getDeletedOrders',{cache:'no-store'}); const d=await r.json();
+         (d&&d.deleted||[]).forEach(function(x){ sheetDel[String(x.id||'').trim()]=1; }); }catch(e){}
+    const res=await orcCompare([_orcMonthTag(prev), _orcMonthTag(now)], sheetDel, null);
+    orcBannerUpdate(res.months);
+    try{ localStorage.setItem('gf_orc_auto_day', today); }catch(e){}
+    return res;
+  }catch(e){ console.warn('orcAutoCheck', e); }
+}
+setTimeout(function(){ orcAutoCheck(false); }, 25000);
+setInterval(function(){ orcAutoCheck(false); }, 60*60*1000);
 async function orcCopy(){
   const st=document.getElementById('orc-status');
   const plan=_ORC.plan; if(!plan || !plan.copy.length){ showToast('Run Check first'); return; }
@@ -11993,6 +12178,15 @@ function renderPaymentIn() {
     return;
   }
 
+  /* v229: drawing all ~4,000 payments took close to a second on a phone, on
+     every redraw and every letter typed in the search. The newest 150 are
+     drawn; "Show more" adds 300 at a time. Totals and counts still use all. */
+  const _piShownAll = payments.length;
+  if(payments.length > _piLimit) payments = payments.slice(0, _piLimit);
+  const _piMore = _piShownAll > payments.length
+    ? '<div style="text-align:center;margin:6px 0 18px;"><div style="font-size:11.5px;color:var(--muted);margin-bottom:6px;">Showing the newest '+payments.length+' of '+_piShownAll+(q?' matching':'')+'</div>'
+      +'<button class="btn btn-secondary" style="padding:9px 18px;" onclick="_piLimit+=300;renderPaymentIn();">Show more</button></div>'
+    : '';
   // Group by date
   const byDate = {};
   payments.forEach(p => {
@@ -12027,8 +12221,9 @@ function renderPaymentIn() {
       </div>
       ${rows}
     </div>`;
-  }).join('');
+  }).join('') + _piMore;
 }
+var _piLimit = 150;
 
 // ── Open form ─────────────────────────────────────────────────────────
 function openPaymentInForm(prefillCustId) {
