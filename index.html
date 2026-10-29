@@ -283,7 +283,7 @@ body.gf-panel-open #app{ visibility:hidden; }
     <div class="top-bar-left">
       <span class="logo">🐄 GF</span>
       <span class="role-badge" id="role-badge">SALES</span>
-      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v230</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v231</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <!-- v196: this used to be a single button showing the language you would
@@ -13069,12 +13069,17 @@ async function confirmPaymentUpload() {
 
 // ══ v230 🧾 APPLY IMPORTED PAYMENTS TO DUES — owner ══════════════════════════
 let _iaPlan=null;
+/* v231: the Khatabook import of 10 Sep (v219) gave its payments clock ids —
+   'PAY' + 8 digits + a row number — and no import batch, so they were not
+   recognised as imported. A payment typed into Record Payment is 'PAY' +
+   exactly 8 digits; these have 9 or more. */
+function _iaIsImported(p){ return _isImportedPayment(p) || /^PAY\d{9,}$/.test(String((p&&p.id)||'')); }
 /* Same customer, same amount, within 3 days, entered by hand (or PhonePe):
    probably the same money recorded twice — kept out unless the owner ticks it. */
 function _iaLooksDuplicate(p){
   const d=new Date((_normDayStr(p.date)||'')+'T00:00:00').getTime(); if(isNaN(d)) return null;
   const amt=Math.round((parseFloat(p.amount)||0)*100);
-  return (STATE.payments||[]).find(q=>q!==p && !_isImportedPayment(q) && q.custId===p.custId &&
+  return (STATE.payments||[]).find(q=>q!==p && !_iaIsImported(q) && q.custId===p.custId &&
     Math.round((parseFloat(q.amount)||0)*100)===amt &&
     Math.abs(new Date((_normDayStr(q.date)||'')+'T00:00:00').getTime()-d)<=3*86400000 &&
     !(typeof isPaymentDeleted==='function' && isPaymentDeleted(q.id))) || null;
@@ -13093,7 +13098,7 @@ function _iaSimulate(c, x){
 function _iaBuildPlan(){
   const skip={done:[],before:[],nocust:[],deleted:[]};
   const byCust={};
-  (STATE.payments||[]).filter(_isImportedPayment).forEach(p=>{
+  (STATE.payments||[]).filter(_iaIsImported).forEach(p=>{
     const why=impPaySkipReason(p);
     if(why==='opening'||why==='zero') return;
     if(why){ (skip[why]||(skip[why]=[])).push(p); return; }
@@ -13172,7 +13177,11 @@ async function confirmImpPayApply(){
   if(msg) msg.innerHTML='<b style="color:#2E7D32;">✓ '+n+' payment(s), ₹'+Math.round(amt).toLocaleString('en-IN')+', taken off dues.</b>'
     +'<br>Open Clients to see the corrected outstandings.';
   showToast('✓ '+n+' imported payment(s) applied to dues', 6000);
-  setTimeout(renderImpPayApply, 50);
+  /* v231: no automatic redraw here. Firebase sends the payments back a moment
+     later; redrawing before that showed the just-applied payments as still
+     pending (they were marked — the list was simply older than the mark). */
+  if(msg) msg.innerHTML+='<br><span style="color:var(--muted);">Close this window. If you open it again, these payments show under "already applied".</span>';
+  const go=document.getElementById('ia-go'); if(go) go.style.display='none';
 }
 
 // ══ 🔎 CHECK PAYMENTS: APP (FIREBASE) vs SHEET — owner ════════════════════════
