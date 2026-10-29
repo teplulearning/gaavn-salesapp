@@ -283,7 +283,7 @@ body.gf-panel-open #app{ visibility:hidden; }
     <div class="top-bar-left">
       <span class="logo">🐄 GF</span>
       <span class="role-badge" id="role-badge">SALES</span>
-      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v229</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v230</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <!-- v196: this used to be a single button showing the language you would
@@ -596,6 +596,19 @@ body.gf-panel-open #app{ visibility:hidden; }
           ⬆ Copy balances from the Sheet to Firebase
         </button>
         <div id="fs-fix-bal-msg" style="margin-top:8px;font-size:12px;line-height:1.6;"></div>
+      </div>
+      <!-- v230 -->
+      <div class="owner-only" style="border-top:1px solid rgba(46,125,50,.25);margin-top:10px;padding-top:10px;">
+        <div style="font-size:12px;line-height:1.6;color:#5D6B5D;">
+          <b>Payments imported from Khatabook not reducing dues?</b> Until v230 an imported
+          payment was saved but never taken off what the customer owes. This shows every
+          customer's dues before and after applying those payments — nothing changes until you confirm.
+        </div>
+        <button onclick="openImpPayApply()"
+                style="margin-top:8px;background:#2E7D32;color:#fff;border:none;border-radius:9px;
+                       padding:10px 16px;font-size:13px;font-weight:700;">
+          🧾 Apply imported payments to dues
+        </button>
       </div>
       <!-- v190 -->
       <div style="border-top:1px solid rgba(46,125,50,.25);margin-top:10px;padding-top:10px;">
@@ -1486,6 +1499,16 @@ body.gf-panel-open #app{ visibility:hidden; }
 </div>
 
 <!-- v220: PAYMENTS — APP (FIREBASE) vs SHEET -->
+<div class="modal-overlay" id="modal-imp-apply">
+  <div class="modal-sheet" style="max-height:90vh;overflow-y:auto;">
+    <div class="modal-handle"></div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+      <div class="modal-title" style="margin:0;">🧾 Apply imported payments to dues</div>
+      <button onclick="closeModal('modal-imp-apply')" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--muted);">✕</button>
+    </div>
+    <div id="ia-body"></div>
+  </div>
+</div>
 <div class="modal-overlay" id="modal-payment-check">
   <div class="modal-sheet" style="max-height:90vh;overflow-y:auto;">
     <div class="modal-handle"></div>
@@ -2926,6 +2949,56 @@ function allocatePaymentFIFO(custId, amountReceived) {
     syncOneOrder(o.id);
   }
   return {allocated, surplus: remaining};
+}
+
+/* ── v230: IMPORTED PAYMENTS NEVER REDUCED DUES ─────────────────────────
+   A payment typed into Record Payment, or matched in PhonePe reconcile, is
+   applied oldest-invoice-first and any surplus reduces the opening balance.
+   A payment brought in from a Khatabook/CSV import was only SAVED — no
+   version ever applied it — so every imported collection since each
+   customer's balance date was still counted as owed (e.g. a distributor
+   showing ₹9 L due). Now the import applies each payment exactly like a
+   typed one, and an owner tool applies the ones imported earlier.
+   A payment that has been applied carries DUES_TAG in its notes. The tag
+   travels with the payment to Firebase and the Sheet (notes is an existing
+   field), so no device and no second run can apply the same payment twice. */
+const DUES_TAG='[dues✓]';
+function payDuesApplied(p){ return String((p&&p.notes)||'').indexOf(DUES_TAG)>=0; }
+/* A payment dated on or before the customer's balance date is already inside
+   that opening balance — the same rule orderCountsForCust() uses for orders. */
+function payCountsForCust(p, cust){
+  const d=_normDayStr(p&&p.date); if(!d) return false;
+  const asOf = cust&&cust.balanceAsOf ? _normDayStr(cust.balanceAsOf) : '';
+  if(asOf) return d > asOf;
+  return d >= (localStorage.getItem('gf_cutover')||'2026-07-05');
+}
+/* Why an imported payment would NOT be applied ('' = it should be). */
+function impPaySkipReason(p){
+  if(!p || p.isOpeningBalance) return 'opening';
+  if(payDuesApplied(p)) return 'done';
+  if(typeof isPaymentDeleted==='function' && isPaymentDeleted(p.id)) return 'deleted';
+  if(!(parseFloat(p.amount)>0)) return 'zero';
+  const c=p.custId ? STATE.customers.find(x=>x.id===p.custId) : null;
+  if(!c) return 'nocust';
+  if(!payCountsForCust(p, c)) return 'before';
+  return '';
+}
+/* Apply one imported payment to its customer's dues, exactly as Record
+   Payment does: oldest invoices first, any surplus off the opening balance. */
+function applyImportedPaymentToDues(p){
+  if(impPaySkipReason(p)) return null;
+  const cust=STATE.customers.find(x=>x.id===p.custId);
+  const amount=parseFloat(p.amount)||0;
+  const {allocated, surplus}=allocatePaymentFIFO(cust.id, amount);
+  let offBalance=0;
+  if(surplus>0){
+    const before=parseFloat(cust.balance)||0;
+    cust.balance=Math.max(0, before - surplus);
+    offBalance=before-cust.balance;
+    applyBalanceChange(cust);
+  }
+  p.notes=(String(p.notes||'').trim()+' '+DUES_TAG).trim();
+  return {allocated, offBalance, unused:Math.max(0, surplus-offBalance)};
 }
 
 // ── OVERDUE CHECK (no stop order — sales can always place orders) ──────
@@ -12944,11 +13017,18 @@ async function confirmPaymentUpload() {
   const sumEl=document.getElementById('payment-upload-summary');
   const btn=document.getElementById('payment-upload-confirm'); if(btn) btn.disabled=true;
   const existingIds = new Set(STATE.payments.map(p=>p.id));
-  let added=0, sheetOk=0, sheetFail=0;
+  let added=0, sheetOk=0, sheetFail=0, duesApplied=0, duesAmt=0;
+  // v230: oldest first, so invoices are settled in the order the money came in
+  todo.sort((a,b)=>String(_normDayStr(a.date)||'').localeCompare(String(_normDayStr(b.date)||'')));
   // 1. the record: Firebase (queued in the outbox if Firebase is not ready)
   todo.forEach(p => {
     p.importBatch=batch; p.sheetSynced=false;
-    if(!existingIds.has(p.id)) { STATE.payments.push(p); added++; }
+    if(!existingIds.has(p.id)) {
+      STATE.payments.push(p); added++;
+      // v230: a new imported payment now reduces dues, like a typed one
+      try{ if(applyImportedPaymentToDues(p)){ duesApplied++; duesAmt+=parseFloat(p.amount)||0; } }
+      catch(e){ console.warn('applyImportedPaymentToDues', e); }
+    }
     try{ fsWritePayment(p); }catch(e){ console.warn('fsWritePayment', e); }
     if(p.isOpeningBalance && p.custId) {
       const cust = STATE.customers.find(c=>c.id===p.custId);
@@ -12963,6 +13043,7 @@ async function confirmPaymentUpload() {
     }
   });
   savePaymentLedger(); renderPaymentIn();
+  if(duesApplied){ try{ saveOrders(); }catch(e){} try{ renderDues(); }catch(e){} }   // v230
   // 2. the copy: the Sheet, one confirmed write per payment (opening balances are not ledger rows)
   const toSheet=todo.filter(p=>!p.isOpeningBalance);
   for(let i=0;i<toSheet.length;i++){
@@ -12974,7 +13055,7 @@ async function confirmPaymentUpload() {
   closeModal('modal-payment-upload');
   renderPaymentIn();
   const noCust=todo.filter(p=>!p.custId && !p.isOpeningBalance);
-  const msg='✓ '+added+' payment(s) imported · Sheet: '+sheetOk+' confirmed'+(sheetFail?(', '+sheetFail+' NOT confirmed — open 🔎 Check vs Sheet to resend'):'');
+  const msg='✓ '+added+' payment(s) imported'+(duesApplied?(' · '+duesApplied+' (₹'+Math.round(duesAmt).toLocaleString('en-IN')+') taken off dues'):'')+' · Sheet: '+sheetOk+' confirmed'+(sheetFail?(', '+sheetFail+' NOT confirmed — open 🔎 Check vs Sheet to resend'):'');
   showToast(msg, 7000);
   if(noCust.length){
     setTimeout(function(){
@@ -12984,6 +13065,114 @@ async function confirmPaymentUpload() {
     }, 400);
   }
   _uploadedPayments = []; _uploadClass=null;
+}
+
+// ══ v230 🧾 APPLY IMPORTED PAYMENTS TO DUES — owner ══════════════════════════
+let _iaPlan=null;
+/* Same customer, same amount, within 3 days, entered by hand (or PhonePe):
+   probably the same money recorded twice — kept out unless the owner ticks it. */
+function _iaLooksDuplicate(p){
+  const d=new Date((_normDayStr(p.date)||'')+'T00:00:00').getTime(); if(isNaN(d)) return null;
+  const amt=Math.round((parseFloat(p.amount)||0)*100);
+  return (STATE.payments||[]).find(q=>q!==p && !_isImportedPayment(q) && q.custId===p.custId &&
+    Math.round((parseFloat(q.amount)||0)*100)===amt &&
+    Math.abs(new Date((_normDayStr(q.date)||'')+'T00:00:00').getTime()-d)<=3*86400000 &&
+    !(typeof isPaymentDeleted==='function' && isPaymentDeleted(q.id))) || null;
+}
+/* Dues after taking X off, without changing anything: invoices first, then the
+   opening balance (never below zero) — what applyImportedPaymentToDues() does. */
+function _iaSimulate(c, x){
+  const bal=parseFloat(c.balance)||0;
+  const orderDue=getCustomerUnpaidOrders(c.id).reduce((s,o)=>s+Math.max(0,(o.total||0)-(o.payment?.amount||0)),0);
+  const ret=retCreditFor(c)||0;
+  const offOrders=Math.min(x, orderDue), sur=x-offOrders, offBal=Math.min(sur, bal);
+  return {before:Math.round((bal+orderDue-ret)*100)/100,
+          after:Math.round((bal-offBal+orderDue-offOrders-ret)*100)/100,
+          unused:Math.round((sur-offBal)*100)/100};
+}
+function _iaBuildPlan(){
+  const skip={done:[],before:[],nocust:[],deleted:[]};
+  const byCust={};
+  (STATE.payments||[]).filter(_isImportedPayment).forEach(p=>{
+    const why=impPaySkipReason(p);
+    if(why==='opening'||why==='zero') return;
+    if(why){ (skip[why]||(skip[why]=[])).push(p); return; }
+    const dup=_iaLooksDuplicate(p);
+    (byCust[p.custId]=byCust[p.custId]||{c:STATE.customers.find(x=>x.id===p.custId),pays:[],dups:[]})[dup?'dups':'pays'].push(dup?{p,dup}:p);
+  });
+  return {byCust, skip};
+}
+function openImpPayApply(){
+  if(STATE.role!=='owner'){ showToast('Owner only'); return; }
+  document.getElementById('modal-imp-apply').classList.add('open');
+  renderImpPayApply();
+}
+function renderImpPayApply(){
+  const body=document.getElementById('ia-body'); if(!body) return;
+  const P=_iaPlan=_iaBuildPlan();
+  const incDup=!!(document.getElementById('ia-inc-dup')||{}).checked;
+  const fmt=n=>'₹'+Math.round(n).toLocaleString('en-IN');
+  const sum=a=>a.reduce((s,p)=>s+(parseFloat(p.amount)||0),0);
+  const rows=Object.values(P.byCust).map(g=>{
+    const list=g.pays.concat(incDup?g.dups.map(d=>d.p):[]);
+    const x=sum(list); const sim=_iaSimulate(g.c, x);
+    return {g, list, x, sim};
+  }).filter(r=>r.list.length||r.g.dups.length).sort((a,b)=>b.x-a.x);
+  const nPay=rows.reduce((s,r)=>s+r.list.length,0), tot=rows.reduce((s,r)=>s+r.x,0);
+  const nDup=rows.reduce((s,r)=>s+r.g.dups.length,0);
+  const before=rows.reduce((s,r)=>s+r.sim.before,0), after=rows.reduce((s,r)=>s+r.sim.after,0);
+  let h='<div style="font-size:12px;line-height:1.6;margin-bottom:8px;">'
+    +'<b>'+nPay+'</b> imported payment(s), <b>'+fmt(tot)+'</b>, for <b>'+rows.filter(r=>r.list.length).length+'</b> customer(s) were never taken off their dues.<br>'
+    +'Their dues today: <b>'+fmt(before)+'</b> → after applying: <b style="color:#2E7D32;">'+fmt(after)+'</b>.<br>'
+    +'<span style="color:var(--muted);">Check two or three customers against Khatabook before you confirm.</span></div>';
+  if(nDup) h+='<label style="display:flex;gap:8px;align-items:flex-start;font-size:12px;background:#FFF8E1;border:1.5px solid #FFD54F;border-radius:9px;padding:8px;margin-bottom:8px;line-height:1.5;">'
+    +'<input type="checkbox" id="ia-inc-dup" '+(incDup?'checked':'')+' onchange="renderImpPayApply()" style="margin-top:3px;">'
+    +'<span><b>'+nDup+'</b> imported payment(s) match a payment already entered by hand (same customer and amount, within 3 days) — probably the same money twice. They are left out. Tick to apply them too.</span></label>';
+  h+='<div style="font-size:11px;">'+rows.map(r=>{
+      const warn=r.sim.unused>0.5?'<div style="color:#C62828;">'+fmt(r.sim.unused)+' more than owed — will show as clear</div>':'';
+      const dupl=r.g.dups.length?'<div style="color:#8A6D00;">'+r.g.dups.length+' possible duplicate(s) '+(incDup?'included':'left out')+': '+r.g.dups.map(d=>_normDayStr(d.p.date)+' '+fmt(d.p.amount)).join(', ')+'</div>':'';
+      return '<div style="border-bottom:1px solid var(--border);padding:6px 0;">'
+        +'<div style="display:flex;justify-content:space-between;gap:8px;"><b>'+escHtmlIA(r.g.c.name)+'</b><span>'+fmt(r.sim.before)+' → <b style="color:#2E7D32;">'+fmt(r.sim.after)+'</b></span></div>'
+        +'<div style="color:var(--muted);">'+r.list.length+' payment(s) · '+fmt(r.x)+(r.g.c.balanceAsOf?(' · after '+_normDayStr(r.g.c.balanceAsOf)):'')+'</div>'+warn+dupl+'</div>';
+    }).join('')+'</div>';
+  const sk=P.skip;
+  h+='<div style="font-size:11px;color:var(--muted);margin-top:8px;line-height:1.6;">Not applied: '
+    +(sk.before.length?sk.before.length+' dated on/before the customer\'s balance date (already inside the opening balance, '+fmt(sum(sk.before))+') · ':'')
+    +(sk.done.length?sk.done.length+' already applied · ':'')
+    +(sk.nocust.length?sk.nocust.length+' with no customer matched ('+fmt(sum(sk.nocust))+') · ':'')
+    +(sk.deleted.length?sk.deleted.length+' deleted · ':'')+'</div>';
+  h+=nPay?'<button id="ia-go" class="btn btn-success" style="width:100%;margin-top:12px;" onclick="confirmImpPayApply()">Apply '+nPay+' payment(s) — '+fmt(tot)+'</button>'
+         :'<div style="text-align:center;padding:14px;color:#2E7D32;font-weight:700;">Nothing to apply — every imported payment is already in the dues.</div>';
+  h+='<div id="ia-msg" style="font-size:12px;margin-top:8px;line-height:1.6;"></div>';
+  body.innerHTML=h;
+}
+function escHtmlIA(t){ return String(t||'').replace(/[&<>"]/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch])); }
+async function confirmImpPayApply(){
+  if(STATE.role!=='owner'){ showToast('Owner only'); return; }
+  const P=_iaPlan||_iaBuildPlan();
+  const incDup=!!(document.getElementById('ia-inc-dup')||{}).checked;
+  let list=[]; Object.values(P.byCust).forEach(g=>{ list=list.concat(g.pays, incDup?g.dups.map(d=>d.p):[]); });
+  if(!list.length) return;
+  if(!confirm('Take '+list.length+' imported payment(s) off customers\' dues?\n\nEach is applied oldest invoice first, exactly like a payment typed into Record Payment, and marked so it can never be applied twice.')) return;
+  const btn=document.getElementById('ia-go'); if(btn) btn.disabled=true;
+  const msg=document.getElementById('ia-msg');
+  list.sort((a,b)=>String(_normDayStr(a.date)||'').localeCompare(String(_normDayStr(b.date)||'')));
+  let n=0, amt=0;
+  for(const p of list){
+    let r=null; try{ r=applyImportedPaymentToDues(p); }catch(e){ console.warn(e); }
+    if(!r) continue;
+    n++; amt+=parseFloat(p.amount)||0;
+    try{ fsWritePayment(p); }catch(e){}
+  }
+  savePaymentLedger();
+  try{ saveOrders(); }catch(e){}
+  /* The mark lives on the Firebase record, which every phone reads. The Sheet
+     copy of a payment is not touched: its amount and date are unchanged. */
+  try{ renderDues(); }catch(e){} try{ renderCustomerList(); }catch(e){} try{ renderPaymentIn(); }catch(e){}
+  if(msg) msg.innerHTML='<b style="color:#2E7D32;">✓ '+n+' payment(s), ₹'+Math.round(amt).toLocaleString('en-IN')+', taken off dues.</b>'
+    +'<br>Open Clients to see the corrected outstandings.';
+  showToast('✓ '+n+' imported payment(s) applied to dues', 6000);
+  setTimeout(renderImpPayApply, 50);
 }
 
 // ══ 🔎 CHECK PAYMENTS: APP (FIREBASE) vs SHEET — owner ════════════════════════
