@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Pay Gaavn Fresh</title>
+<meta name="robots" content="noindex">
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:#f6f3ec;color:#2b2418}
+  .wrap{max-width:420px;margin:0 auto;padding:20px 16px 32px}
+  .card{background:#fff;border-radius:16px;padding:22px 18px;box-shadow:0 2px 10px rgba(0,0,0,.06);text-align:center}
+  .brand{font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:#8a6d2f;font-weight:700}
+  .sub{font-size:13px;color:#7a7060;margin-top:2px}
+  .amt{font-size:40px;font-weight:800;margin:18px 0 4px}
+  .amtlbl{font-size:13px;color:#7a7060}
+  a.btn,button.btn{display:block;width:100%;border:0;border-radius:12px;padding:15px 12px;font-size:17px;font-weight:700;text-decoration:none;margin-top:12px;cursor:pointer}
+  .main{background:#1f7a3a;color:#fff}
+  .row{display:flex;gap:8px;margin-top:10px}
+  .row a{flex:1;margin-top:0;font-size:14px;padding:12px 6px;background:#f1ede4;color:#2b2418}
+  .copy{background:#f1ede4;color:#2b2418;font-size:15px}
+  .upi{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:15px;margin-top:16px;word-break:break-all}
+  .qr{margin-top:18px}
+  .qr img{width:200px;height:200px;image-rendering:pixelated}
+  .note{font-size:12.5px;color:#7a7060;margin-top:14px;line-height:1.45}
+  .ok{color:#1f7a3a;font-weight:700}
+</style>
+</head>
+<body>
+<div class="wrap"><div class="card">
+  <div class="brand">Gaavn Fresh</div>
+  <div class="sub">Teplu Learning Pvt Ltd · Panvadi Dairy</div>
+  <div class="amt" id="amt">—</div>
+  <div class="amtlbl" id="amtlbl"></div>
+
+  <a class="btn main" id="pay" href="#"></a>
+  <div class="row">
+    <a class="btn" id="gpay" href="#">Google Pay</a>
+    <a class="btn" id="phonepe" href="#">PhonePe</a>
+    <a class="btn" id="paytm" href="#">Paytm</a>
+  </div>
+
+  <div class="upi" id="upi"></div>
+  <button class="btn copy" id="copy"></button>
+
+  <div class="qr"><img id="qr" alt="Gaavn Fresh UPI QR"></div>
+  <div class="note" id="note"></div>
+</div></div>
+<script>
+(function(){
+  var DEFAULT_PA='Q848318837@ybl';
+  var QR='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAa4AAAGuAQAAAADgjt83AAADSUlEQVR4nO2cUY7cIAyGP5dIfUykHmCOwt6s6s2So+wBKpHHlYjcB3BIZt62085GmCcy4dMEyTL2b0CUT7Tt22cocMwxxxxzrG9sk9om+3WZNoFVhEUGrFfbaz7SsRdiqGpGVVV1HlV1HjNEe6w9oLytg/Ml5ubYk7Gl+IhNYB2oPaheJaagFJ8zvfAjHfsyWExB9dcUVH6mTXQmqLyNH/Jv/s2xS2DD3bPEOUNMoIuAxPchs0zpLmG+xNwcexZWrSSaFegyJWCdUMbfgy63D4F1yEBZdl7wkY59CawkL2/lp01YbvkwRufxo6Q8IjK87CMdexlW05vaMjqPmdYjakY1BT2Pu8TcHHsWZhYBwKhaQhJNwZLgMdckeB/iVtIdVnxJMxAYM6oJgKCWBFOTH/clXWKmqiUAwlFVO7RkK9NciUvMzbFnYcVKWs901rrOWFxio6Nrrz1ituJQF5ZiEVG1LDaHEHYG6nrkVtIZVn1JTFjkkYK24KQVeGqE4tFrj9gx3phH3R1K2It/e1hL2CMUt5K+sF0bOSXB5jIO/uVQInYr6Q07Kmh7jqMzoVkEliKr6kxwK+kPO/sSW1Pmtro0lSQFG+JW0hl28iVtTanGwEFuq3mPxyUdYgdVrQUi9cXuPGYwpS25lXSIHRV6dhltBkwbeZDu3Ur6xTYhpn1H41j1WHlbRfTXBMT37ypyK8nytebm2F9i+86BTPEWJb1J0Co6dWRTU9yXdIhtwjJRvAVRPwTMVGAVsbwHy4kvNDfHnoHt1b5THQegRSPVyVga5L6kO+whx7kLYWOp47Q41vWSDrEHvaQIsE2FHS3/PYj4biWdYcezfUexNXN3ys/0WPclHWKnvWq7t2inPecWx0LbO32JuTn2LGygBK6jAmyDsoYsMW3lhcAmutzyoLDZ4IvMzbFnYu3OgaD1JPA6nIvFUJJlVr9zoEPsfOeAbSiZaXsbz1Ue31/SI/a4J9qCVLOXcD4i7NFrh9i9lZQWbV+9PepBc3Mr6R6rm19LXLLra+tQUmS/v6RP7HznQFBYBV0mYHkLGdYf5YIbALFE5xpzc+xZ2OHUVqnZtGikCGptB2yqJT9fcbrDxO97dcwxxxxz7L9gfwCziaA5umMLRwAAAABJRU5ErkJggg==';
+  var q=new URLSearchParams(location.search);
+  var pa=(q.get('pa')||DEFAULT_PA).trim();
+  if(!/^[A-Za-z0-9._-]{2,64}@[A-Za-z0-9.-]{2,64}$/.test(pa)) pa=DEFAULT_PA;   // only a well-formed UPI ID
+  var am=parseFloat(q.get('am'));
+  if(!(am>0 && am<10000000)) am=0;
+  am=Math.round(am*100)/100;
+  var mr=q.get('l')==='mr';
+  var T=mr?{
+    lbl:'एकूण थकित रक्कम', any:'रक्कम टाका', pay:'UPI ने पैसे भरा', copy:'UPI ID कॉपी करा', copied:'✓ कॉपी झाले',
+    note:'बटण काम न केल्यास: कोणतेही UPI ॲप उघडा, वरील QR स्कॅन करा किंवा UPI ID टाका आणि रक्कम भरा.'
+  }:{
+    lbl:'Total outstanding', any:'Enter amount in your app', pay:'Pay with UPI', copy:'Copy UPI ID', copied:'✓ Copied',
+    note:'If the button does not open your app: open any UPI app, scan the QR above or enter the UPI ID, and pay the amount shown.'
+  };
+  var amStr=am?am.toFixed(2).replace(/\.00$/,''):'';
+  var amShow=am?am.toLocaleString('en-IN',am%1?{minimumFractionDigits:2,maximumFractionDigits:2}:{}):'';
+  var qs='pa='+encodeURIComponent(pa)+'&pn='+encodeURIComponent('Teplu Learning Pvt Ltd')+(am?('&am='+amStr):'')+'&cu=INR&tn='+encodeURIComponent('Gaavn Fresh payment');
+  document.getElementById('amt').textContent=am?('₹'+amShow):'';
+  document.getElementById('amtlbl').textContent=am?T.lbl:T.any;
+  var pay=document.getElementById('pay'); pay.href='upi://pay?'+qs; pay.textContent=T.pay+(am?(' ₹'+amShow):'');
+  document.getElementById('gpay').href='tez://upi/pay?'+qs;
+  document.getElementById('phonepe').href='phonepe://pay?'+qs;
+  document.getElementById('paytm').href='paytmmp://pay?'+qs;
+  document.getElementById('upi').textContent='UPI ID: '+pa;
+  var cp=document.getElementById('copy'); cp.textContent=T.copy;
+  cp.onclick=function(){
+    function done(){ cp.innerHTML='<span class="ok">'+T.copied+'</span>'; setTimeout(function(){cp.textContent=T.copy;},2000); }
+    if(navigator.clipboard&&navigator.clipboard.writeText){ navigator.clipboard.writeText(pa).then(done,function(){}); }
+    else { var t=document.createElement('textarea'); t.value=pa; document.body.appendChild(t); t.select(); try{document.execCommand('copy'); done();}catch(e){} t.remove(); }
+  };
+  // The printed QR belongs to the Gaavn merchant UPI ID, so show it only for that ID.
+  var img=document.getElementById('qr');
+  if(pa===DEFAULT_PA) img.src=QR; else img.parentNode.style.display='none';
+  document.getElementById('note').textContent=T.note;
+})();
+</script>
+</body>
+</html>

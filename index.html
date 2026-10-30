@@ -283,7 +283,7 @@ body.gf-panel-open #app{ visibility:hidden; }
     <div class="top-bar-left">
       <span class="logo">🐄 GF</span>
       <span class="role-badge" id="role-badge">SALES</span>
-      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v231</span>
+      <span style="font-size:9px;color:var(--muted);margin-left:4px;cursor:pointer;text-decoration:underline dotted;" id="build-stamp" onclick="checkForAppUpdate(false)" title="Updates itself automatically — tap to check now">v232</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <!-- v196: this used to be a single button showing the language you would
@@ -3195,6 +3195,18 @@ async function retryPendingSheetDeletes(){
   }
 }
 const DEFAULT_UPI = 'Q848318837@ybl'; // Gaavn PhonePe merchant VPA
+/* v232: WhatsApp does not make upi:// links tappable, so reminders carry an
+   https link to pay.html (same GitHub Pages site), which opens the UPI app. */
+const GF_PAY_PAGE = 'https://teplulearning.github.io/gaavn-salesapp/pay.html';
+function gfPayLink(amount, lang, upiId){
+  var am=Math.round((parseFloat(amount)||0)*100)/100;
+  var p=[];
+  if(am>0) p.push('am='+(am%1?am.toFixed(2):String(am)));
+  var u=String(upiId||'').trim();
+  if(u && u!==DEFAULT_UPI) p.push('pa='+encodeURIComponent(u));
+  if(lang==='mr') p.push('l=mr');
+  return GF_PAY_PAGE+(p.length?'?'+p.join('&'):'');
+}
 const GAAVN_QR_DATAURL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAa4AAAGuAQAAAADgjt83AAADSUlEQVR4nO2cUY7cIAyGP5dIfUykHmCOwt6s6s2So+wBKpHHlYjcB3BIZt62085GmCcy4dMEyTL2b0CUT7Tt22cocMwxxxxzrG9sk9om+3WZNoFVhEUGrFfbaz7SsRdiqGpGVVV1HlV1HjNEe6w9oLytg/Ml5ubYk7Gl+IhNYB2oPaheJaagFJ8zvfAjHfsyWExB9dcUVH6mTXQmqLyNH/Jv/s2xS2DD3bPEOUNMoIuAxPchs0zpLmG+xNwcexZWrSSaFegyJWCdUMbfgy63D4F1yEBZdl7wkY59CawkL2/lp01YbvkwRufxo6Q8IjK87CMdexlW05vaMjqPmdYjakY1BT2Pu8TcHHsWZhYBwKhaQhJNwZLgMdckeB/iVtIdVnxJMxAYM6oJgKCWBFOTH/clXWKmqiUAwlFVO7RkK9NciUvMzbFnYcVKWs901rrOWFxio6Nrrz1ituJQF5ZiEVG1LDaHEHYG6nrkVtIZVn1JTFjkkYK24KQVeGqE4tFrj9gx3phH3R1K2It/e1hL2CMUt5K+sF0bOSXB5jIO/uVQInYr6Q07Kmh7jqMzoVkEliKr6kxwK+kPO/sSW1Pmtro0lSQFG+JW0hl28iVtTanGwEFuq3mPxyUdYgdVrQUi9cXuPGYwpS25lXSIHRV6dhltBkwbeZDu3Ur6xTYhpn1H41j1WHlbRfTXBMT37ypyK8nytebm2F9i+86BTPEWJb1J0Co6dWRTU9yXdIhtwjJRvAVRPwTMVGAVsbwHy4kvNDfHnoHt1b5THQegRSPVyVga5L6kO+whx7kLYWOp47Q41vWSDrEHvaQIsE2FHS3/PYj4biWdYcezfUexNXN3ys/0WPclHWKnvWq7t2inPecWx0LbO32JuTn2LGygBK6jAmyDsoYsMW3lhcAmutzyoLDZ4IvMzbFnYu3OgaD1JPA6nIvFUJJlVr9zoEPsfOeAbSiZaXsbz1Ue31/SI/a4J9qCVLOXcD4i7NFrh9i9lZQWbV+9PepBc3Mr6R6rm19LXLLra+tQUmS/v6RP7HznQFBYBV0mYHkLGdYf5YIbALFE5xpzc+xZ2OHUVqnZtGikCGptB2yqJT9fcbrDxO97dcwxxxxz7L9gfwCziaA5umMLRwAAAABJRU5ErkJggg=='; // embedded static UPI QR (works offline)
 const LS_URL    = 'gf_sheet_url';
 const LS_CUSTS    = 'gf_customers_extra';  // manually added customers
@@ -6765,7 +6777,7 @@ async function shareQR(){
     due=Math.round((opening+od-retCreditFor(c))*100)/100;   // v222
   }
   var upi=(localStorage.getItem('gf_upi_id')||DEFAULT_UPI).trim();
-  var text='Gaavn Fresh (Panvadi Dairy) \u2014 payment request'+(name?' for '+name:'')+(due>0?('\nAmount: \u20b9'+due.toLocaleString('en-IN')):'')+'\nUPI: '+upi+'\nScan the attached QR to pay.';
+  var text='Gaavn Fresh (Panvadi Dairy) \u2014 payment request'+(name?' for '+name:'')+(due>0?('\nAmount: \u20b9'+due.toLocaleString('en-IN')):'')+'\nUPI: '+upi+'\nScan the attached QR to pay, or tap: '+gfPayLink(due>0?due:0,'en',upi);
   try{
     var resp=await fetch(GAAVN_QR_DATAURL); var blob=await resp.blob();
     var file=new File([blob],'Gaavn_Payment_QR.png',{type:'image/png'});
@@ -6896,7 +6908,7 @@ function sendClientReminder(lang, custId) {
         : ('\u2022 Order #'+o.id+' dated '+o.date+' \u2014 \u20b9'+v.toLocaleString('en-IN')); }).join('\n')
       + (balance>0 ? '\n'+(lang==='mr'?('\u2022 थकित शिल्लक: \u20b9'+balance.toLocaleString('en-IN')):('\u2022 Outstanding balance: \u20b9'+balance.toLocaleString('en-IN'))) : '')
     : (lang==='mr' ? ('\u2022 थकित शिल्लक: \u20b9'+balance.toLocaleString('en-IN')) : ('\u2022 Outstanding balance: \u20b9'+balance.toLocaleString('en-IN')));
-  const upiLink='upi://pay?pa='+encodeURIComponent(upiId)+'&pn='+encodeURIComponent('Teplu Learning Pvt Ltd')+'&am='+totalOwed+'&cu=INR&tn='+encodeURIComponent('Gaavn Fresh payment');
+  const upiLink=gfPayLink(totalOwed, lang, upiId);   // v232: https link — WhatsApp makes it tappable
   const payLine = upiId ? (lang==='mr'
       ? ('\n\n\uD83D\uDCB3 ऑनलाइन भरा — UPI ID: '+upiId+'\nपेमेंटसाठी येथे टॅप करा: '+upiLink)
       : ('\n\n\uD83D\uDCB3 Pay online — UPI ID: '+upiId+'\nTap to pay: '+upiLink)) : '';
